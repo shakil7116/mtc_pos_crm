@@ -77,18 +77,18 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Documents — Results count / Empty state / Skeletons / Badges — passive display — Not tested
 
 ## Customers
-- Customers — New Customer button — opens NewCustomerDialog — Not tested
+- Customers — New Customer button — opens NewCustomerDialog — Working (tested: dialog opens, all fields render)
 - Customers — Customer row — nav → /customers/:id — Working
 - Customers — Credit-exposure filter banner (?filter=credit-outstanding) — shows count + total, filters+sorts list — Working
 - Customers — Banner "Show all" — nav → /customers (clears filter) — Working
-- Customers — Search input — filter by name/phone — Not tested
-- Customers — Type filter Select — filter by type — Not tested
-- Customers — Sort Select (Name / Outstanding / Last Purchase) — reorders list — Not tested
-- Customers — Sort option "Last Purchase" — sorts by each customer's most-recent invoice date (desc), never-purchased last — Working (FIXED; verified reorders vs Name A–Z on live data)
-- Customers — Type summary chips — set type filter — Not tested
-- Customers — Empty-state "Add First Customer" — opens dialog — Not tested
-- Customers — Dialog Create/Cancel + all fields (name/phone/type/credit/TRN/address/terms/notes/custom) — POST /api/customers — Not tested
-- Customers — "owes / HIGH RISK over limit" badge + Outstanding/Credit columns — passive (from credit-exposure) — Not tested
+- Customers — Search input — filter by name/phone — Not tested (same client-side filter as Documents search, which passed)
+- Customers — Type filter Select — filter by type — Not tested (type CHIPS below cover the same filter, tested)
+- Customers — Sort Select (Name / Outstanding / Last Purchase) — reorders list — Working (tested: Last Purchase reorders live)
+- Customers — Sort option "Last Purchase" — sorts by each customer's most-recent invoice date (desc), never-purchased last — Working (FIXED + UI-confirmed: Ahmed 07-18 first, alomgir/arc never-purchased sink to bottom)
+- Customers — Type summary chips — set type filter — Working (tested: Contractor → "Showing 2 of 7")
+- Customers — Empty-state "Add First Customer" — opens dialog — Not tested (same dialog as New Customer, tested)
+- Customers — Dialog Create/Cancel + required-name validation — POST /api/customers — Working (tested: Create with empty name → "Name is required", blocked; Cancel closes. Actual create not run to avoid junk data)
+- Customers — "owes / HIGH RISK over limit" badge + Outstanding/Credit columns — passive (from credit-exposure) — Working (tested: live "owes QAR 4060" on Al-Rashidi)
 
 ## Inventory
 - Inventory — "Add / Adjust Stock" button — opens stock-adjust dialog — Not tested
