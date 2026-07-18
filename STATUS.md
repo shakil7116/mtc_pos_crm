@@ -179,11 +179,12 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Cheque Detail — "Cheques" back button — nav → /finance?tab=cheques — Not tested
 
 ## Approvals
-- Approvals — Approve return (payout-method select + Approve) — POST /api/returns/:id/approve (reverses stock + refund) — Not tested
-- Approvals — Reject return (reason textarea + Reject) — POST /api/returns/:id/reject — Not tested
-- Approvals — Reject Cancel button — closes the reject form — Not tested
-- Approvals — Reverse approval — POST correction, return → pending again — Not tested
-- Approvals — Original-invoice link — Link → /documents/:id — Not tested
+- Approvals — Page render (pending list + "Recently Decided" history) — Working (tested: "All caught up" empty state + 3 decided returns RV-500010/500002/500001 render)
+- Approvals — Approve return (payout-method select + Approve) — POST /api/returns/:id/approve (reverses stock + refund) — Not tested (0 pending returns to act on; buttons render only with pending data; real write. Server logic proven in prior sessions: return→CN doc + stock reversal + refund via funds-guarded path)
+- Approvals — Reject return (reason textarea + Reject) — POST /api/returns/:id/reject — Not tested (0 pending returns; real write)
+- Approvals — Reject Cancel button — closes the reject form — Not tested (needs a pending return)
+- Approvals — Reverse approval ("Undo") — POST correction, return → pending again — Not tested (real write; buttons present on decided returns)
+- Approvals — Original-invoice link — Link → /documents/:id — Not tested (only rendered on pending-return cards)
 
 ## Settings  (admin-only; multi-section)
 - Settings — Company Info: fields + logo upload + Save — PUT company settings — Not tested
