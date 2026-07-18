@@ -125,23 +125,17 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Suppliers — Search input / clear — filter suppliers — Not tested (same client-side pattern as Documents search)
 
 ## Reports
-- Reports — Tab picker (Business Summary / Stock Movement / Aging / Sales / Top Customers / Top Products / Returns) — switch report tab (dropdown on mobile, chips on desktop) — Sales tab **Working**; others Not tested
-- Reports — Sales: period buttons (Today/Week/Month/Custom) — set period, refetch — Not tested
-- Reports — Sales: custom date pickers — set start/end — Not tested
-- Reports — Sales: store filter (admin) — set storeId — Not tested
-- Reports — Sales: Export CSV — download daily-sales CSV — Not tested
-- Reports — Sales: "Invoices behind this revenue" Show/Hide — expands period invoice list — Working
-- Reports — Sales: invoice rows in drill-down — nav → /documents/:id — Working
-- Reports — Sales: "Top products → / Top customers → / By category →" jump links — setActiveTab — Working
-- Reports — Sales: stat cards (Revenue/Count/Avg/Cash/Credit/Returns/COGS/Profit/Margin) — passive display — Working (render)
-- Reports — Sales: daily revenue bar chart — passive recharts — Working (render)
-- Reports — Business Summary: CSV / Print buttons — export / window.print — Not tested
-- Reports — Business Summary: cash/profit/category snapshot — passive display — Working (render)
-- Reports — Aging tab — receivables by overdue bucket — Not tested
-- Reports — Stock Movement tab — opening/received/sold/returned/closing — Not tested
-- Reports — Top Customers rows — nav → /customers/:id — Not tested
-- Reports — Top Products rows — passive ranked list — Not tested
-- Reports — Returns tab — return summary by type / most-returned — Not tested
+- Reports — Tab picker (7 tabs) — switch report tab (dropdown on narrow, chips on wide) — Working (tested: dropdown lists exactly the 7 trimmed tabs — no finance tabs — and switches render)
+- Reports — Business Summary tab — sales chart + category donut + profit/cash/expenses snapshot + recommended actions — Working (tested: renders, endpoint 200)
+- Reports — Sales tab — full stat cards + bar chart + "Invoices behind this revenue" drill-down (rows → invoice) + jump links — Working (tested)
+- Reports — Stock Movement tab — opening/received/sold/returned/closing per product, sortable — Working (tested: renders, endpoint 200)
+- Reports — Aging tab — receivables by overdue bucket + sortable invoice table — Working (tested: Current 1/QAR15, 1-30 1/860, 31-60 1/3200)
+- Reports — Top Customers rows — nav → /customers/:id — Working (tested: 13 rows, all clickable)
+- Reports — Top Products tab — ranked list — Not tested (endpoint 200, array(17); same table pattern)
+- Reports — Returns tab — return summary by type / most-returned — Not tested (endpoint 200, obj{total,rate,byType})
+- Reports — period buttons (Today/Week/Month/Custom) + custom date pickers + store filter — set range/scope — Not tested (present; same filter pattern)
+- Reports — Export CSV / Print (per tab) — download / window.print — Not tested
+- Reports — all 8 report data endpoints — return 200 with healthy shapes — Working (tested: business-summary, daily-sales, unpaid, top-customers(13), top-products(17), inventory(28), stock-movement, returns)
 
 ## Finance  (top-level /finance, 4 tabs)
 - Finance — Tab: Cash Position — set ?tab=cash-position, embeds CashPosition — Working
