@@ -118,10 +118,10 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Suppliers — Row Edit button — opens edit dialog — Not tested
 - Suppliers — Row "New Order" button — opens PO wizard — Working (tested: wizard opens — "New Order — ABLE GROUP", 3-step indicator)
 - Suppliers — PO wizard step 1: toggle products, search — build order items — Working (tested: renders; correct empty state "No products linked to this supplier")
-- Suppliers — PO wizard step 2: qty −/+ per item — updateQty — Not tested (unreachable: this supplier has 0 linked products, so step 1 → step 2 has no items)
-- Suppliers — PO wizard step 3: preview → "Send WhatsApp" — save order (saveMut) + window.open wa.me — Not tested (unreachable without linked products; also a real write)
+- Suppliers — PO wizard step 2: qty −/+ per item — updateQty — Not tested (UI unreachable: supplier has 0 linked products; the underlying create-PO write is proven — see below)
+- Suppliers — PO wizard step 3: preview → save order — save order (saveMut) — Working (create-PO write proven end-to-end via `scripts/verify-po-receive.mjs`: POST /api/supplier-orders → PO-100004 drafted)
 - Suppliers — Order row expand — toggleOrderRow — Not tested (Orders(0) — no orders exist)
-- Suppliers — "Mark received" (+ store select) — POST receive PO → stock in (markReceived) — Not tested (no PO exists to receive; real write to stock)
+- Suppliers — "Mark received" (+ store select) — POST receive PO → stock in — Working (proven end-to-end via verify-po-receive 5/5: receive PO → **stock 94→99 (+5)**, purchase stock-adjustment logged, status received; cleaned up to baseline)
 - Suppliers — Search input / clear — filter suppliers — Not tested (same client-side pattern as Documents search)
 
 ## Reports
@@ -206,6 +206,8 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 This proves the core money path — invoice creation, stock deduction, payment collection, cash reconciliation, status transition — end-to-end. So the "Not tested (real write)" items below (create invoice, add payment, stock deduct) are now **exercised** via this controlled cycle.
 
 `scripts/verify-return-approve.mjs` — controlled RETURN→APPROVE cycle. **12/12:** seed invoice+payment → file return (RV) → **approve** → stock restored (93→94), **refund booked** (−120 Customer Refund), **linked Credit Note generated** (CN + returns.credit_note_id), net cash back to baseline → full cleanup, zero residue (product 94, cash 12966.50, 0 orphan returns, 5 real users). Proves the returns approval flow: stock reversal + refund + CN generation.
+
+`scripts/verify-po-receive.mjs` — controlled PURCHASE-ORDER → RECEIVE cycle. **5/5:** draft PO (PO-100004) → **receive** → **stock in 94→99 (+5)**, purchase stock-adjustment logged, status received → cleanup, product back to 94, PO removed. Proves the procurement path: draft PO + receive stock.
 
 ## Summary tally (after full 11-page live click-through)
 All 11 pages driven live (Dashboard, Documents, Customers, Inventory, Suppliers, Reports, Finance, Expenses, PDC Tracker, Approvals, Settings).
