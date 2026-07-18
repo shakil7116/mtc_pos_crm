@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/Hp/Downloads/**)",
+      "Bash(tar -tzf \"invoicepro-project \\(1\\).tar.gz\")",
+      "mcp__Claude_Preview__preview_start"
+    ]
+  }
+}

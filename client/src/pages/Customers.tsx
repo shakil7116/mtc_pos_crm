@@ -1,0 +1,681 @@
+import { useState } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
+import {
+  Users,
+  Search,
+  Plus,
+  ChevronRight,
+  Phone,
+  CreditCard,
+  ArrowUpDown,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
+import { validateName, validatePhone, validateNonNegative, formatPhone } from "@/lib/validation";
+
+/* ─────────────────────────────────────────
+   Types
+───────────────────────────────────────── */
+type Customer = {
+  id: number;
+  name: string;
+  phone: string | null;
+  type: "walk-in" | "contractor" | "corporate" | "government";
+  creditLimit: number | string | null;
+  trn: string | null;
+  address: string | null;
+  notes: string | null;
+  paymentTerms: string | null;
+  active: boolean | null;
+  createdAt: string;
+};
+
+type CustomerBalance = {
+  balance: number;
+  creditLimit: number;
+  totalInvoiced: number;
+  totalPaid: number;
+};
+
+type SortKey = "name" | "outstanding" | "lastPurchase";
+type FilterType = "all" | "walk-in" | "contractor" | "corporate" | "government";
+
+/* ─────────────────────────────────────────
+   Helpers
+───────────────────────────────────────── */
+function toNum(v: number | string | null | undefined): number {
+  if (v == null) return 0;
+  return typeof v === "number" ? v : parseFloat(v) || 0;
+}
+
+function fmt(v: number | string | null | undefined): string {
+  return "QAR " + toNum(v).toFixed(2);
+}
+
+function typeColor(type: string) {
+  switch (type) {
+    case "walk-in":
+      return "bg-gray-100 text-gray-700";
+    case "contractor":
+      return "bg-blue-100 text-blue-700";
+    case "corporate":
+      return "bg-purple-100 text-purple-700";
+    case "government":
+      return "bg-emerald-100 text-emerald-700";
+    default:
+      return "bg-gray-100 text-gray-700";
+  }
+}
+
+function typeLabel(type: string) {
+  switch (type) {
+    case "walk-in":
+      return "Walk-in";
+    case "contractor":
+      return "Contractor";
+    case "corporate":
+      return "Corporate";
+    case "government":
+      return "Government";
+    default:
+      return type;
+  }
+}
+
+/* ─────────────────────────────────────────
+   New Customer Dialog
+───────────────────────────────────────── */
+type NewCustomerForm = {
+  name: string;
+  phone: string;
+  type: string;
+  creditLimit: string;
+  trn: string;
+  address: string;
+  notes: string;
+  paymentTerms: string;
+};
+
+const BLANK_FORM: NewCustomerForm = {
+  name: "",
+  phone: "",
+  type: "walk-in",
+  creditLimit: "",
+  trn: "",
+  address: "",
+  notes: "",
+  paymentTerms: "",
+};
+
+function NewCustomerDialog({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const [form, setForm] = useState<NewCustomerForm>(BLANK_FORM);
+  const [errors, setErrors] = useState<Partial<NewCustomerForm>>({});
+  const [customData, setCustomData] = useState<Record<string, any>>({});
+  const { data: fieldDefs = [] } = useFieldDefs("customers");
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const mut = useMutation({
+    mutationFn: (body: NewCustomerForm) =>
+      fetch("/api/customers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...body,
+          creditLimit: body.creditLimit ? parseFloat(body.creditLimit) : null,
+          customData,
+        }),
+      }).then((r) => {
+        if (!r.ok) throw new Error("Failed to create customer");
+        return r.json();
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/customers"] });
+      toast({ title: "Customer created successfully" });
+      setForm(BLANK_FORM);
+      setErrors({});
+      onClose();
+    },
+    onError: () => {
+      toast({
+        title: "Failed to create customer",
+        variant: "destructive",
+      });
+    },
+  });
+
+  function validate(): boolean {
+    const errs: Partial<NewCustomerForm> = {};
+    const nameErr = validateName(form.name);
+    if (nameErr) errs.name = nameErr;
+    const phoneErr = validatePhone(form.phone);
+    if (phoneErr) errs.phone = phoneErr;
+    const creditErr = validateNonNegative(form.creditLimit, "Credit limit");
+    if (creditErr) errs.creditLimit = creditErr;
+    setErrors(errs);
+    if (Object.keys(errs).length) return false;
+    const missing = validateCustomFields(fieldDefs, customData);
+    if (missing) { toast({ title: `${missing} is required`, variant: "destructive" }); return false; }
+    return true;
+  }
+
+  function handleSubmit() {
+    if (validate()) mut.mutate(form);
+  }
+
+  function set(field: keyof NewCustomerForm, value: string) {
+    setForm((f) => ({ ...f, [field]: value }));
+    setErrors((e) => ({ ...e, [field]: undefined }));
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) {
+          setForm(BLANK_FORM);
+          setErrors({});
+          onClose();
+        }
+      }}
+    >
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>New Customer</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          {/* Name */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-name">
+              Name <span className="text-red-500">*</span>
+            </Label>
+            <Input
+              id="c-name"
+              value={form.name}
+              onChange={(e) => set("name", e.target.value)}
+              placeholder="Full name"
+              className={cn(errors.name && "border-red-500 focus-visible:ring-red-500")}
+            />
+            {errors.name && (
+              <p className="text-xs text-red-500">{errors.name}</p>
+            )}
+          </div>
+
+          {/* Phone */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-phone">Phone</Label>
+            <Input
+              id="c-phone"
+              inputMode="tel"
+              value={form.phone}
+              onChange={(e) => set("phone", formatPhone(e.target.value))}
+              placeholder="+974 XXXX XXXX"
+              className={cn(errors.phone && "border-red-500 focus-visible:ring-red-500")}
+            />
+            {errors.phone && (
+              <p className="text-xs text-red-500">{errors.phone}</p>
+            )}
+          </div>
+
+          {/* Type */}
+          <div className="space-y-1.5">
+            <Label>Customer Type</Label>
+            <Select value={form.type} onValueChange={(v) => set("type", v)}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="walk-in">Walk-in</SelectItem>
+                <SelectItem value="contractor">Contractor</SelectItem>
+                <SelectItem value="corporate">Corporate</SelectItem>
+                <SelectItem value="government">Government</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {/* Credit Limit */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-credit">Credit Limit (QAR)</Label>
+            <Input
+              id="c-credit"
+              type="number"
+              min="0"
+              step="0.01"
+              value={form.creditLimit}
+              onChange={(e) => set("creditLimit", e.target.value)}
+              placeholder="0.00"
+              className={cn(errors.creditLimit && "border-red-500 focus-visible:ring-red-500")}
+            />
+            {errors.creditLimit && (
+              <p className="text-xs text-red-500">{errors.creditLimit}</p>
+            )}
+          </div>
+
+          {/* TRN / CR */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-trn">TRN / CR Number</Label>
+            <Input
+              id="c-trn"
+              value={form.trn}
+              onChange={(e) => set("trn", e.target.value)}
+              placeholder="Tax Registration Number"
+            />
+          </div>
+
+          {/* Address */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-address">Address</Label>
+            <Input
+              id="c-address"
+              value={form.address}
+              onChange={(e) => set("address", e.target.value)}
+              placeholder="Street, City"
+            />
+          </div>
+
+          {/* Payment Terms */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-terms">Payment Terms</Label>
+            <Input
+              id="c-terms"
+              value={form.paymentTerms}
+              onChange={(e) => set("paymentTerms", e.target.value)}
+              placeholder="e.g. Net 30, Cash on delivery"
+            />
+          </div>
+
+          {/* Notes */}
+          <div className="space-y-1.5">
+            <Label htmlFor="c-notes">Notes</Label>
+            <Textarea
+              id="c-notes"
+              value={form.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="Internal notes..."
+              rows={3}
+            />
+          </div>
+
+          {/* Admin-defined custom fields (11C) */}
+          <CustomFields moduleKey="customers" value={customData} onChange={setCustomData} />
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={mut.isPending}>
+            Cancel
+          </Button>
+          <Button onClick={handleSubmit} disabled={mut.isPending}>
+            {mut.isPending ? "Creating…" : "Create Customer"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Customer Row
+───────────────────────────────────────── */
+function CustomerRow({
+  customer,
+  balance,
+  onNavigate,
+}: {
+  customer: Customer;
+  balance?: number;
+  onNavigate: (id: number) => void;
+}) {
+  const outstanding = balance ?? 0;
+  const creditLimit = toNum(customer.creditLimit);
+  const overLimit = creditLimit > 0 && outstanding > creditLimit;
+
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 hover:bg-secondary/20 transition-colors cursor-pointer border-b border-border/30 last:border-0",
+        overLimit && "bg-red-50/40"
+      )}
+      onClick={() => onNavigate(customer.id)}
+    >
+      {/* Avatar */}
+      <div className="shrink-0 w-9 h-9 rounded-full bg-primary/10 flex items-center justify-center">
+        <span className="text-primary font-bold text-sm">
+          {customer.name.charAt(0).toUpperCase()}
+        </span>
+      </div>
+
+      {/* Name + phone */}
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="font-semibold text-sm text-foreground truncate">
+            {customer.name}
+          </span>
+          <Badge
+            className={cn(
+              "text-[10px] font-semibold px-1.5 py-0 rounded-full border-0",
+              typeColor(customer.type)
+            )}
+          >
+            {typeLabel(customer.type)}
+          </Badge>
+          {overLimit ? (
+            <Badge className="text-[10px] font-bold px-1.5 py-0 rounded-full border-0 bg-red-600 text-white">
+              ⚠ HIGH RISK · over limit
+            </Badge>
+          ) : outstanding > 0 ? (
+            <Badge className="text-[10px] font-semibold px-1.5 py-0 rounded-full border-0 bg-amber-100 text-amber-700">
+              owes {fmt(outstanding)}
+            </Badge>
+          ) : null}
+        </div>
+        {customer.phone && (
+          <div className="flex items-center gap-1 mt-0.5">
+            <Phone className="w-3 h-3 text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">{customer.phone}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Outstanding */}
+      <div className="text-right shrink-0 hidden sm:block">
+        <p className="text-xs text-muted-foreground mb-0.5">Outstanding</p>
+        <p
+          className={cn(
+            "text-sm font-bold font-mono",
+            outstanding > 0 ? "text-red-600" : "text-green-600"
+          )}
+        >
+          {fmt(outstanding)}
+        </p>
+      </div>
+
+      {/* Credit Limit */}
+      <div className="text-right shrink-0 hidden md:block">
+        <p className="text-xs text-muted-foreground mb-0.5">Credit Limit</p>
+        <div className="flex items-center gap-1 justify-end">
+          <CreditCard className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-sm font-mono text-foreground">
+            {creditLimit > 0 ? fmt(creditLimit) : "—"}
+          </span>
+        </div>
+      </div>
+
+      <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Loading skeleton
+───────────────────────────────────────── */
+function CustomerRowSkeleton() {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 border-b border-border/30">
+      <Skeleton className="w-9 h-9 rounded-full" />
+      <div className="flex-1 space-y-1.5">
+        <Skeleton className="h-4 w-40" />
+        <Skeleton className="h-3 w-28" />
+      </div>
+      <div className="hidden sm:flex flex-col items-end gap-1">
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-4 w-20" />
+      </div>
+      <div className="hidden md:flex flex-col items-end gap-1">
+        <Skeleton className="h-3 w-16" />
+        <Skeleton className="h-4 w-24" />
+      </div>
+      <Skeleton className="w-4 h-4 rounded" />
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Main Page
+───────────────────────────────────────── */
+export default function Customers() {
+  const [, nav] = useLocation();
+  const [search, setSearch] = useState("");
+  const [filterType, setFilterType] = useState<FilterType>("all");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [dialogOpen, setDialogOpen] = useState(false);
+
+  // Credit Exposure deep-link: /customers?filter=credit-outstanding →
+  // only credit accounts with an open balance, highest first.
+  const urlSearch = useSearch();
+  const creditMode = new URLSearchParams(urlSearch).get("filter") === "credit-outstanding";
+
+  /* fetch customers */
+  const { data: customers, isLoading } = useQuery<Customer[]>({
+    queryKey: ["/api/customers"],
+    queryFn: () => fetch("/api/customers").then((r) => r.json()),
+  });
+
+  /* per-customer outstanding balance (drives the "owes" badge + credit filter/sort) */
+  const { data: exposure } = useQuery<any>({
+    queryKey: ["/api/reports/credit-exposure"],
+    queryFn: () => fetch("/api/reports/credit-exposure").then((r) => r.json()).catch(() => ({ customers: [] })),
+  });
+  const balMap = new Map<number, number>();
+  (exposure?.customers || []).forEach((c: any) => {
+    if (c.customerId != null) balMap.set(c.customerId, Number(c.outstanding) || 0);
+  });
+  const bal = (id: number) => balMap.get(id) || 0;
+
+  const list = Array.isArray(customers) ? customers : [];
+
+  /* filter */
+  const filtered = list.filter((c) => {
+    if (c.active === false) return false;
+    if (creditMode && !(bal(c.id) > 0)) return false; // credit-exposure preset
+    if (!creditMode && filterType !== "all" && c.type !== filterType) return false;
+    const q = search.toLowerCase();
+    if (!q) return true;
+    return (
+      c.name.toLowerCase().includes(q) ||
+      (c.phone ?? "").toLowerCase().includes(q)
+    );
+  });
+
+  /* sort */
+  const sorted = [...filtered].sort((a, b) => {
+    if (creditMode || sortKey === "outstanding") return bal(b.id) - bal(a.id); // highest owed first
+    if (sortKey === "name") return a.name.localeCompare(b.name);
+    return 0; // lastPurchase needs per-customer purchase data
+  });
+
+  const totalCustomers = list.filter((c) => c.active !== false).length;
+
+  return (
+    <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
+      {/* ── Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <Users className="w-6 h-6 text-primary" />
+            <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
+          </div>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {isLoading ? "Loading…" : `${totalCustomers} total customers`}
+          </p>
+        </div>
+        <Button onClick={() => setDialogOpen(true)} className="gap-2 shrink-0">
+          <Plus className="w-4 h-4" />
+          New Customer
+        </Button>
+      </div>
+
+      {/* Credit-exposure filter banner (dashboard "Credit Exposure" deep-link) */}
+      {creditMode && (
+        <div className="flex items-center gap-3 rounded-xl border-2 border-red-200 bg-red-50/60 px-4 py-3">
+          <CreditCard className="w-5 h-5 text-red-600 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-bold text-red-800">Credit Exposure — accounts with an open balance</p>
+            <p className="text-xs text-red-700">{sorted.length} customers · {fmt(exposure?.total)} outstanding · highest first</p>
+          </div>
+          <button onClick={() => nav("/customers")} className="text-xs font-semibold text-red-700 hover:underline shrink-0">Show all</button>
+        </div>
+      )}
+
+      {/* ── Filters row ── */}
+      <div className="flex flex-col sm:flex-row gap-3">
+        {/* Search */}
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            placeholder="Search by name or phone…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </div>
+
+        {/* Type filter */}
+        <Select
+          value={filterType}
+          onValueChange={(v) => setFilterType(v as FilterType)}
+        >
+          <SelectTrigger className="w-full sm:w-44">
+            <SelectValue placeholder="All types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="walk-in">Walk-in</SelectItem>
+            <SelectItem value="contractor">Contractor</SelectItem>
+            <SelectItem value="corporate">Corporate</SelectItem>
+            <SelectItem value="government">Government</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Sort */}
+        <Select
+          value={sortKey}
+          onValueChange={(v) => setSortKey(v as SortKey)}
+        >
+          <SelectTrigger className="w-full sm:w-44">
+            <ArrowUpDown className="w-3.5 h-3.5 mr-1.5 text-muted-foreground" />
+            <SelectValue placeholder="Sort by" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">Name A–Z</SelectItem>
+            <SelectItem value="outstanding">Outstanding (High–Low)</SelectItem>
+            <SelectItem value="lastPurchase">Last Purchase</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* ── Type summary badges ── */}
+      <div className="flex gap-2 flex-wrap">
+        {(
+          [
+            ["all", "All"],
+            ["walk-in", "Walk-in"],
+            ["contractor", "Contractor"],
+            ["corporate", "Corporate"],
+            ["government", "Government"],
+          ] as [FilterType, string][]
+        ).map(([val, label]) => {
+          const count =
+            val === "all"
+              ? list.filter((c) => c.active !== false).length
+              : list.filter(
+                  (c) => c.active !== false && c.type === val
+                ).length;
+          return (
+            <button
+              key={val}
+              onClick={() => setFilterType(val)}
+              className={cn(
+                "text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                filterType === val
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-white border-border text-muted-foreground hover:border-primary/50"
+              )}
+            >
+              {label} ({count})
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ── Customer list ── */}
+      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        {isLoading ? (
+          <div>
+            {Array.from({ length: 8 }).map((_, i) => (
+              <CustomerRowSkeleton key={i} />
+            ))}
+          </div>
+        ) : sorted.length === 0 ? (
+          <div className="py-16 text-center">
+            <Users className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+            <p className="text-muted-foreground font-medium">No customers found</p>
+            {search && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Try a different search term
+              </p>
+            )}
+            {!search && filterType === "all" && (
+              <Button
+                className="mt-4"
+                onClick={() => setDialogOpen(true)}
+              >
+                <Plus className="w-4 h-4 mr-2" />
+                Add First Customer
+              </Button>
+            )}
+          </div>
+        ) : (
+          sorted.map((customer) => (
+            <CustomerRow
+              key={customer.id}
+              customer={customer}
+              balance={bal(customer.id)}
+              onNavigate={(id) => nav(`/customers/${id}`)}
+            />
+          ))
+        )}
+      </div>
+
+      {/* count footer */}
+      {sorted.length > 0 && (
+        <p className="text-xs text-muted-foreground text-center">
+          Showing {sorted.length} of {totalCustomers} customers
+        </p>
+      )}
+
+      {/* ── New Customer Dialog ── */}
+      <NewCustomerDialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+      />
+    </div>
+  );
+}

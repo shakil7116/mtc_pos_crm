@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Credit Invoice · MAMUN M TRADING AND CONTRACTING WLL</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Inter font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+Arabic:wght@400;500;600;700;800&display=swap"
+    rel="stylesheet"
+  />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'system-ui', 'sans-serif'],
+            arabic: ['"Noto Sans Arabic"', 'Inter', 'sans-serif'],
+          },
+          colors: {
+            navy: {
+              900: '#0F172A',
+              800: '#162038',
+              700: '#1E3A8A',
+            },
+          },
+        },
+      },
+    };
+  </script>
+
+  <style>
+    :root {
+      --navy-900: #0f172a;
+      --navy-700: #1e3a8a;
+    }
+
+    html,
+    body {
+      background: #e2e8f0;
+      color: #0f172a;
+    }
+
+    /* Tabular figures for money columns */
+    .tnum {
+      font-variant-numeric: tabular-nums;
+      font-feature-settings: 'tnum' 1, 'lnum' 1;
+    }
+
+    /* Arabic typography helper */
+    .arabic {
+      font-family: 'Noto Sans Arabic', 'Inter', sans-serif;
+      direction: rtl;
+      unicode-bidi: isolate;
+    }
+
+    /* The printable A4 sheet */
+    .sheet {
+      width: 210mm;
+      min-height: 297mm;
+      margin: 0 auto;
+      background: #ffffff;
+      box-shadow: 0 10px 40px -12px rgba(15, 23, 42, 0.35);
+    }
+
+    .navy-gradient {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+    }
+
+    /* Fine hairline used across the grid */
+    .hairline {
+      border-color: #e2e8f0;
+    }
+
+    /* Screen-only chrome */
+    .screen-only {
+      display: block;
+    }
+
+    @media print {
+      @page {
+        size: A4;
+        margin: 12mm;
+      }
+
+      html,
+      body {
+        background: #ffffff !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .screen-only {
+        display: none !important;
+      }
+
+      .sheet {
+        width: auto;
+        min-height: auto;
+        margin: 0;
+        box-shadow: none !important;
+      }
+
+      /* Hide scrollbars / prevent clipping */
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+
+      .no-break {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+    }
+
+    /* Hide scrollbars on the preview wrapper */
+    body::-webkit-scrollbar {
+      width: 10px;
+    }
+    body::-webkit-scrollbar-thumb {
+      background: #94a3b8;
+      border-radius: 9999px;
+    }
+  </style>
+</head>
+
+<body class="font-sans antialiased py-8 print:py-0">
+  <!-- Screen-only toolbar -->
+  <div class="screen-only mx-auto mb-6 flex max-w-[210mm] items-center justify-between px-1">
+    <div class="text-xs font-medium uppercase tracking-widest text-slate-500">
+      Invoice Preview · A4
+    </div>
+    <button
+      onclick="window.print()"
+      class="navy-gradient inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-navy-900/20 transition hover:opacity-90"
+    >
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 9V2h12v7M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2M6 14h12v8H6v-8z" />
+      </svg>
+      Print / Save as PDF
+    </button>
+  </div>
+
+  <!-- ============================ A4 SHEET ============================ -->
+  <main class="sheet relative flex flex-col px-10 py-9 print:px-0 print:py-0">
+
+    <!-- ============================================================ -->
+    <!-- 1 · HEADER                                                    -->
+    <!-- ============================================================ -->
+    <header class="no-break">
+      <div class="flex items-start justify-between gap-6">
+        <!-- LEFT: logo + bilingual company name -->
+        <div class="flex items-start gap-4">
+          <!-- Logo placeholder -->
+          <div class="navy-gradient flex h-[68px] w-[68px] shrink-0 items-center justify-center rounded-xl text-2xl font-black tracking-tight text-white shadow-md">
+            M<span class="text-blue-300">M</span>
+          </div>
+
+          <div class="pt-0.5">
+            <h1 class="text-[19px] font-extrabold leading-tight tracking-tight text-slate-900">
+              MAMUN M TRADING AND<br />CONTRACTING WLL
+            </h1>
+            <p class="arabic mt-1 text-[16px] font-bold leading-tight text-navy-700">
+              شركة مأمون إم للتجارة والمقاولات ذ.م.م
+            </p>
+          </div>
+        </div>
+
+        <!-- RIGHT: operational metadata -->
+        <div class="min-w-[230px] text-right">
+          <table class="ml-auto text-[11px] leading-tight">
+            <tbody class="align-top">
+              <tr>
+                <td class="py-[2px] pr-2 font-semibold uppercase tracking-wide text-slate-500">
+                  C.R. No <span class="arabic font-medium text-slate-400">السجل</span>
+                </td>
+                <td class="py-[2px] font-semibold tabular-nums text-slate-900">72986/1</td>
+              </tr>
+              <tr>
+                <td class="py-[2px] pr-2 font-semibold uppercase tracking-wide text-slate-500">
+                  Phone <span class="arabic font-medium text-slate-400">هاتف</span>
+                </td>
+                <td class="py-[2px] font-semibold tabular-nums text-slate-900">+974 30703722</td>
+              </tr>
+              <tr>
+                <td class="py-[2px] pr-2 font-semibold uppercase tracking-wide text-slate-500">
+                  P.O. Box <span class="arabic font-medium text-slate-400">ص.ب</span>
+                </td>
+                <td class="py-[2px] font-semibold tabular-nums text-slate-900">17336</td>
+              </tr>
+              <tr>
+                <td class="py-[2px] pr-2 font-semibold uppercase tracking-wide text-slate-500">
+                  District <span class="arabic font-medium text-slate-400">المنطقة</span>
+                </td>
+                <td class="py-[2px] font-semibold text-slate-900">NAJMA, DOHA</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Address strip -->
+      <div class="mt-3 flex items-center justify-between text-[11px] text-slate-500">
+        <span class="font-medium">NAJMA STREET, NAJMA, DOHA, QATAR</span>
+        <span class="arabic font-medium">شارع النجمة، النجمة، الدوحة، قطر</span>
+      </div>
+
+      <!-- Thick navy divider -->
+      <div class="navy-gradient mt-3 h-[3px] w-full rounded-full"></div>
+    </header>
+
+    <!-- ============================================================ -->
+    <!-- 2 · DOCUMENT BADGE                                            -->
+    <!-- ============================================================ -->
+    <div class="no-break mt-5 flex items-center justify-center">
+      <div class="navy-gradient inline-flex items-center gap-3 rounded-full px-8 py-2.5 shadow-md">
+        <span class="text-[15px] font-bold uppercase tracking-[0.18em] text-white">Credit Invoice</span>
+        <span class="h-4 w-px bg-white/30"></span>
+        <span class="arabic text-[15px] font-bold text-blue-100">فاتورة آجلة</span>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- 3 · TRANSACTION METADATA GRID                                 -->
+    <!-- ============================================================ -->
+    <section class="no-break mt-5 grid grid-cols-5 overflow-hidden rounded-lg border border-slate-200">
+      <!-- Invoice No -->
+      <div class="border-r border-slate-200 px-4 py-3">
+        <div class="text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">Invoice No.</div>
+        <div class="arabic text-[9.5px] font-medium text-slate-300">رقم الفاتورة</div>
+        <div class="mt-1 font-mono text-[13px] font-bold text-slate-900">SBS/SS/158157</div>
+      </div>
+      <!-- Date -->
+      <div class="border-r border-slate-200 px-4 py-3">
+        <div class="text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">Date</div>
+        <div class="arabic text-[9.5px] font-medium text-slate-300">التاريخ</div>
+        <div class="mt-1 text-[13px] font-bold tabular-nums text-slate-900">24-Jun-2026</div>
+      </div>
+      <!-- Mode of Payment -->
+      <div class="border-r border-slate-200 px-4 py-3">
+        <div class="text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">Mode of Payment</div>
+        <div class="arabic text-[9.5px] font-medium text-slate-300">طريقة الدفع</div>
+        <div class="mt-1 inline-flex rounded bg-navy-700/10 px-2 py-0.5 text-[12px] font-bold uppercase text-navy-700">Credit</div>
+      </div>
+      <!-- LPO No -->
+      <div class="border-r border-slate-200 px-4 py-3">
+        <div class="text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">L.P.O. No.</div>
+        <div class="arabic text-[9.5px] font-medium text-slate-300">رقم أمر الشراء</div>
+        <div class="mt-1 font-mono text-[13px] font-bold text-slate-900">LPO-4471</div>
+      </div>
+      <!-- Sales Rep -->
+      <div class="px-4 py-3">
+        <div class="text-[9.5px] font-semibold uppercase tracking-wide text-slate-400">Sales Rep.</div>
+        <div class="arabic text-[9.5px] font-medium text-slate-300">مندوب المبيعات</div>
+        <div class="mt-1 text-[13px] font-bold text-slate-900">A. RAHMAN</div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 4 · CLIENT PANEL                                              -->
+    <!-- ============================================================ -->
+    <section class="no-break mt-4 rounded-lg border border-slate-200 bg-slate-50/70">
+      <div class="flex items-stretch">
+        <!-- Accent bar -->
+        <div class="navy-gradient w-1.5 shrink-0 rounded-l-lg"></div>
+
+        <div class="flex w-full items-start justify-between gap-6 px-5 py-4">
+          <div>
+            <div class="flex items-center gap-2">
+              <span class="text-[10px] font-bold uppercase tracking-widest text-navy-700">Bill To</span>
+              <span class="arabic text-[11px] font-semibold text-slate-400">فاتورة إلى</span>
+            </div>
+            <div class="mt-1.5 text-[15px] font-extrabold leading-snug text-slate-900">
+              MAMUN MYAH TRADING &amp; CONTRACTING W.L.L
+            </div>
+            <div class="mt-1 text-[11.5px] leading-relaxed text-slate-600">
+              Building 24, Salwa Road, Industrial Area · Doha, Qatar
+            </div>
+          </div>
+
+          <div class="shrink-0 text-right">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              Mobile <span class="arabic font-medium">جوال</span>
+            </div>
+            <div class="mt-0.5 text-[13px] font-bold tabular-nums text-slate-900">+974 5538 1102</div>
+            <div class="mt-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+              C.R. No <span class="arabic font-medium">السجل</span>
+            </div>
+            <div class="mt-0.5 text-[13px] font-bold tabular-nums text-slate-900">88142/3</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 5 · LINE ITEMS TABLE                                          -->
+    <!-- ============================================================ -->
+    <section class="mt-5">
+      <table class="w-full border-collapse text-[11.5px]">
+        <thead>
+          <tr class="navy-gradient text-white">
+            <th class="rounded-tl-md px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider">
+              Sl.
+            </th>
+            <th class="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider">
+              Item Code
+            </th>
+            <th class="px-3 py-2.5 text-left text-[10px] font-bold uppercase tracking-wider">
+              Description <span class="arabic font-medium text-blue-200">الوصف</span>
+            </th>
+            <th class="px-3 py-2.5 text-center text-[10px] font-bold uppercase tracking-wider">
+              Unit
+            </th>
+            <th class="px-3 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider">
+              Qty
+            </th>
+            <th class="px-3 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider">
+              Unit Price
+            </th>
+            <th class="rounded-tr-md px-3 py-2.5 text-right text-[10px] font-bold uppercase tracking-wider">
+              Total
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          <!-- Row 1 -->
+          <tr class="border-b border-slate-100 bg-white">
+            <td class="px-3 py-2.5 text-center font-medium text-slate-500">1</td>
+            <td class="px-3 py-2.5 font-mono text-[10.5px] text-slate-700">PPR-25-TKY</td>
+            <td class="px-3 py-2.5 text-left text-slate-800">PPR TKY CARPET PIPE 25mm (PN-20) — 4 Mtr Length</td>
+            <td class="px-3 py-2.5 text-center text-slate-600">PCS</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">40</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">18.50</td>
+            <td class="px-3 py-2.5 text-right font-bold tabular-nums tnum text-slate-900">740.00</td>
+          </tr>
+          <!-- Row 2 (zebra) -->
+          <tr class="border-b border-slate-100 bg-[#F8FAFC]">
+            <td class="px-3 py-2.5 text-center font-medium text-slate-500">2</td>
+            <td class="px-3 py-2.5 font-mono text-[10.5px] text-slate-700">UT-LM585R</td>
+            <td class="px-3 py-2.5 text-left text-slate-800">UNI-T LINE LASER LM585R — 5 Line Green Beam Level</td>
+            <td class="px-3 py-2.5 text-center text-slate-600">NOS</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">2</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">425.00</td>
+            <td class="px-3 py-2.5 text-right font-bold tabular-nums tnum text-slate-900">850.00</td>
+          </tr>
+          <!-- Row 3 -->
+          <tr class="border-b border-slate-100 bg-white">
+            <td class="px-3 py-2.5 text-center font-medium text-slate-500">3</td>
+            <td class="px-3 py-2.5 font-mono text-[10.5px] text-slate-700">CBL-3C25</td>
+            <td class="px-3 py-2.5 text-left text-slate-800">DUCAB 3-Core 2.5mm² Flexible Copper Cable — 100m Roll</td>
+            <td class="px-3 py-2.5 text-center text-slate-600">ROLL</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">3</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">165.00</td>
+            <td class="px-3 py-2.5 text-right font-bold tabular-nums tnum text-slate-900">495.00</td>
+          </tr>
+          <!-- Row 4 (zebra) -->
+          <tr class="border-b border-slate-100 bg-[#F8FAFC]">
+            <td class="px-3 py-2.5 text-center font-medium text-slate-500">4</td>
+            <td class="px-3 py-2.5 font-mono text-[10.5px] text-slate-700">GTV-BR12</td>
+            <td class="px-3 py-2.5 text-left text-slate-800">Brass Gate Valve 1/2" PN-25 — Full Bore Heavy Duty</td>
+            <td class="px-3 py-2.5 text-center text-slate-600">PCS</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">25</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">14.00</td>
+            <td class="px-3 py-2.5 text-right font-bold tabular-nums tnum text-slate-900">350.00</td>
+          </tr>
+          <!-- Row 5 -->
+          <tr class="border-b border-slate-100 bg-white">
+            <td class="px-3 py-2.5 text-center font-medium text-slate-500">5</td>
+            <td class="px-3 py-2.5 font-mono text-[10.5px] text-slate-700">TFL-PTFE</td>
+            <td class="px-3 py-2.5 text-left text-slate-800">PTFE Thread Seal Tape 12mm × 12m (Premium Density)</td>
+            <td class="px-3 py-2.5 text-center text-slate-600">BOX</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">15</td>
+            <td class="px-3 py-2.5 text-right tabular-nums tnum text-slate-700">31.00</td>
+            <td class="px-3 py-2.5 text-right font-bold tabular-nums tnum text-slate-900">465.00</td>
+          </tr>
+
+          <!-- Filler rows to keep table body visually balanced -->
+          <tr class="border-b border-slate-100 bg-[#F8FAFC]">
+            <td class="px-3 py-2.5 text-center text-slate-300">6</td>
+            <td class="px-3 py-2.5">&nbsp;</td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+          </tr>
+          <tr class="border-b border-slate-100 bg-white">
+            <td class="px-3 py-2.5 text-center text-slate-300">7</td>
+            <td class="px-3 py-2.5">&nbsp;</td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+            <td class="px-3 py-2.5"></td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 6 · FINANCIAL SUMMARY                                         -->
+    <!-- ============================================================ -->
+    <section class="no-break mt-5 flex items-stretch justify-between gap-6">
+      <!-- Amount in words -->
+      <div class="flex-1 rounded-lg border border-slate-200 bg-slate-50/70 px-5 py-4">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] font-bold uppercase tracking-widest text-navy-700">Amount in Words</span>
+          <span class="arabic text-[11px] font-semibold text-slate-400">المبلغ كتابةً</span>
+        </div>
+        <p class="mt-2 text-[13px] font-semibold leading-relaxed text-slate-800">
+          Two Thousand Nine Hundred Eighty-Two Qatari Riyals Only
+        </p>
+        <p class="arabic mt-1 text-[12px] font-medium text-slate-500">
+          ألفان وتسعمائة واثنان وثمانون ريالاً قطرياً فقط لا غير
+        </p>
+
+        <div class="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3 text-[10px] text-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 text-navy-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+          <span class="font-medium">Goods received in good condition — subject to company terms of sale.</span>
+        </div>
+      </div>
+
+      <!-- Totals -->
+      <div class="w-[270px] shrink-0">
+        <div class="overflow-hidden rounded-lg border border-slate-200">
+          <!-- Gross -->
+          <div class="flex items-center justify-between bg-white px-4 py-2.5">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Gross Total
+            </span>
+            <span class="text-[13px] font-bold tabular-nums tnum text-slate-900">3,082.00</span>
+          </div>
+          <!-- Discount -->
+          <div class="flex items-center justify-between border-t border-slate-100 bg-[#F8FAFC] px-4 py-2.5">
+            <span class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              Discount
+            </span>
+            <span class="text-[13px] font-bold tabular-nums tnum text-rose-600">− 100.00</span>
+          </div>
+          <!-- Net Payable -->
+          <div class="navy-gradient flex items-center justify-between px-4 py-3.5">
+            <div class="leading-tight">
+              <div class="text-[11px] font-bold uppercase tracking-widest text-blue-100">Net Payable</div>
+              <div class="arabic text-[10px] font-medium text-blue-200">صافي المستحق</div>
+            </div>
+            <div class="text-right">
+              <span class="text-[19px] font-extrabold tabular-nums tnum text-white">2,982.00</span>
+              <span class="ml-1 text-[11px] font-semibold text-blue-200">QAR</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <!-- 7 · SIGNATURES                                                -->
+    <!-- ============================================================ -->
+    <section class="no-break mt-auto pt-8">
+      <div class="grid grid-cols-3 gap-8">
+        <!-- Authorized Signatory -->
+        <div class="text-center">
+          <div class="mx-auto mb-2 h-12 border-b border-dashed border-slate-300"></div>
+          <div class="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+            Authorized Signatory
+          </div>
+          <div class="arabic text-[11px] font-medium text-slate-400">التوقيع المعتمد</div>
+        </div>
+        <!-- Storekeeper -->
+        <div class="text-center">
+          <div class="mx-auto mb-2 h-12 border-b border-dashed border-slate-300"></div>
+          <div class="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+            Storekeeper
+          </div>
+          <div class="arabic text-[11px] font-medium text-slate-400">أمين المخزن</div>
+        </div>
+        <!-- Receiver -->
+        <div class="text-center">
+          <div class="mx-auto mb-2 h-12 border-b border-dashed border-slate-300"></div>
+          <div class="text-[11px] font-bold uppercase tracking-wide text-slate-700">
+            Receiver's Verification &amp; Stamp
+          </div>
+          <div class="arabic text-[11px] font-medium text-slate-400">توقيع وختم المستلم</div>
+        </div>
+      </div>
+
+      <!-- Footer note -->
+      <div class="mt-6 flex items-center justify-between border-t border-slate-200 pt-3 text-[9.5px] text-slate-400">
+        <span class="font-medium">
+          MAMUN M TRADING AND CONTRACTING WLL · C.R. 72986/1 · Najma, Doha, Qatar
+        </span>
+        <span class="font-semibold uppercase tracking-wider text-slate-500">
+          This is a computer-generated credit invoice.
+        </span>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

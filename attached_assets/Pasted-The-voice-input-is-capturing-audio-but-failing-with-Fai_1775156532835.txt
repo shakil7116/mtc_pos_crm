@@ -1,0 +1,122 @@
+The voice input is capturing audio but failing with "Failed to parse voice input". 
+
+The problem is likely one of these:
+1. The SpeechRecognition result is not being sent correctly to /api/voice-parse
+2. The server is receiving an empty transcript and throwing an error instead of returning empty items
+3. There may still be old audio processing code in the route
+
+Please fix all of this:
+
+IN CreateInvoice.tsx - make the handleToggleRecord function exactly like this:
+
+const handleToggleRecord = () => {
+  const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    alert("Please use Chrome or Edge browser for voice input.");
+    return;
+  }
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+  recognition.continuous = false;
+
+  setIsListening(true);
+
+  recognition.onresult = async (event: any) => {
+    const transcript = event.results[0][0].transcript;
+    console.log("Heard:", transcript);
+    setIsListening(false);
+    setIsProcessing(true);
+    try {
+      const res = await apiRequest("POST", "/api/voice-parse", { transcript });
+      const result = await res.json();
+      if (result.items && Array.isArray(result.items)) {
+        result.items.forEach((item: any) => {
+          append({
+            description: String(item.description || "ITEM").toUpperCase(),
+            quantity: String(item.quantity || "1"),
+            unit: String(item.unit || "PCS").toUpperCase(),
+            unitPrice: String(item.unitPrice || "0"),
+            amount: String((Number(item.quantity || 1) * Number(item.unitPrice || 0)).toFixed(2)),
+            currency: "QAR",
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Voice parse error:", error);
+      alert("Failed to parse voice input. Please try again.");
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  recognition.onerror = (e: any) => {
+    console.error("Speech recognition error:", e.error);
+    setIsListening(false);
+    alert("Microphone error: " + e.error);
+  };
+
+  recognition.onend = () => {
+    setIsListening(false);
+  };
+
+  recognition.start();
+};
+
+IN routes.ts - make the /api/voice-parse route exactly like this:
+
+app.post("/api/voice-parse", async (req, res) => {
+  try {
+    const { transcript } = req.body;
+    if (!transcript || typeof transcript !== "string" || transcript.trim() === "") {
+      return res.json({ items: [] });
+    }
+    console.log("Transcript received:", transcript);
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `You are an invoice parsing assistant. Extract items from the text and follow these rules:
+1. Convert written numbers to digits (four -> 4)
+2. Convert point/dot to decimals (four point five -> 4.5)
+3. Shorten PIECES to PCS, METERS to MTR, INCHES/INCH to "
+4. ALL CAPS for everything
+5. Output JSON: { "items": [{ "description": string, "quantity": number, "unit": string, "unitPrice": number, "currency": string }] }
+Default currency is QAR. If no price mentioned, use 0.`
+        },
+        { role: "user", content: transcript }
+      ],
+      response_format: { type: "json_object" },
+    });
+
+    const content = response.choices[0].message.content;
+    const result = JSON.parse(content || "{}");
+
+    if (result.items) {
+      result.items = result.items.map((item: any) => ({
+        description: String(item.description || "ITEM").toUpperCase(),
+        quantity: String(item.quantity || "1"),
+        unit: String(item.unit || "PCS").toUpperCase(),
+        unitPrice: String(item.unitPrice || "0"),
+        currency: "QAR"
+      }));
+    }
+
+    res.json(result);
+  } catch (err) {
+    console.error("Voice parse error:", err);
+    res.status(500).json({ message: "Failed to process voice input", error: String(err) });
+  }
+});
+
+Also make sure the old import line is completely removed:
+import { openai, speechToText, convertWebmToWav } from "./replit_integrations/audio/client";
+
+And replace it with just:
+import { openai } from "./replit_integrations/audio/client";
+
+Only keep openai, remove speechToText and convertWebmToWav from the import.

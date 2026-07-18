@@ -1,0 +1,211 @@
+@import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&family=Geist:wght@100..900&family=Geist+Mono:wght@100..900&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: 'Geist', system-ui, -apple-system, sans-serif;
+  --font-serif: 'Playfair Display', serif;
+  --font-arabic: 'Amiri', serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  /* ── Professional Business Palette — Deep Navy & Brand Gold ── */
+  --background: 213 30% 97.5%;   /* Soft cool off-white */
+  --foreground: 222 47% 11%;     /* Deep Navy */
+
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+
+  --primary: 217 43% 16%;        /* Brand navy #1e2a3a */
+  --primary-foreground: 210 40% 98%;
+
+  --secondary: 214 32% 95%;
+  --secondary-foreground: 222 47% 11%;
+
+  --muted: 214 32% 95.5%;
+  --muted-foreground: 215 19% 42%;   /* Darker for stronger contrast */
+
+  --accent: 214 32% 94%;
+  --accent-foreground: 222 47% 11%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 214 25% 89%;
+  --input: 214 25% 89%;
+  --ring: 41 78% 47%;            /* Gold focus ring */
+
+  /* Brand tokens */
+  --navy: 217 43% 16%;
+  --navy-foreground: 210 40% 98%;
+  --gold: 41 78% 47%;            /* Refined #d4a017, slightly desaturated */
+  --gold-foreground: 222 47% 11%;
+
+  --radius: 0.5rem;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv05', 'cv11', 'ss01';
+    letter-spacing: -0.011em;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif);
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  .font-arabic {
+    font-family: var(--font-arabic);
+  }
+
+  /* Tabular, aligned figures everywhere money/quantities are shown */
+  .font-mono, [class*="tabular"] {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+
+  /* Gold-tinted text selection */
+  ::selection {
+    background: hsl(var(--gold) / 0.22);
+    color: hsl(var(--foreground));
+  }
+
+  /* Smooth, GPU-friendly transitions on interactive elements */
+  button, a, [role="tab"], [role="button"], [role="menuitem"],
+  .transition-base {
+    transition:
+      color 0.18s ease,
+      background-color 0.18s ease,
+      border-color 0.18s ease,
+      box-shadow 0.18s ease,
+      transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.18s ease;
+  }
+
+  /* Tactile press feedback for real buttons (skips links/tabs to avoid surprises) */
+  button:not(:disabled):active {
+    transform: translateY(0.5px) scale(0.985);
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Keep app content above the fixed grain texture */
+  #root {
+    position: relative;
+    z-index: 1;
+    min-height: 100dvh;
+  }
+}
+
+@layer components {
+  /* Premium card hover-lift — opt-in via class, no layout shift */
+  .card-hover {
+    @apply transition-all duration-200;
+  }
+  .card-hover:hover {
+    box-shadow: 0 12px 16px -4px rgb(16 24 40 / 0.1), 0 4px 6px -2px rgb(16 24 40 / 0.05);
+    transform: translateY(-2px);
+  }
+
+  /* Brand navy gradient surface (sidebar / headers) */
+  .bg-brand-gradient {
+    background-image: linear-gradient(160deg, hsl(217 43% 18%) 0%, hsl(217 46% 12%) 100%);
+  }
+
+  /* True glass surface for sticky bars / overlays */
+  .glass {
+    background: hsl(var(--card) / 0.72);
+    backdrop-filter: saturate(180%) blur(12px);
+    -webkit-backdrop-filter: saturate(180%) blur(12px);
+    border: 1px solid hsl(var(--border) / 0.7);
+  }
+
+  /* Shimmer overlay for skeleton loaders */
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, hsl(0 0% 100% / 0.45), transparent);
+    animation: shimmer 1.6s infinite;
+  }
+}
+
+/* Subtle film-grain texture to break digital flatness (very low opacity) */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Gentle entrance for each routed page — accent only, structure untouched */
+main {
+  animation: fade-in 0.3s ease-out both;
+}
+
+/* Print Styles */
+@media print {
+  @page { margin: 0; size: A4; }
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: white;
+  }
+  body::before { display: none !important; }
+  .no-print { display: none !important; }
+  .print-only { display: block !important; }
+  .print-break-inside-avoid { break-inside: avoid; }
+
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-muted-foreground/25 rounded-full;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-muted-foreground/45;
+  background-clip: content-box;
+}
