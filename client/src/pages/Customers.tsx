@@ -489,6 +489,20 @@ export default function Customers() {
   });
   const bal = (id: number) => balMap.get(id) || 0;
 
+  /* last-purchase date per customer (only when sorting by it) — most-recent INV date */
+  const { data: docsForSort } = useQuery<any[]>({
+    queryKey: ["/api/documents"],
+    queryFn: () => fetch("/api/documents").then((r) => r.json()).catch(() => []),
+    enabled: sortKey === "lastPurchase",
+  });
+  const lastPurchaseMap = new Map<number, string>();
+  for (const d of Array.isArray(docsForSort) ? docsForSort : []) {
+    if (d.type !== "INV" || d.customerId == null) continue;
+    const cur = lastPurchaseMap.get(d.customerId);
+    if (!cur || (d.date || "") > cur) lastPurchaseMap.set(d.customerId, d.date || "");
+  }
+  const lastP = (id: number) => lastPurchaseMap.get(id) || "";
+
   const list = Array.isArray(customers) ? customers : [];
 
   /* filter */
@@ -507,8 +521,8 @@ export default function Customers() {
   /* sort */
   const sorted = [...filtered].sort((a, b) => {
     if (creditMode || sortKey === "outstanding") return bal(b.id) - bal(a.id); // highest owed first
-    if (sortKey === "name") return a.name.localeCompare(b.name);
-    return 0; // lastPurchase needs per-customer purchase data
+    if (sortKey === "lastPurchase") return lastP(b.id).localeCompare(lastP(a.id)); // most recent first
+    return a.name.localeCompare(b.name); // name (default)
   });
 
   const totalCustomers = list.filter((c) => c.active !== false).length;

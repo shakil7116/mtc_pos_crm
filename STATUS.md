@@ -70,7 +70,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Documents — Table row / Card — nav → /documents/:id — Not tested
 - Documents — Row/Card View icon — nav → /documents/:id — Not tested
 - Documents — Row/Card Print icon — nav to detail then window.print() after 600ms — Not tested
-- Documents — Row/Card WhatsApp icon — window.open wa.me with a GENERIC message, no recipient number — **Incomplete** (no customer phone / body is a placeholder message)
+- Documents — Row/Card WhatsApp icon — window.open wa.me targeting the customer's phone with a personalized message (name + doc kind/number/total); toast if no phone on file — Working (FIXED; verified payload carries customer.phone)
 - Documents — Pagination Prev/Next — setPage ± 1, disabled at bounds — Not tested
 - Documents — Today/Credit preset header + total — title + summed totals when ?date=today / ?credit=1 — Not tested
 - Documents — Results count / Empty state / Skeletons / Badges — passive display — Not tested
@@ -83,7 +83,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Customers — Search input — filter by name/phone — Not tested
 - Customers — Type filter Select — filter by type — Not tested
 - Customers — Sort Select (Name / Outstanding / Last Purchase) — reorders list — Not tested
-- Customers — Sort option "Last Purchase" — selectable but comparator returns 0 (no reorder) — **Incomplete**
+- Customers — Sort option "Last Purchase" — sorts by each customer's most-recent invoice date (desc), never-purchased last — Working (FIXED; verified reorders vs Name A–Z on live data)
 - Customers — Type summary chips — set type filter — Not tested
 - Customers — Empty-state "Add First Customer" — opens dialog — Not tested
 - Customers — Dialog Create/Cancel + all fields (name/phone/type/credit/TRN/address/terms/notes/custom) — POST /api/customers — Not tested
@@ -194,9 +194,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 ---
 
 ## Summary tally (by status)
-- **Working**: 34 (all confirmed live this session — dashboard nav widgets, Finance tabs, Customers credit filter + rows, Reports Sales tab + drill-down, PDC/Cheque links + detail + photo, plus server-verified cash guard / cheque single-booking)
-- **Incomplete**: 2 — Documents WhatsApp icon (generic empty message, no recipient); Customers "Last Purchase" sort (no-op comparator)
+- **Working**: 36 (dashboard nav widgets, Finance tabs, Customers credit filter + rows, Reports Sales tab + drill-down, PDC/Cheque links + detail + photo, server-verified cash guard / cheque single-booking, **+ the 2 formerly-Incomplete items, now fixed**)
+- **Incomplete**: 0 — both fixed (Documents WhatsApp now personalized + targets customer phone; Customers "Last Purchase" sort now reorders by most-recent invoice date)
 - **Broken**: 0 found in this pass
 - **Not tested**: the majority — wired in code with real handlers/routes, but not exercised live this session (most form submits, dialogs, filters, inventory/supplier/settings actions). No defect observed; just unproven.
-
-Nothing fixed — list only, as requested.

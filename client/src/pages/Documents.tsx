@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
+import { useToast } from "@/hooks/use-toast";
 import { businessDate } from "@shared/permissions";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ interface Document {
   date: string;
   customerId: number | null;
   customerName: string | null;
+  customer?: { phone?: string | null } | null; // attached by /api/documents (getDocuments)
   storeId: number | null;
   status: string;
   total: number;
@@ -218,6 +220,7 @@ const TAB_TYPES: { value: DocType; label: string }[] = [
 export default function Documents() {
   const [, nav] = useLocation();
   const { user } = useAuth();
+  const { toast } = useToast();
 
   // ── URL-driven presets (dashboard deep-links) ────────────────
   const urlParams = (() => { try { return new URLSearchParams(window.location.search); } catch { return new URLSearchParams(); } })();
@@ -294,10 +297,17 @@ export default function Documents() {
   }
 
   function handleWhatsApp(doc: Document) {
-    // We need phone from customer — navigate to detail which has it
-    // Or build a generic message
-    const msg = `Dear Customer,\nYour ${doc.type === "INV" ? "Invoice" : doc.type === "QT" ? "Quotation" : doc.type} ${doc.number} totalling QAR ${Number(doc.total).toFixed(2)} has been issued by Mamun M Trading.\nThank you for your business.`;
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank");
+    const phone = (doc.customer?.phone || "").replace(/\D/g, ""); // digits only for wa.me
+    const name = doc.customerName || "Customer";
+    const kind = doc.type === "INV" ? "Invoice" : doc.type === "QT" ? "Quotation"
+      : doc.type === "DN" ? "Delivery Note" : doc.type === "CN" ? "Credit Note" : doc.type;
+    const msg = `Dear ${name},\nYour ${kind} ${doc.number} totalling QAR ${Number(doc.total).toFixed(2)} has been issued by Mamun M Trading and Contracting W.L.L.\nThank you for your business.`;
+    if (!phone) {
+      // No number on file → send them to the customer page to add one / pick a contact.
+      toast({ title: "No phone number on file", description: "Add a phone to this customer to message directly.", variant: "destructive" });
+    }
+    // With a phone → opens the chat to that number; without → WhatsApp contact picker.
+    window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, "_blank");
   }
 
   return (
