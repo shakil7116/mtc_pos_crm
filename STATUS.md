@@ -162,16 +162,17 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Expenses — Corrected badge / Correct button — logs correction — Not tested
 
 ## PDC Tracker  (/pdc, also embedded as Finance → Cheques)
+- PDC Tracker — Standalone page render (/pdc) — 6 cheque rows, summary strip (Receivable pending 9000), 2 filter controls — Working (tested)
 - PDC Tracker — Status filter Select — filter cheques by status — Working (in Finance embed)
-- PDC Tracker — Type filter Select (receivable/payable) — honors ?type= from deep-link — Working
-- PDC Tracker — Bank / cheque-# search inputs — client-side filter — Not tested
-- PDC Tracker — Cheque # link — Link → /cheques/:id (detail) — Working
+- PDC Tracker — Type filter Select (receivable/payable) — honors ?type= from deep-link — Working (tested: payable/receivable switch)
+- PDC Tracker — Bank / cheque-# search inputs — client-side filter — Not tested (same pattern as Documents search)
+- PDC Tracker — Cheque # link — Link → /cheques/:id (detail) — Working (tested: 6 links; detail page verified)
 - PDC Tracker — Linked-document icon — Link → /documents/:id — Not tested
-- PDC Tracker — "Mark deposited" action — POST status=deposited (statusMut) — Not tested
-- PDC Tracker — "Mark cleared" action — POST status=cleared → books money once at clearance + overdraw guard (server-verified) — clearance logic **Working** (server), UI button Not tested
-- PDC Tracker — "Mark bounced" action — confirm → POST status=bounced, flags party — Not tested
-- PDC Tracker — "Undo" / correct — reverse status with reason (reverseMut) — Not tested
-- PDC Tracker — Export CSV — download filtered CSV (route not shadowed by :id — verified) — Working (endpoint)
+- PDC Tracker — "Mark deposited" action — POST status=deposited (statusMut) — Not tested (real write; button present + wired)
+- PDC Tracker — "Mark cleared" action — POST status=cleared → books money once + overdraw guard — Working (single-booking proven end-to-end via verify-cheque-single-booking 12/12; UI button present + wired, not clicked to avoid real money write)
+- PDC Tracker — "Mark bounced" action — confirm → POST status=bounced, flags party — Not tested (real write; button present + wired)
+- PDC Tracker — "Undo" / correct — reverse status with reason (reverseMut) — Not tested (real write)
+- PDC Tracker — Export CSV — download filtered CSV (route not shadowed by :id) — Working (endpoint 200, correct content-type)
 - Cheque Detail (/cheques/:id) — page render (fields + linked doc + timeline) — Working
 - Cheque Detail — Photo Upload / Replace — FileReader → base64 → POST /api/cheques/:id/photo (validates type/size) — Working (endpoint returned 200)
 - Cheque Detail — Linked-document card — Link → /documents/:id — Working (renders; nav Not tested)
