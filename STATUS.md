@@ -143,12 +143,12 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Finance — Tab: Cash & Loans — set ?tab=cash-loans, embeds CashLoans — Working
 - Finance — Tab: Cheques (PDC) — set ?tab=cheques, embeds PdcTracker (keyed remount on ?type/&due) — Working
 - Finance — "Dashboard" back button — nav → / — Not tested
-- Finance (Cash Position) — Hand / Bank tab toggle — switches txn list — Not tested
+- Finance (Cash Position) — Hand / Bank tab toggle — switches txn list — Working (tested: heading flips "Cash (till) transactions" ↔ "Bank transactions")
 - Finance (Cash Position) — Uncleared PDC card — Link → /pdc — Not tested
-- Finance (Cash Position) — transaction rows — passive display — Not tested
-- Finance (Profit) — invoice expand rows — toggle item breakdown; number → /documents/:id — Not tested
-- Finance (Cash & Loans) — "Add Cash Injection" / "Record Repayment" — open form — Not tested
-- Finance (Cash & Loans) — form Record — POST /api/owner-loans; repayment runs overdraw guard (server-verified) + admin override prompt on 409 — guard **Working** (server), UI form Not tested
+- Finance (Cash Position) — transaction rows — passive display — Working (render)
+- Finance (Profit) — invoice expand rows — toggle item breakdown; number → /documents/:id — Not tested (tab renders)
+- Finance (Cash & Loans) — "Add Cash Injection" / "Record Repayment" — open form — Working (tested: Record Repayment opens inline form)
+- Finance (Cash & Loans) — form Record — POST /api/owner-loans; repayment runs overdraw guard — Working (tested end-to-end from UI: 999,999 repayment → 409 INSUFFICIENT_FUNDS "current balance QAR 12966.50", NO owner-loan created; admin override prompt on 409, manager blocked)
 - Finance (Cheques) — see PDC Tracker below (same component) — Working (renders in Finance)
 
 ## Expenses
