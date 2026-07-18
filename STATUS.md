@@ -152,11 +152,13 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Finance (Cheques) — see PDC Tracker below (same component) — Working (renders in Finance)
 
 ## Expenses
-- Expenses — "New Expense" button — opens expense form — Not tested
-- Expenses — Expense form fields (category/amount/date/method/store/notes/recurring/frequency) — set form — Not tested
-- Expenses — Expense form Save — POST /api/expenses; runs overdraw guard (server-verified) + admin override prompt on 409 — guard **Working** (server), UI form Not tested
-- Expenses — Category manage: add/remove (admin) — POST/DELETE /api/lists — Not tested
-- Expenses — Delete expense — CorrectionModal → soft-delete with reason — Not tested
+- Expenses — "New Expense" button — opens expense form — Working (tested: form opens)
+- Expenses — Expense form fields (category*/amount*/date*/method/store/notes/recurring/frequency) — set form — Working (tested: all fields render)
+- Expenses — Expense form empty-submit validation — blocks + keeps form open — Working (tested: Save with empty required → blocked, no expense created)
+- Expenses — Expense form Save (overdraw guard) — POST /api/expenses; overdraw guard + admin override prompt on 409 — Working (tested end-to-end: 999,999 Cash expense → 409 INSUFFICIENT_FUNDS "balance QAR 12966.50", 0 leaked)
+- Expenses — Expense form Save (valid) — creates expense + cashflow — Not tested (real write; skipped)
+- Expenses — Category manage: add/remove (admin) — POST/DELETE /api/lists — Not tested (real write)
+- Expenses — Delete expense — CorrectionModal → soft-delete with reason — Not tested (real write)
 - Expenses — Corrected badge / Correct button — logs correction — Not tested
 
 ## PDC Tracker  (/pdc, also embedded as Finance → Cheques)
