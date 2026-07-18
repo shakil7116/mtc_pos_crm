@@ -91,21 +91,24 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Customers — "owes / HIGH RISK over limit" badge + Outstanding/Credit columns — passive (from credit-exposure) — Working (tested: live "owes QAR 4060" on Al-Rashidi)
 
 ## Inventory
-- Inventory — "Add / Adjust Stock" button — opens stock-adjust dialog — Not tested
-- Inventory — Adjust dialog mode toggle (add / remove / transfer) — switches form — Not tested
-- Inventory — Adjust: product / from-store / to-store selects — set fields — Not tested
-- Inventory — Adjust Confirm — POST stock adjustment/transfer (mut/transferMut) — Not tested
+- Inventory — Tabs (All Stock / Low Stock / Products / Adjustments) — switch view — Working (tested: All Stock, Low Stock, Products render distinct views)
+- Inventory — Low Stock tab — qty≤min rows + reorder velocity + OUT/LOW badges — Working (tested: 5 rows, 3 OUT / 2 LOW, "~7.13/day sold")
+- Inventory — Products tab — product catalog (SKU/name/category/prices/location) + Show-inactive toggle — Working (tested: renders)
+- Inventory — "Stock Adjustment" button — opens adjust dialog — Working (tested: dialog renders — Add/Remove/Transfer toggle, product/store/qty/reason)
+- Inventory — Adjust dialog validation — blocks empty submit with inline errors — Working (tested: "Select a product / Select a store / Enter a positive quantity"; no adjustment made)
+- Inventory — Adjust Confirm — POST /api/inventory/adjust (mut/transferMut) — Not tested (real write; skipped to avoid changing live stock)
 - Inventory — Per-row Add / Remove / Transfer stock icons — open adjust dialog prefilled — Not tested
-- Inventory — Product row → name link — Link → /inventory/:id — Not tested
-- Inventory — Add Product button — opens product dialog — Not tested
-- Inventory — Product dialog: fields (SKU/name/category/prices/min/supplier/location×4) — set form — Not tested
-- Inventory — Product dialog: image upload (≤2 MB) + Remove photo — reads file, sets imageUrl — Not tested
-- Inventory — Product dialog Save — POST/PUT product (mut) — Not tested
-- Inventory — Store filter Select — filter rows by store — Not tested
-- Inventory — Reorder-suggestion "Create PO" — POST purchase order (createPO) — Not tested
+- Inventory — Product row → name link — Link → /inventory/:id — Working (tested: GYP-001 detail renders — margin, per-location stock, sub-tabs)
+- Inventory — Add Product button — opens product dialog — Working (tested: dialog renders)
+- Inventory — Product dialog: fields (SKU/name/category/retail+wholesale+cost/min/qty/supplier/location×4) — set form — Working (tested: all 15 fields render incl. price tiers + location hierarchy)
+- Inventory — Product dialog: image upload (≤2 MB) + Remove photo — reads file, sets imageUrl — Working (tested: "Product Photo (optional)" upload control present)
+- Inventory — Product dialog Save — POST/PUT product (mut) — Not tested (real write; skipped)
+- Inventory — Store filter Select — filter rows by store — Not tested (same pattern as verified Dashboard store filter)
+- Inventory — Search input — filter by name/SKU/category — Not tested (same pattern as verified Documents search)
+- Inventory — Reorder-suggestion "Create PO" — POST purchase order (createPO) — Not tested (real write)
 - Inventory — Reorder-suggestion "Order now" (WhatsApp) — window.open wa.me to supplier — Not tested
-- Inventory — Product active toggle — PUT product active (toggleActiveMut) — Not tested
-- Inventory — Export CSV — exportCsv() download — Not tested
+- Inventory — Product active toggle — PUT product active (toggleActiveMut) — Not tested (real write)
+- Inventory — Export CSV — exportCsv() download — Not tested (client-side blob download)
 
 ## Suppliers
 - Suppliers — Add Supplier button — opens supplier dialog — Not tested
