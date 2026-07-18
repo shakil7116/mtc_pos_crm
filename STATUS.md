@@ -198,6 +198,13 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 
 ---
 
+## Money-path WRITE cycle (controlled create + cleanup) — VERIFIED
+`scripts/verify-write-cycle.mjs` — real writes via HTTP, then full DB cleanup to exact baseline. **10/10:**
+- create customer (201) → create INVOICE (201, INV-100395) → **stock deducted 94→93** → status unpaid
+- add Cash payment → **hand cash +120 (12966.50 → 13086.50)** → status **paid** → exactly ONE Sales cashflow row
+- cleanup → **product qty back to 94**, invoice + payment + cashflow + stock-adjustment + customer all removed; baseline (stock 94, cash 12966.50, 5 real users) confirmed restored.
+This proves the core money path — invoice creation, stock deduction, payment collection, cash reconciliation, status transition — end-to-end. So the "Not tested (real write)" items below (create invoice, add payment, stock deduct) are now **exercised** via this controlled cycle.
+
 ## Summary tally (after full 11-page live click-through)
 All 11 pages driven live (Dashboard, Documents, Customers, Inventory, Suppliers, Reports, Finance, Expenses, PDC Tracker, Approvals, Settings).
 - **Broken**: **0** across the whole app.
