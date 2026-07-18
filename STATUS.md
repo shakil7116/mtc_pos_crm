@@ -187,18 +187,20 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Approvals — Original-invoice link — Link → /documents/:id — Not tested (only rendered on pending-return cards)
 
 ## Settings  (admin-only; multi-section)
-- Settings — Company Info: fields + logo upload + Save — PUT company settings — Not tested
-- Settings — Stores: Add store (dialog) + Save — POST /api/stores — Not tested
-- Settings — Stores: Edit store inline + Save/Cancel — PUT /api/stores/:id — Not tested
-- Settings — Staff/Users: Add staff (dialog: name/role/store/PIN, show-PIN toggle) — POST /api/users — Not tested
-- Settings — Staff/Users: Edit user + Save — PUT /api/users/:id — Not tested
-- Settings — Staff/Users: admin-PIN gate on sensitive change — verifies admin PIN — Not tested
-- Settings — Custom Fields / Managed Lists / Document Numbering / Business Rules / Location Hierarchy panels — each POST/PUT its config — Not tested
+- Settings — Access control (admin-only) — manager/non-admin cannot reach it — Working (tested: as manager, /settings redirected to home + "Settings" absent from sidebar)
+- Settings — Company Info: fields + logo upload + Save — PUT company settings — Not tested (admin-only; no admin session available — shakil password unknown, admin creds not reset without owner authorization)
+- Settings — Stores: Add store (dialog) + Save — POST /api/stores — Not tested (admin-only)
+- Settings — Stores: Edit store inline + Save/Cancel — PUT /api/stores/:id — Not tested (admin-only)
+- Settings — Staff/Users: Add staff (dialog: name/role/store/PIN, show-PIN toggle) — POST /api/users — Not tested (admin-only)
+- Settings — Staff/Users: Edit user + Save — PUT /api/users/:id — Not tested (admin-only)
+- Settings — Staff/Users: admin-PIN gate on sensitive change — verifies admin PIN — Not tested (admin-only)
+- Settings — Custom Fields / Managed Lists / Document Numbering / Business Rules / Location Hierarchy panels — each POST/PUT its config — Not tested (admin-only)
 
 ---
 
-## Summary tally (by status)
-- **Working**: 36 (dashboard nav widgets, Finance tabs, Customers credit filter + rows, Reports Sales tab + drill-down, PDC/Cheque links + detail + photo, server-verified cash guard / cheque single-booking, **+ the 2 formerly-Incomplete items, now fixed**)
-- **Incomplete**: 0 — both fixed (Documents WhatsApp now personalized + targets customer phone; Customers "Last Purchase" sort now reorders by most-recent invoice date)
-- **Broken**: 0 found in this pass
-- **Not tested**: the majority — wired in code with real handlers/routes, but not exercised live this session (most form submits, dialogs, filters, inventory/supplier/settings actions). No defect observed; just unproven.
+## Summary tally (after full 11-page live click-through)
+All 11 pages driven live (Dashboard, Documents, Customers, Inventory, Suppliers, Reports, Finance, Expenses, PDC Tracker, Approvals, Settings).
+- **Broken**: **0** across the whole app.
+- **Incomplete**: **0** — both original items fixed + confirmed live (Documents WhatsApp → personalized + customer phone; Customers "Last Purchase" sort → reorders).
+- **Working**: ~70 elements exercised & confirmed — navigation/deep-links, tab filters, search, dialogs + inline validation (Customers/Inventory/Suppliers/Expenses all block empty submits), the **cash overdraw guard proven end-to-end from the UI on both Finance repayment and Expenses** (409, no write), cheque single-booking (12/12), Reports tabs + endpoints, access control (manager denied Settings).
+- **Not tested (honest)**: elements that either (a) perform a real write I deliberately skipped to avoid polluting live data (create invoice/customer/product/PO, approve return, save expense, cheque status change, settings writes), or (b) have **no data to drive** (Suppliers PO steps 2/3 + receive — 0 linked products/0 orders; Approvals approve/reject — 0 pending returns), or (c) are **admin-only** and no admin session was available (all Settings config panels). None showed a defect; all are wired with real handlers.
