@@ -89,7 +89,7 @@ export default function AdminExtras({ reminders = [], storeFilter = null }: { re
           {pdcDueToday.length === 0 && <p className="text-sm text-muted-foreground">None due.</p>}
           <div className="space-y-1.5">
             {pdcDueToday.slice(0, 5).map((c) => (
-              <Link key={c.id} href="/pdc?due=today" className="flex items-center gap-2 text-sm rounded-lg border px-2.5 py-1.5 hover:bg-slate-50">
+              <Link key={c.id} href="/finance?tab=cheques&due=today" className="flex items-center gap-2 text-sm rounded-lg border px-2.5 py-1.5 hover:bg-slate-50">
                 <span className={`text-[10px] font-bold rounded px-1.5 py-0.5 ${c.type === "payable" ? "bg-red-50 text-red-600" : "bg-green-50 text-green-700"}`}>{c.type === "payable" ? "PAY" : "RCV"}</span>
                 <span className="font-mono text-xs truncate flex-1">{c.chequeNumber}</span>
                 <span className="font-mono font-semibold">{money(c.amount)}</span>

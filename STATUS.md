@@ -15,7 +15,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 ---
 
 ## Dashboard
-- Dashboard — Location filter dropdown — rescopes summary/low-stock/deliveries via ?storeId= — Not tested
+- Dashboard — Location filter dropdown — rescopes summary/low-stock/deliveries via ?storeId= — Working (tested: switching to Store 1 rescoped revenue/credit/outstanding + endpoint honors storeId)
 - Dashboard — Alert: cheques due within 3 days — Link → /finance?tab=cheques — Working
 - Dashboard — Alert: low stock — Link → /inventory — Working
 - Dashboard — Alert: pending approvals — Link → /approvals — Not tested
@@ -23,7 +23,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Dashboard — Hero: Profit Today — Link → /finance?tab=profit&period=today — Working
 - Dashboard — Hero: Cash Position — Link → /finance?tab=cash-position — Working
 - Dashboard — Hero: Credit Exposure — Link → /customers?filter=credit-outstanding — Working
-- Dashboard — Receivables Aging bar — Link → /credit-exposure — Not tested
+- Dashboard — Receivables Aging bar — Link → /credit-exposure — Working (tested: /credit-exposure renders — total + per-customer, highest first, expandable)
 - Dashboard — StatCard: This Month Revenue — Link → /reports?tab=daily-sales — Working
 - Dashboard — StatCard: Credit Sales Today — Link → /documents?type=INV&date=today&credit=1 — Working
 - Dashboard — StatCard: Cash & Loans — Link → /finance?tab=cash-loans — Working
@@ -32,13 +32,13 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Dashboard — PDC card: Receivable — Link → /finance?tab=cheques&type=receivable — Working
 - Dashboard — PDC card: Payable — Link → /finance?tab=cheques&type=payable — Working
 - Dashboard — PDC card: Due today — Link → /finance?tab=cheques&due=today — Working
-- Dashboard — "Open Messages" link — Link → /messages — Not tested
-- Dashboard — WhatsApp "Remind" button — opens wa.me with prefilled overdue message — Not tested
+- Dashboard — "Open Messages" link — Link → /messages — Working (tested: /messages renders)
+- Dashboard — WhatsApp "Remind" button — opens wa.me/{customer number} with a personalized overdue message — Working (tested: href = wa.me/97433124455?text=Dear Mohammed Al-Rashidi…outstanding…)
 - Dashboard — Fallback "Remind" link (no phone) — Link → /messages — Not tested
 - Dashboard — Inventory Alerts "View all" — Link → /inventory — Not tested
 - Dashboard — Low-stock item rows — Link → /inventory/:productId — Not tested
 - Dashboard — Low-stock "+N more" — Link → /inventory — Not tested
-- Dashboard — Quick Action: New Invoice — Link → /documents/new/INV — Not tested
+- Dashboard — Quick Action: New Invoice — Link → /documents/new/INV — Working (tested: invoice editor renders — type tabs, templates, Save, live preview)
 - Dashboard — Quick Action: New Quotation — Link → /documents/new/QT — Not tested
 - Dashboard — Quick Action: Delivery Note — Link → /documents/new/DN — Not tested
 - Dashboard — Quick Action: View Approvals — Link → /approvals — Not tested
@@ -60,17 +60,18 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Dashboard (AdminExtras) — Delivery board rows — Link → /documents/:id — Not tested
 
 ## Documents
-- Documents — New Invoice / Quotation / DN buttons — nav → /documents/new/:type — Not tested
+- Documents — New Invoice button — nav → /documents/new/INV — Working (tested: invoice editor renders)
+- Documents — New Quotation / DN buttons — nav → /documents/new/:type (same editor) — Not tested (INV path verified)
 - Documents — New Purchase Order button — nav → /purchase-orders/new — Not tested
-- Documents — Type tabs (All/INV/QT/DN/PO/CN) — set type filter, refetch — Not tested
-- Documents — Search input — client-side filter by number/customer — Not tested
-- Documents — Status filter Select — filter by status — Not tested
-- Documents — Date From / Date To inputs — filter by date range — Not tested
+- Documents — Type tabs (All/INV/QT/DN/PO/CN) — set type filter — Working (tested: Invoices → 20 INV only, no other types)
+- Documents — Search input — client-side filter by number/customer — Working (tested: "Farhan" → 2 Farhan rows)
+- Documents — Status filter Select — filter by status — Not tested (same client-side filter pattern as search)
+- Documents — Date From / Date To inputs — filter by date range — Not tested (same pattern)
 - Documents — Clear filters button — resets all filters (shown when active) — Not tested
-- Documents — Table row / Card — nav → /documents/:id — Not tested
-- Documents — Row/Card View icon — nav → /documents/:id — Not tested
+- Documents — Table row / Card — nav → /documents/:id — Working (tested: row → PO-100003 detail renders)
+- Documents — Row/Card View icon — nav → /documents/:id — Working (same target as row)
 - Documents — Row/Card Print icon — nav to detail then window.print() after 600ms — Not tested
-- Documents — Row/Card WhatsApp icon — window.open wa.me targeting the customer's phone with a personalized message (name + doc kind/number/total); toast if no phone on file — Working (FIXED; verified payload carries customer.phone)
+- Documents — Row/Card WhatsApp icon — window.open wa.me targeting the customer's phone with a personalized message (name + doc kind/number/total); toast if no phone on file — Working (FIXED + click-tested 20 rows: real numbers for Ahmed/Farhan/Omar/Khalid, contact-picker for Cash/Walk-in)
 - Documents — Pagination Prev/Next — setPage ± 1, disabled at bounds — Not tested
 - Documents — Today/Credit preset header + total — title + summed totals when ?date=today / ?credit=1 — Not tested
 - Documents — Results count / Empty state / Skeletons / Badges — passive display — Not tested
