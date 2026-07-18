@@ -111,16 +111,18 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - Inventory — Export CSV — exportCsv() download — Not tested (client-side blob download)
 
 ## Suppliers
-- Suppliers — Add Supplier button — opens supplier dialog — Not tested
-- Suppliers — Supplier dialog Save/Cancel + fields — POST/PUT supplier (mut) — Not tested
+- Suppliers — Suppliers / Orders tabs — switch view — Working (tested: both render; Orders(0) empty)
+- Suppliers — Add Supplier button — opens supplier dialog — Working (tested: dialog renders — Name*/Company/WhatsApp*/Phone/Email/Address/Terms/Notes)
+- Suppliers — Supplier dialog validation — blocks empty submit — Working (tested: inline "Name is required", "Phone is required"; no supplier created)
+- Suppliers — Supplier dialog Save — POST/PUT supplier (mut) — Not tested (real write; validation path proven)
 - Suppliers — Row Edit button — opens edit dialog — Not tested
-- Suppliers — Row "New Order" button — opens PO wizard — Not tested
-- Suppliers — PO wizard step 1: toggle products, search — build order items — Not tested
-- Suppliers — PO wizard step 2: qty −/+ per item — updateQty — Not tested
-- Suppliers — PO wizard step 3: preview → "Send WhatsApp" — save order (saveMut) + window.open wa.me — Not tested
-- Suppliers — Order row expand — toggleOrderRow — Not tested
-- Suppliers — "Mark received" (+ store select) — POST receive PO → stock in (markReceived) — Not tested
-- Suppliers — Search input / clear — filter suppliers — Not tested
+- Suppliers — Row "New Order" button — opens PO wizard — Working (tested: wizard opens — "New Order — ABLE GROUP", 3-step indicator)
+- Suppliers — PO wizard step 1: toggle products, search — build order items — Working (tested: renders; correct empty state "No products linked to this supplier")
+- Suppliers — PO wizard step 2: qty −/+ per item — updateQty — Not tested (unreachable: this supplier has 0 linked products, so step 1 → step 2 has no items)
+- Suppliers — PO wizard step 3: preview → "Send WhatsApp" — save order (saveMut) + window.open wa.me — Not tested (unreachable without linked products; also a real write)
+- Suppliers — Order row expand — toggleOrderRow — Not tested (Orders(0) — no orders exist)
+- Suppliers — "Mark received" (+ store select) — POST receive PO → stock in (markReceived) — Not tested (no PO exists to receive; real write to stock)
+- Suppliers — Search input / clear — filter suppliers — Not tested (same client-side pattern as Documents search)
 
 ## Reports
 - Reports — Tab picker (Business Summary / Stock Movement / Aging / Sales / Top Customers / Top Products / Returns) — switch report tab (dropdown on mobile, chips on desktop) — Sales tab **Working**; others Not tested
