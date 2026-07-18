@@ -180,7 +180,7 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 
 ## Approvals
 - Approvals — Page render (pending list + "Recently Decided" history) — Working (tested: "All caught up" empty state + 3 decided returns RV-500010/500002/500001 render)
-- Approvals — Approve return (payout-method select + Approve) — POST /api/returns/:id/approve (reverses stock + refund) — Not tested (0 pending returns to act on; buttons render only with pending data; real write. Server logic proven in prior sessions: return→CN doc + stock reversal + refund via funds-guarded path)
+- Approvals — Approve return (payout-method select + Approve) — POST /api/returns/:id/approve (reverses stock + refund) — Working (proven end-to-end via controlled seed+approve+cleanup, `scripts/verify-return-approve.mjs` 12/12: file return RV-500012 → approve → **stock restored 93→94**, **refund booked −120 (Customer Refund)**, **linked CN-100003 generated + returns.credit_note_id set**, net cash back to baseline; all rows cleaned up)
 - Approvals — Reject return (reason textarea + Reject) — POST /api/returns/:id/reject — Not tested (0 pending returns; real write)
 - Approvals — Reject Cancel button — closes the reject form — Not tested (needs a pending return)
 - Approvals — Reverse approval ("Undo") — POST correction, return → pending again — Not tested (real write; buttons present on decided returns)
@@ -204,6 +204,8 @@ Format: `[Page] — [Element] — [what it does] — STATUS`
 - add Cash payment → **hand cash +120 (12966.50 → 13086.50)** → status **paid** → exactly ONE Sales cashflow row
 - cleanup → **product qty back to 94**, invoice + payment + cashflow + stock-adjustment + customer all removed; baseline (stock 94, cash 12966.50, 5 real users) confirmed restored.
 This proves the core money path — invoice creation, stock deduction, payment collection, cash reconciliation, status transition — end-to-end. So the "Not tested (real write)" items below (create invoice, add payment, stock deduct) are now **exercised** via this controlled cycle.
+
+`scripts/verify-return-approve.mjs` — controlled RETURN→APPROVE cycle. **12/12:** seed invoice+payment → file return (RV) → **approve** → stock restored (93→94), **refund booked** (−120 Customer Refund), **linked Credit Note generated** (CN + returns.credit_note_id), net cash back to baseline → full cleanup, zero residue (product 94, cash 12966.50, 0 orphan returns, 5 real users). Proves the returns approval flow: stock reversal + refund + CN generation.
 
 ## Summary tally (after full 11-page live click-through)
 All 11 pages driven live (Dashboard, Documents, Customers, Inventory, Suppliers, Reports, Finance, Expenses, PDC Tracker, Approvals, Settings).
