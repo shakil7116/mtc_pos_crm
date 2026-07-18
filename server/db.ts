@@ -16,6 +16,10 @@ export const pool = new Pool({
   max: 10,
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 15_000,
+  // TCP keep-alive stops the Supabase pooler from silently dropping idle connections
+  // (the "Connection terminated unexpectedly" → "Failed query" seen under bursty load).
+  keepAlive: true,
+  keepAliveInitialDelayMillis: 10_000,
 });
 
 export const db = drizzle(pool, { schema });

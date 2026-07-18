@@ -2280,10 +2280,39 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         else { creditSalesToday += total; profitFromUnrealizedCredit += profit; }
       }
 
-      // Return deductions today
+      // Return deductions — a return nets out of TODAY's Sales/Profit ONLY when its
+      // ORIGINAL invoice's business day is also today. (Spec rule: today's widgets move
+      // only when the invoice's own original date is today. A return against an OLDER
+      // invoice moves only Cash Position — via its refund cashflow — never today's
+      // sales/profit.) Sales reduce by returned REVENUE; profit by returned MARGIN.
+      let returnsRevenueToday = 0, returnsMarginToday = 0;
+      if (returnsDocs.length) {
+        const origIds = Array.from(new Set(returnsDocs.map((d: any) => d.originalInvoiceId).filter(Boolean))) as number[];
+        const origInvs = origIds.length ? await db.select().from(documents).where(inArray(documents.id, origIds)) : [];
+        const origById: Record<number, any> = {};
+        for (const o of origInvs as any[]) origById[o.id] = o;
+        const cnIds = returnsDocs.map((d: any) => d.id);
+        const cnItemRows = cnIds.length ? await db
+          .select({ documentId: documentItems.documentId, qty: documentItems.qty, amount: documentItems.amount, cost: productsTable.costPrice })
+          .from(documentItems).leftJoin(productsTable, eq(documentItems.productId, productsTable.id))
+          .where(inArray(documentItems.documentId, cnIds)) : [];
+        const cnRev: Record<number, number> = {}, cnCogs: Record<number, number> = {};
+        for (const r of cnItemRows as any[]) {
+          cnRev[r.documentId] = (cnRev[r.documentId] || 0) + parseFloat(r.amount || "0");
+          cnCogs[r.documentId] = (cnCogs[r.documentId] || 0) + parseFloat(r.cost || "0") * parseFloat(r.qty || "0");
+        }
+        for (const rd of returnsDocs as any[]) {
+          const orig = origById[rd.originalInvoiceId];
+          if (!orig || !bd(orig)) continue; // original invoice NOT today → leave today's sales/profit untouched
+          const rev = cnRev[rd.id] != null ? cnRev[rd.id] : parseFloat(rd.total || "0");
+          returnsRevenueToday += rev;
+          returnsMarginToday += rev - (cnCogs[rd.id] || 0);
+        }
+      }
+      // returnsToday (response field) = all returns PROCESSED today, for display.
       const returnsToday = returnsDocs.reduce((s: number, d: any) => s + parseFloat(d.total || "0"), 0);
-      cashSalesToday = Math.max(0, cashSalesToday - returnsToday);
-      profitFromCash -= returnsToday;
+      cashSalesToday = Math.max(0, cashSalesToday - returnsRevenueToday);
+      profitFromCash -= returnsMarginToday;
 
       // Cheques Management — all uncleared (pending) cheques currently in hand
       const allCheques = await db.select().from(chequesTable);
@@ -2300,12 +2329,19 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const custMap: Record<number, any> = {};
       for (const c of custList as any[]) custMap[c.id] = c;
 
+      // Batch payments for ALL unpaid invoices in one query (no N+1 on the hot summary path).
+      const unpaidReal = (unpaidRows as any[]).filter((d) => isReal(d) && inStore(d));
+      const upIds = unpaidReal.map((d) => d.id);
+      const upPayRows = upIds.length ? await db.select().from(paymentsTable).where(inArray(paymentsTable.documentId, upIds)) : [];
+      const paidByDoc: Record<number, number> = {};
+      for (const p of upPayRows as any[]) {
+        const amt = parseFloat(p.amount || "0") * (p.isRefund ? -1 : 1);
+        paidByDoc[p.documentId] = (paidByDoc[p.documentId] || 0) + amt;
+      }
       const reminders: any[] = [];
       let totalOutstanding = 0;
-      for (const d of unpaidRows as any[]) {
-        if (!isReal(d) || !inStore(d)) continue;
-        const pays = await db.select().from(paymentsTable).where(eq(paymentsTable.documentId, d.id));
-        const paid = (pays as any[]).reduce((s, p) => s + (p.isRefund ? -parseFloat(p.amount || "0") : parseFloat(p.amount || "0")), 0);
+      for (const d of unpaidReal) {
+        const paid = paidByDoc[d.id] || 0;
         const remaining = parseFloat(d.total || "0") - paid;
         if (remaining <= 0.005) continue;
         const daysOverdue = Math.floor((Date.parse(today) - Date.parse(d.date)) / 86400000);
