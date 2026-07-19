@@ -869,7 +869,10 @@ export async function createPayment(data: InsertPayment): Promise<Payment> {
       const total = parseFloat(doc.total || "0");
       // Never overwrite a terminal status (a void/returned invoice stays that way).
       if (doc.status !== "void" && doc.status !== "returned") {
-        const status = total > 0 && totalPaid >= total ? "paid" : totalPaid > 0 ? "partial" : "unpaid";
+        // Compare with a small epsilon so cumulative partial payments that sum to the
+        // total (across any number of payments / days) correctly flip to "paid" despite
+        // floating-point drift (e.g. 1944.999999 ≥ 1945).
+        const status = total > 0 && totalPaid >= total - 0.005 ? "paid" : totalPaid > 0.005 ? "partial" : "unpaid";
         await updateDocument(data.documentId, { status });
       }
     }
