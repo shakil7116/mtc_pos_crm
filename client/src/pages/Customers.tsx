@@ -9,6 +9,7 @@ import {
   Phone,
   CreditCard,
   ArrowUpDown,
+  Download,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -61,6 +62,7 @@ type CustomerBalance = {
 
 type SortKey = "name" | "outstanding" | "lastPurchase";
 type FilterType = "all" | "walk-in" | "contractor" | "corporate" | "government";
+type Segment = "all" | "cash" | "credit" | "overdue" | "over_limit" | "pdc" | "good" | "bad";
 
 /* ─────────────────────────────────────────
    Helpers
@@ -344,18 +346,28 @@ function NewCustomerDialog({
 /* ─────────────────────────────────────────
    Customer Row
 ───────────────────────────────────────── */
+const RATING_STYLE: Record<string, string> = {
+  good: "bg-emerald-100 text-emerald-700",
+  watch: "bg-amber-100 text-amber-700",
+  bad: "bg-red-600 text-white",
+};
+
 function CustomerRow({
   customer,
   balance,
+  ov,
   onNavigate,
 }: {
   customer: Customer;
   balance?: number;
+  ov?: any;
   onNavigate: (id: number) => void;
 }) {
   const outstanding = balance ?? 0;
   const creditLimit = toNum(customer.creditLimit);
   const overLimit = creditLimit > 0 && outstanding > creditLimit;
+  const pdc = toNum(ov?.pdcAmount);
+  const rating = ov?.rating as string | undefined;
 
   return (
     <div
@@ -386,15 +398,25 @@ function CustomerRow({
           >
             {typeLabel(customer.type)}
           </Badge>
+          {rating && (
+            <Badge className={cn("text-[10px] font-bold px-1.5 py-0 rounded-full border-0 capitalize", RATING_STYLE[rating] || "bg-gray-100 text-gray-600")}>
+              {rating}
+            </Badge>
+          )}
           {overLimit ? (
             <Badge className="text-[10px] font-bold px-1.5 py-0 rounded-full border-0 bg-red-600 text-white">
-              ⚠ HIGH RISK · over limit
+              ⚠ over limit
             </Badge>
           ) : outstanding > 0 ? (
             <Badge className="text-[10px] font-semibold px-1.5 py-0 rounded-full border-0 bg-amber-100 text-amber-700">
               owes {fmt(outstanding)}
             </Badge>
           ) : null}
+          {pdc > 0 && (
+            <Badge className="text-[10px] font-semibold px-1.5 py-0 rounded-full border-0 bg-blue-100 text-blue-700">
+              PDC {fmt(pdc)}
+            </Badge>
+          )}
         </div>
         {customer.phone && (
           <div className="flex items-center gap-1 mt-0.5">
@@ -489,6 +511,17 @@ export default function Customers() {
   });
   const bal = (id: number) => balMap.get(id) || 0;
 
+  /* money-behaviour overview per customer (due / paid / PDC / rating) → segment filter + export */
+  const [segment, setSegment] = useState<Segment>("all");
+  const { data: overview } = useQuery<any>({
+    queryKey: ["/api/reports/customer-overview"],
+    queryFn: () => fetch("/api/reports/customer-overview").then((r) => r.json()).catch(() => ({ rows: [], totals: {} })),
+  });
+  const ovMap = new Map<number, any>();
+  (overview?.rows || []).forEach((r: any) => ovMap.set(r.customerId, r));
+  const ov = (id: number) => ovMap.get(id);
+  const totals = overview?.totals || {};
+
   /* last-purchase date per customer (only when sorting by it) — most-recent INV date */
   const { data: docsForSort } = useQuery<any[]>({
     queryKey: ["/api/documents"],
@@ -510,6 +543,17 @@ export default function Customers() {
     if (c.active === false) return false;
     if (creditMode && !(bal(c.id) > 0)) return false; // credit-exposure preset
     if (!creditMode && filterType !== "all" && c.type !== filterType) return false;
+    if (segment !== "all") {
+      const o = ov(c.id);
+      if (!o) return false;
+      if (segment === "cash" && !o.isCash) return false;
+      if (segment === "credit" && !o.isCredit) return false;
+      if (segment === "overdue" && !o.overdue) return false;
+      if (segment === "over_limit" && !o.overLimit) return false;
+      if (segment === "pdc" && !o.hasPdc) return false;
+      if (segment === "good" && o.rating !== "good") return false;
+      if (segment === "bad" && o.rating !== "bad") return false;
+    }
     const q = search.toLowerCase();
     if (!q) return true;
     return (
@@ -517,6 +561,21 @@ export default function Customers() {
       (c.phone ?? "").toLowerCase().includes(q)
     );
   });
+
+  /* CSV export of the visible customer list — name, phone, type, invoiced, paid, due, PDC, overdue, rating */
+  function exportCsv() {
+    const header = ["Customer", "Phone", "Type", "Invoiced", "Paid", "Amount Due", "PDC (uncleared)", "Days Overdue", "Rating"];
+    const rows = sorted.map((c) => {
+      const o = ov(c.id) || {};
+      return [c.name, c.phone || "", typeLabel(c.type), o.totalInvoiced ?? 0, o.totalPaid ?? 0, o.amountDue ?? 0, o.pdcAmount ?? 0, o.maxDaysOverdue ?? 0, o.rating || "—"];
+    });
+    const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  }
 
   /* sort */
   const sorted = [...filtered].sort((a, b) => {
@@ -540,10 +599,54 @@ export default function Customers() {
             {isLoading ? "Loading…" : `${totalCustomers} total customers`}
           </p>
         </div>
-        <Button onClick={() => setDialogOpen(true)} className="gap-2 shrink-0">
-          <Plus className="w-4 h-4" />
-          New Customer
-        </Button>
+        <div className="flex gap-2 shrink-0">
+          <Button variant="outline" onClick={exportCsv} className="gap-2">
+            <Download className="w-4 h-4" /> Export CSV
+          </Button>
+          <Button onClick={() => setDialogOpen(true)} className="gap-2">
+            <Plus className="w-4 h-4" />
+            New Customer
+          </Button>
+        </div>
+      </div>
+
+      {/* ── Overview strip — money health at a glance ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[
+          { k: "totalDue", label: "Total Due", val: fmt(totals.totalDue), tone: "text-red-600", seg: "credit" as Segment },
+          { k: "totalPdc", label: "PDC in hand", val: fmt(totals.totalPdc), tone: "text-amber-600", seg: "pdc" as Segment },
+          { k: "overdue", label: "Overdue", val: `${totals.overdue ?? 0} cust`, tone: "text-red-600", seg: "overdue" as Segment },
+          { k: "good", label: "Good standing", val: `${totals.good ?? 0} cust`, tone: "text-emerald-600", seg: "good" as Segment },
+        ].map((s) => (
+          <button key={s.k} onClick={() => setSegment(segment === s.seg ? "all" : s.seg)}
+            className={cn("rounded-xl border p-3 text-left transition-colors", segment === s.seg ? "border-primary bg-primary/5" : "hover:border-primary/40")}>
+            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.label}</p>
+            <p className={cn("font-mono font-bold text-lg", s.tone)}>{s.val}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* ── Segment filter — cash vs credit, good vs bad ── */}
+      <div className="flex gap-1.5 flex-wrap">
+        {([
+          ["all", "All"], ["cash", "Cash (settled)"], ["credit", "Credit (owes)"],
+          ["overdue", "Overdue"], ["over_limit", "Over limit"], ["pdc", "Has PDC"],
+          ["good", "Good"], ["bad", "Bad"],
+        ] as [Segment, string][]).map(([val, label]) => {
+          const count = val === "all" ? undefined
+            : val === "cash" ? totals.cash : val === "credit" ? totals.credit
+            : val === "overdue" ? totals.overdue : val === "over_limit" ? totals.overLimit
+            : val === "pdc" ? undefined : val === "good" ? totals.good : totals.bad;
+          const bad = val === "bad" || val === "overdue" || val === "over_limit";
+          return (
+            <button key={val} onClick={() => setSegment(val)}
+              className={cn("text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
+                segment === val ? (bad ? "bg-red-600 text-white border-red-600" : "bg-primary text-primary-foreground border-primary")
+                : "bg-white border-border text-muted-foreground hover:border-primary/50")}>
+              {label}{count != null ? ` (${count})` : ""}
+            </button>
+          );
+        })}
       </div>
 
       {/* Credit-exposure filter banner (dashboard "Credit Exposure" deep-link) */}
@@ -672,6 +775,7 @@ export default function Customers() {
               key={customer.id}
               customer={customer}
               balance={bal(customer.id)}
+              ov={ov(customer.id)}
               onNavigate={(id) => nav(`/customers/${id}`)}
             />
           ))

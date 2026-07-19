@@ -2355,6 +2355,92 @@ export async function getCreditExposure() {
   return { total: Number(total.toFixed(2)), customers };
 }
 
+// Customer overview — one row per active customer with money-behaviour metrics so
+// the owner can spot good vs bad payers and export the ledger. Batched (no N+1).
+//   amountDue = Σ remaining on unpaid/partial INV; totalPaid = payments − refunds;
+//   pdcAmount = uncleared receivable cheques; rating from overdue age + credit-limit.
+export async function getCustomerOverview() {
+  const today = new Date().toISOString().slice(0, 10);
+  const r2 = (n: number) => Number(n.toFixed(2));
+  const [custs, invs, chqs] = await Promise.all([
+    db.select().from(customers),
+    db.select().from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"))),
+    db.select().from(cheques),
+  ]);
+  const invIds = invs.map((d) => d.id);
+  const pays = invIds.length ? await db.select().from(payments).where(inArray(payments.documentId, invIds)) : [];
+  const paidByInv = new Map<number, number>();
+  for (const p of pays as any[]) {
+    const amt = parseFloat(p.amount || "0") * (p.isRefund ? -1 : 1);
+    paidByInv.set(p.documentId, (paidByInv.get(p.documentId) || 0) + amt);
+  }
+
+  const map = new Map<number, any>();
+  for (const c of custs as any[]) {
+    if (c.active === false) continue;
+    map.set(c.id, {
+      customerId: c.id, name: c.name, type: c.type, phone: c.phone ?? null,
+      creditLimit: Number(c.creditLimit || 0),
+      totalInvoiced: 0, totalPaid: 0, amountDue: 0, pdcAmount: 0,
+      invoiceCount: 0, lastPurchase: "", maxDaysOverdue: 0,
+    });
+  }
+  for (const d of invs as any[]) {
+    if (d.customerId == null) continue;
+    const r = map.get(d.customerId); if (!r) continue;
+    const total = parseFloat(d.total || "0");
+    const paid = paidByInv.get(d.id) || 0;
+    r.totalInvoiced += total;
+    r.totalPaid += Math.max(0, paid);
+    r.invoiceCount++;
+    if ((d.date || "") > r.lastPurchase) r.lastPurchase = d.date || "";
+    const remaining = total - paid;
+    if (remaining > 0.005) {
+      r.amountDue += remaining;
+      r.maxDaysOverdue = Math.max(r.maxDaysOverdue, Math.max(0, Math.floor((Date.parse(today) - Date.parse(d.date)) / 86400000)));
+    }
+  }
+  for (const ch of chqs as any[]) {
+    if (ch.customerId == null || (ch.type || "receivable") === "payable") continue;
+    const r = map.get(ch.customerId); if (!r) continue;
+    if (["pending", "deposited"].includes(ch.status)) r.pdcAmount += parseFloat(ch.amount || "0");
+  }
+
+  const rows = Array.from(map.values()).map((r) => {
+    const overLimit = r.creditLimit > 0 && r.amountDue > r.creditLimit + 0.005;
+    const hasDue = r.amountDue > 0.005;
+    let rating: "good" | "watch" | "bad" = "good";
+    if (overLimit || (hasDue && r.maxDaysOverdue > 60)) rating = "bad";
+    else if (hasDue && r.maxDaysOverdue > 30) rating = "bad";
+    else if (hasDue || r.pdcAmount > 0.005) rating = "watch";
+    return {
+      ...r,
+      totalInvoiced: r2(r.totalInvoiced), totalPaid: r2(r.totalPaid),
+      amountDue: r2(r.amountDue), pdcAmount: r2(r.pdcAmount),
+      overLimit, rating,
+      isCash: !hasDue && r.pdcAmount <= 0.005,   // fully settled, no open exposure
+      isCredit: hasDue,                           // owes money on account
+      hasPdc: r.pdcAmount > 0.005,                // holds uncleared cheques
+      overdue: hasDue && r.maxDaysOverdue > 0,
+    };
+  }).sort((a, b) => b.amountDue - a.amountDue);
+
+  const totals = {
+    customers: rows.length,
+    totalInvoiced: r2(rows.reduce((s, r) => s + r.totalInvoiced, 0)),
+    totalPaid: r2(rows.reduce((s, r) => s + r.totalPaid, 0)),
+    totalDue: r2(rows.reduce((s, r) => s + r.amountDue, 0)),
+    totalPdc: r2(rows.reduce((s, r) => s + r.pdcAmount, 0)),
+    cash: rows.filter((r) => r.isCash).length,
+    credit: rows.filter((r) => r.isCredit).length,
+    overdue: rows.filter((r) => r.overdue).length,
+    overLimit: rows.filter((r) => r.overLimit).length,
+    good: rows.filter((r) => r.rating === "good").length,
+    bad: rows.filter((r) => r.rating === "bad").length,
+  };
+  return { rows, totals };
+}
+
 // ─── Seed ────────────────────────────────────────────────────────────────────
 export async function seedDatabase(): Promise<void> {
   // Seed counters

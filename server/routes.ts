@@ -16,7 +16,7 @@ import {
   createReturn, getReturns, getReturn, approveReturn, rejectReturn,
   resolveDeliveryNote, pickDeliveryNote, authorizeDeliveryNote, markDeliveryNoteDelivered,
   getProductActivity, getReorderSuggestions,
-  createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure,
+  createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure, getCustomerOverview,
   createNotification, getNotifications, markNotificationRead, markAllNotificationsRead,
   getMessages, logMessage, getLastMessageDate,
   createSupplierOrder, getSupplierOrders, updateSupplierOrder, receiveSupplierOrder,
@@ -2064,6 +2064,14 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.get("/api/reports/credit-exposure", async (req: Request, res: Response) => {
     if (!reportGate(req, res)) return;
     try { res.json(await getCreditExposure()); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  // Customer overview — money-behaviour per customer (due/paid/PDC + rating) for the
+  // Customers page segments + CSV export. Anyone who can open Customers may read it.
+  app.get("/api/reports/customer-overview", async (req: Request, res: Response) => {
+    if (!["admin", "manager", "salesman"].includes(reqRole(req))) return res.status(403).json({ message: "Not authorised" });
+    try { res.json(await getCustomerOverview()); }
     catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
