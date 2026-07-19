@@ -54,6 +54,7 @@ export function normalizeInvoice(doc: any, customerPhone?: string | null): Templ
     date: doc.date,
     poNumber: doc.poNumber ?? null,
     paymentType: doc.paymentType ?? null,
+    invoiceType: doc.invoiceType ?? null,
     customerName: doc.customerName ?? null,
     customerPhone: customerPhone ?? null,
     items: (doc.items ?? []).map((it: any) => ({
@@ -118,6 +119,7 @@ export const InvoiceRenderer = forwardRef<HTMLDivElement, RendererProps>(
       discountAmount: Number(invoice.discountAmount ?? 0).toFixed(2),
       totalAmountWords: invoice.totalWords ?? "",
       receiverSignature: "",
+      invoiceTypeLabel: invoice.invoiceType ?? null,
     };
     const docType =
       invoice.type === "QT" ? "quotation"

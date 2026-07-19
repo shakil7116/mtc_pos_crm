@@ -1,4 +1,5 @@
 import { db } from "./db";
+import { computeInvoiceType } from "@shared/invoiceType";
 import {
   settings, stores, users, customers, products, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -494,7 +495,14 @@ export async function getDocument(id: number): Promise<DocumentWithItems | undef
   const customer = doc.customerId
     ? (await db.select().from(customers).where(eq(customers.id, doc.customerId)))[0]
     : null;
-  return { ...doc, items, payments: pays, customer };
+  // Invoice type label (Cash Invoice / Invoice / Credit Invoice) — computed live from
+  // payments + linked cheques so it always reflects the current payment composition.
+  let invoiceType: string | undefined;
+  if (doc.type === "INV") {
+    const chqs = await db.select().from(cheques).where(eq(cheques.documentId, id));
+    invoiceType = computeInvoiceType(doc.total || "0", pays as any, chqs as any);
+  }
+  return { ...doc, items, payments: pays, customer, invoiceType } as any;
 }
 
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {

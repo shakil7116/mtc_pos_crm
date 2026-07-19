@@ -17,6 +17,8 @@ export interface TemplateInvoice {
   date: string;
   poNumber?: string | null;
   paymentType?: string | null;
+  /** Payment-composition label shown under the title (INV only): "Cash Invoice" | "Invoice" | "Credit Invoice". */
+  invoiceType?: string | null;
   customerName?: string | null;
   customerPhone?: string | null;
   items: TemplateItem[];

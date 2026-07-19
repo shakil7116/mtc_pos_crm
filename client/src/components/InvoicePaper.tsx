@@ -170,6 +170,19 @@ const toArabicDigits = (num: string | number) => {
         <div className="w-full py-0.5 mb-2 flex flex-col items-center justify-center relative z-10">
           <div className="w-full border-t border-gray-200 opacity-50 mb-0.5"></div>
           <h1 className="text-[20pt] font-bold text-gray-900 tracking-[0.2em] py-0.5 leading-none" style={{ fontWeight: 700 }}>{docTitleAr} / {docTitleEn}</h1>
+          {docType === "invoice" && (invoice as any).invoiceTypeLabel && (
+            <span
+              className="mt-1 text-[8pt] font-bold uppercase tracking-[0.15em] px-2 py-0.5 rounded border"
+              style={{
+                color: (invoice as any).invoiceTypeLabel === "Credit Invoice" ? "#b91c1c"
+                  : (invoice as any).invoiceTypeLabel === "Cash Invoice" ? "#15803d" : "#334155",
+                borderColor: (invoice as any).invoiceTypeLabel === "Credit Invoice" ? "#b91c1c"
+                  : (invoice as any).invoiceTypeLabel === "Cash Invoice" ? "#15803d" : "#334155",
+              }}
+            >
+              {(invoice as any).invoiceTypeLabel}
+            </span>
+          )}
           <div className="w-full border-t border-gray-200 opacity-50 mt-0.5"></div>
         </div>
 
