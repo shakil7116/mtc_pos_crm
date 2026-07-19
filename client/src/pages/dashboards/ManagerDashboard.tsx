@@ -166,7 +166,7 @@ export default function ManagerDashboard() {
 
       {/* PDC + cash position (8C shared admin/manager) */}
       <div className="grid grid-cols-2 gap-3">
-        <a href="/pdc" className="rounded-xl border p-3 hover:shadow-sm">
+        <Link href="/pdc" className="rounded-xl border p-3 hover:shadow-sm">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">PDC due (today or past)</p>
           {(() => {
             const due = cheques.filter((c) => ["pending", "deposited"].includes(c.status) && c.chequeDate <= today);
@@ -175,12 +175,12 @@ export default function ManagerDashboard() {
               <p className="text-[11px] text-muted-foreground">{money(due.reduce((s, c) => s + Number(c.amount || 0), 0))} to action</p>
             </>;
           })()}
-        </a>
-        <div className="rounded-xl border p-3">
+        </Link>
+        <Link href="/finance?tab=cash-position" className="rounded-xl border p-3 hover:shadow-sm block">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Cash position</p>
           <p className={`font-mono font-bold text-xl ${Number(cashPos?.total) < 0 ? "text-red-600" : "text-green-700"}`}>{money(cashPos?.total)}</p>
           <p className="text-[11px] text-muted-foreground">Hand {money(cashPos?.cashInHand)} · Bank {money(cashPos?.bank)}</p>
-        </div>
+        </Link>
       </div>
 
       {/* Staff activity today */}
