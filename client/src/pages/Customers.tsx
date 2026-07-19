@@ -62,7 +62,9 @@ type CustomerBalance = {
 
 type SortKey = "name" | "outstanding" | "lastPurchase";
 type FilterType = "all" | "walk-in" | "contractor" | "corporate" | "government";
-type Segment = "all" | "cash" | "credit" | "overdue" | "over_limit" | "pdc" | "good" | "bad";
+// Behaviour tier is system-calculated server-side (never staff-set, never printed).
+type TierFilter = "all" | "best" | "better" | "good" | "watch" | "bad";
+type FinFilter = "all" | "cash" | "credit";
 
 /* ─────────────────────────────────────────
    Helpers
@@ -346,8 +348,12 @@ function NewCustomerDialog({
 /* ─────────────────────────────────────────
    Customer Row
 ───────────────────────────────────────── */
-const RATING_STYLE: Record<string, string> = {
-  good: "bg-emerald-100 text-emerald-700",
+// Green family for the positive tiers, amber for watch, red for bad —
+// same visual language as the existing type tags.
+const TIER_STYLE: Record<string, string> = {
+  best: "bg-emerald-600 text-white",
+  better: "bg-emerald-100 text-emerald-800",
+  good: "bg-green-50 text-green-700",
   watch: "bg-amber-100 text-amber-700",
   bad: "bg-red-600 text-white",
 };
@@ -367,7 +373,7 @@ function CustomerRow({
   const creditLimit = toNum(customer.creditLimit);
   const overLimit = creditLimit > 0 && outstanding > creditLimit;
   const pdc = toNum(ov?.pdcAmount);
-  const rating = ov?.rating as string | undefined;
+  const tier = ov?.tier as string | undefined;
 
   return (
     <div
@@ -398,9 +404,9 @@ function CustomerRow({
           >
             {typeLabel(customer.type)}
           </Badge>
-          {rating && (
-            <Badge className={cn("text-[10px] font-bold px-1.5 py-0 rounded-full border-0 capitalize", RATING_STYLE[rating] || "bg-gray-100 text-gray-600")}>
-              {rating}
+          {tier && (
+            <Badge className={cn("text-[10px] font-bold px-1.5 py-0 rounded-full border-0 capitalize", TIER_STYLE[tier] || "bg-gray-100 text-gray-600")}>
+              {tier}
             </Badge>
           )}
           {overLimit ? (
@@ -511,8 +517,9 @@ export default function Customers() {
   });
   const bal = (id: number) => balMap.get(id) || 0;
 
-  /* money-behaviour overview per customer (due / paid / PDC / rating) → segment filter + export */
-  const [segment, setSegment] = useState<Segment>("all");
+  /* money-behaviour overview per customer (due / paid / PDC / tier) → dropdown filters + export */
+  const [tierFilter, setTierFilter] = useState<TierFilter>("all");
+  const [finFilter, setFinFilter] = useState<FinFilter>("all");
   const { data: overview } = useQuery<any>({
     queryKey: ["/api/reports/customer-overview"],
     queryFn: () => fetch("/api/reports/customer-overview").then((r) => r.json()).catch(() => ({ rows: [], totals: {} })),
@@ -543,16 +550,11 @@ export default function Customers() {
     if (c.active === false) return false;
     if (creditMode && !(bal(c.id) > 0)) return false; // credit-exposure preset
     if (!creditMode && filterType !== "all" && c.type !== filterType) return false;
-    if (segment !== "all") {
+    if (tierFilter !== "all" || finFilter !== "all") {
       const o = ov(c.id);
       if (!o) return false;
-      if (segment === "cash" && !o.isCash) return false;
-      if (segment === "credit" && !o.isCredit) return false;
-      if (segment === "overdue" && !o.overdue) return false;
-      if (segment === "over_limit" && !o.overLimit) return false;
-      if (segment === "pdc" && !o.hasPdc) return false;
-      if (segment === "good" && o.rating !== "good") return false;
-      if (segment === "bad" && o.rating !== "bad") return false;
+      if (tierFilter !== "all" && o.tier !== tierFilter) return false;         // Behavior tier
+      if (finFilter !== "all" && o.financialStatus !== finFilter) return false; // Cash / Credit account
     }
     const q = search.toLowerCase();
     if (!q) return true;
@@ -564,10 +566,10 @@ export default function Customers() {
 
   /* CSV export of the visible customer list — name, phone, type, invoiced, paid, due, PDC, overdue, rating */
   function exportCsv() {
-    const header = ["Customer", "Phone", "Type", "Invoiced", "Paid", "Amount Due", "PDC (uncleared)", "Days Overdue", "Rating"];
+    const header = ["Customer", "Phone", "Type", "Financial Status", "Behavior Tier", "Invoiced", "Paid", "Amount Due", "PDC (uncleared)", "Days Overdue", "Profit (window)"];
     const rows = sorted.map((c) => {
       const o = ov(c.id) || {};
-      return [c.name, c.phone || "", typeLabel(c.type), o.totalInvoiced ?? 0, o.totalPaid ?? 0, o.amountDue ?? 0, o.pdcAmount ?? 0, o.maxDaysOverdue ?? 0, o.rating || "—"];
+      return [c.name, c.phone || "", typeLabel(c.type), o.financialStatus || "—", o.tier || "—", o.totalInvoiced ?? 0, o.totalPaid ?? 0, o.amountDue ?? 0, o.pdcAmount ?? 0, o.maxDaysOverdue ?? 0, o.profit ?? 0];
     });
     const csv = [header, ...rows].map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -610,43 +612,19 @@ export default function Customers() {
         </div>
       </div>
 
-      {/* ── Overview strip — money health at a glance ── */}
+      {/* ── Overview strip — money health at a glance (display-only KPIs) ── */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { k: "totalDue", label: "Total Due", val: fmt(totals.totalDue), tone: "text-red-600", seg: "credit" as Segment },
-          { k: "totalPdc", label: "PDC in hand", val: fmt(totals.totalPdc), tone: "text-amber-600", seg: "pdc" as Segment },
-          { k: "overdue", label: "Overdue", val: `${totals.overdue ?? 0} cust`, tone: "text-red-600", seg: "overdue" as Segment },
-          { k: "good", label: "Good standing", val: `${totals.good ?? 0} cust`, tone: "text-emerald-600", seg: "good" as Segment },
+          { k: "totalDue", label: "Total Due", val: fmt(totals.totalDue), tone: "text-red-600" },
+          { k: "totalPdc", label: "PDC in hand", val: fmt(totals.totalPdc), tone: "text-amber-600" },
+          { k: "overdue", label: "Overdue", val: `${totals.overdue ?? 0} cust`, tone: "text-red-600" },
+          { k: "good", label: "Good standing", val: `${totals.goodStanding ?? 0} cust`, tone: "text-emerald-600" },
         ].map((s) => (
-          <button key={s.k} onClick={() => setSegment(segment === s.seg ? "all" : s.seg)}
-            className={cn("rounded-xl border p-3 text-left transition-colors", segment === s.seg ? "border-primary bg-primary/5" : "hover:border-primary/40")}>
+          <div key={s.k} className="rounded-xl border p-3">
             <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.label}</p>
             <p className={cn("font-mono font-bold text-lg", s.tone)}>{s.val}</p>
-          </button>
+          </div>
         ))}
-      </div>
-
-      {/* ── Segment filter — cash vs credit, good vs bad ── */}
-      <div className="flex gap-1.5 flex-wrap">
-        {([
-          ["all", "All"], ["cash", "Cash (settled)"], ["credit", "Credit (owes)"],
-          ["overdue", "Overdue"], ["over_limit", "Over limit"], ["pdc", "Has PDC"],
-          ["good", "Good"], ["bad", "Bad"],
-        ] as [Segment, string][]).map(([val, label]) => {
-          const count = val === "all" ? undefined
-            : val === "cash" ? totals.cash : val === "credit" ? totals.credit
-            : val === "overdue" ? totals.overdue : val === "over_limit" ? totals.overLimit
-            : val === "pdc" ? undefined : val === "good" ? totals.good : totals.bad;
-          const bad = val === "bad" || val === "overdue" || val === "over_limit";
-          return (
-            <button key={val} onClick={() => setSegment(val)}
-              className={cn("text-xs font-semibold px-3 py-1.5 rounded-full border transition-colors",
-                segment === val ? (bad ? "bg-red-600 text-white border-red-600" : "bg-primary text-primary-foreground border-primary")
-                : "bg-white border-border text-muted-foreground hover:border-primary/50")}>
-              {label}{count != null ? ` (${count})` : ""}
-            </button>
-          );
-        })}
       </div>
 
       {/* Credit-exposure filter banner (dashboard "Credit Exposure" deep-link) */}
@@ -662,9 +640,9 @@ export default function Customers() {
       )}
 
       {/* ── Filters row ── */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
         {/* Search */}
-        <div className="relative flex-1">
+        <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             className="pl-9"
@@ -673,6 +651,33 @@ export default function Customers() {
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
+
+        {/* Behavior tier filter — system-calculated, 5 tiers */}
+        <Select value={tierFilter} onValueChange={(v) => setTierFilter(v as TierFilter)}>
+          <SelectTrigger className="w-full sm:w-40">
+            <SelectValue placeholder="Behavior" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Behavior</SelectItem>
+            <SelectItem value="best">Best{totals.best != null ? ` (${totals.best})` : ""}</SelectItem>
+            <SelectItem value="better">Better{totals.better != null ? ` (${totals.better})` : ""}</SelectItem>
+            <SelectItem value="good">Good{totals.good != null ? ` (${totals.good})` : ""}</SelectItem>
+            <SelectItem value="watch">Watch{totals.watch != null ? ` (${totals.watch})` : ""}</SelectItem>
+            <SelectItem value="bad">Bad{totals.bad != null ? ` (${totals.bad})` : ""}</SelectItem>
+          </SelectContent>
+        </Select>
+
+        {/* Financial status filter — account type (Cash / Credit) */}
+        <Select value={finFilter} onValueChange={(v) => setFinFilter(v as FinFilter)}>
+          <SelectTrigger className="w-full sm:w-36">
+            <SelectValue placeholder="Financial" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Accounts</SelectItem>
+            <SelectItem value="cash">Cash{totals.cash != null ? ` (${totals.cash})` : ""}</SelectItem>
+            <SelectItem value="credit">Credit{totals.credit != null ? ` (${totals.credit})` : ""}</SelectItem>
+          </SelectContent>
+        </Select>
 
         {/* Type filter */}
         <Select

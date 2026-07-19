@@ -2358,13 +2358,34 @@ export async function getCreditExposure() {
   return { total: Number(total.toFixed(2)), customers };
 }
 
-// Customer overview — one row per active customer with money-behaviour metrics so
-// the owner can spot good vs bad payers and export the ledger. Batched (no N+1).
-//   amountDue = Σ remaining on unpaid/partial INV; totalPaid = payments − refunds;
-//   pdcAmount = uncleared receivable cheques; rating from overdue age + credit-limit.
+// Customer overview + behaviour-tier engine. One row per active customer with money
+// metrics AND a system-calculated tier (best/better/good/watch/bad). Batched (no N+1).
+//   Positive tiers rank customers by PROFIT contributed over a rolling window
+//   (Settings.tierWindowMonths): best = top tierBestPct%, better = top tierBetterPct%
+//   band, everyone else good. Best also requires repeat buying (≥2 invoices in window).
+//   Negative tiers apply ONLY to credit accounts (creditLimit>0):
+//     bad   = any invoice ≥ tierBadOverdueDays past its term, OR ≥ tierBadLateCount
+//             late-paid invoices in window, OR a bounced PDC on record.
+//     watch = ≥1 invoice past term (and not bad).
+//   Negative ALWAYS overrides positive — payment risk beats purchase volume. Cash
+//   customers (creditLimit≤0) can never be watch/bad. Recomputed live every call
+//   (no stored tier to go stale). NEVER surfaced on any customer-facing document.
 export async function getCustomerOverview() {
   const today = new Date().toISOString().slice(0, 10);
   const r2 = (n: number) => Number(n.toFixed(2));
+  const cfg: any = (await getSettings()) || {};
+  const windowMonths = Number(cfg.tierWindowMonths ?? 6);
+  const bestPct = Number(cfg.tierBestPct ?? 10);
+  const betterPct = Number(cfg.tierBetterPct ?? 30);
+  const defaultTermDays = Number(cfg.tierDefaultTermDays ?? 30);
+  const badOverdueDays = Number(cfg.tierBadOverdueDays ?? 60);
+  const badLateCount = Number(cfg.tierBadLateCount ?? 2);
+
+  // rolling-window cutoff (YYYY-MM-DD)
+  const cut = new Date(today + "T00:00:00Z");
+  cut.setUTCMonth(cut.getUTCMonth() - windowMonths);
+  const cutoff = cut.toISOString().slice(0, 10);
+
   const [custs, invs, chqs] = await Promise.all([
     db.select().from(customers),
     db.select().from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"))),
@@ -2372,74 +2393,142 @@ export async function getCustomerOverview() {
   ]);
   const invIds = invs.map((d) => d.id);
   const pays = invIds.length ? await db.select().from(payments).where(inArray(payments.documentId, invIds)) : [];
+
+  // net collected + last real (non-refund) payment date, per invoice
   const paidByInv = new Map<number, number>();
+  const lastPayByInv = new Map<number, string>();
   for (const p of pays as any[]) {
     const amt = parseFloat(p.amount || "0") * (p.isRefund ? -1 : 1);
     paidByInv.set(p.documentId, (paidByInv.get(p.documentId) || 0) + amt);
+    if (!p.isRefund && p.date) {
+      const cur = lastPayByInv.get(p.documentId);
+      if (!cur || p.date > cur) lastPayByInv.set(p.documentId, p.date);
+    }
   }
+
+  // COGS + qty per fully-paid in-window invoice — one batched join for margin.
+  const paidWindowIds = (invs as any[]).filter((d) => d.status === "paid" && (d.date || "") >= cutoff).map((d) => d.id);
+  const marginByInv = new Map<number, number>();
+  const qtyByInv = new Map<number, number>();
+  if (paidWindowIds.length) {
+    const items = await db.select({
+      documentId: documentItems.documentId, qty: documentItems.qty,
+      amount: documentItems.amount, cost: products.costPrice,
+    }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
+      .where(inArray(documentItems.documentId, paidWindowIds));
+    for (const it of items as any[]) {
+      const qty = parseFloat(it.qty || "0");
+      const rev = parseFloat(it.amount || "0");
+      const cogs = qty * parseFloat(it.cost || "0");
+      marginByInv.set(it.documentId, (marginByInv.get(it.documentId) || 0) + (rev - cogs));
+      qtyByInv.set(it.documentId, (qtyByInv.get(it.documentId) || 0) + qty);
+    }
+  }
+
+  const parseTerm = (t: any): number | null => { const m = String(t || "").match(/\d+/); return m ? parseInt(m[0], 10) : null; };
+  const daysBetween = (a: string, b: string) => Math.floor((Date.parse(a) - Date.parse(b)) / 86400000);
+  const addDays = (d: string, n: number) => { const x = new Date(d + "T00:00:00Z"); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10); };
 
   const map = new Map<number, any>();
   for (const c of custs as any[]) {
     if (c.active === false) continue;
     map.set(c.id, {
       customerId: c.id, name: c.name, type: c.type, phone: c.phone ?? null,
-      creditLimit: Number(c.creditLimit || 0),
+      creditLimit: Number(c.creditLimit || 0), termDays: parseTerm(c.paymentTerms) ?? defaultTermDays,
       totalInvoiced: 0, totalPaid: 0, amountDue: 0, pdcAmount: 0,
       invoiceCount: 0, lastPurchase: "", maxDaysOverdue: 0,
+      profit: 0, invoiceCountWindow: 0, qtyWindow: 0,
+      maxPastDue: 0, latePaidWindow: 0, bouncedPdc: false, posTier: "good",
     });
   }
+
   for (const d of invs as any[]) {
     if (d.customerId == null) continue;
     const r = map.get(d.customerId); if (!r) continue;
     const total = parseFloat(d.total || "0");
     const paid = paidByInv.get(d.id) || 0;
+    const dd = d.date || "";
+    const dueDate = dd ? addDays(dd, r.termDays) : "";
     r.totalInvoiced += total;
     r.totalPaid += Math.max(0, paid);
     r.invoiceCount++;
-    if ((d.date || "") > r.lastPurchase) r.lastPurchase = d.date || "";
+    if (dd > r.lastPurchase) r.lastPurchase = dd;
     const remaining = total - paid;
-    if (remaining > 0.005) {
+    if (remaining > 0.005 && dd) {
       r.amountDue += remaining;
-      r.maxDaysOverdue = Math.max(r.maxDaysOverdue, Math.max(0, Math.floor((Date.parse(today) - Date.parse(d.date)) / 86400000)));
+      r.maxDaysOverdue = Math.max(r.maxDaysOverdue, Math.max(0, daysBetween(today, dd)));
+      r.maxPastDue = Math.max(r.maxPastDue, Math.max(0, daysBetween(today, dueDate)));
+    } else if (remaining > 0.005) {
+      r.amountDue += remaining;
+    }
+    // window profit + frequency (fully-paid invoices only)
+    if (d.status === "paid" && dd >= cutoff) {
+      r.profit += marginByInv.get(d.id) || 0;
+      r.invoiceCountWindow++;
+      r.qtyWindow += qtyByInv.get(d.id) || 0;
+      const lp = lastPayByInv.get(d.id);   // late-paid: settled after the due date
+      if (lp && dueDate && lp > dueDate) r.latePaidWindow++;
     }
   }
+
   for (const ch of chqs as any[]) {
     if (ch.customerId == null || (ch.type || "receivable") === "payable") continue;
     const r = map.get(ch.customerId); if (!r) continue;
     if (["pending", "deposited"].includes(ch.status)) r.pdcAmount += parseFloat(ch.amount || "0");
+    if (ch.status === "bounced") r.bouncedPdc = true;
   }
 
+  // Positive tier — rank customers with profit>0 by profit desc, cut into bands.
+  const ranked = Array.from(map.values()).filter((r) => r.profit > 0.005).sort((a, b) => b.profit - a.profit);
+  const N = ranked.length;
+  const bestCount = Math.round((N * bestPct) / 100);
+  const betterCount = Math.round((N * betterPct) / 100);
+  ranked.forEach((r, i) => {
+    if (i < bestCount && r.invoiceCountWindow >= 2) r.posTier = "best";
+    else if (i < betterCount) r.posTier = "better";
+    else r.posTier = "good";
+  });
+
   const rows = Array.from(map.values()).map((r) => {
-    const overLimit = r.creditLimit > 0 && r.amountDue > r.creditLimit + 0.005;
+    const isCredit = r.creditLimit > 0;
+    const overLimit = isCredit && r.amountDue > r.creditLimit + 0.005;
     const hasDue = r.amountDue > 0.005;
-    let rating: "good" | "watch" | "bad" = "good";
-    if (overLimit || (hasDue && r.maxDaysOverdue > 60)) rating = "bad";
-    else if (hasDue && r.maxDaysOverdue > 30) rating = "bad";
-    else if (hasDue || r.pdcAmount > 0.005) rating = "watch";
+    let tier: string = r.posTier || "good";
+    if (isCredit) { // negative override — credit accounts only
+      if (r.maxPastDue >= badOverdueDays || r.latePaidWindow >= badLateCount || r.bouncedPdc) tier = "bad";
+      else if (r.maxPastDue >= 1) tier = "watch";
+    }
     return {
-      ...r,
+      customerId: r.customerId, name: r.name, type: r.type, phone: r.phone,
+      creditLimit: r.creditLimit,
       totalInvoiced: r2(r.totalInvoiced), totalPaid: r2(r.totalPaid),
       amountDue: r2(r.amountDue), pdcAmount: r2(r.pdcAmount),
-      overLimit, rating,
-      isCash: !hasDue && r.pdcAmount <= 0.005,   // fully settled, no open exposure
-      isCredit: hasDue,                           // owes money on account
-      hasPdc: r.pdcAmount > 0.005,                // holds uncleared cheques
+      invoiceCount: r.invoiceCount, lastPurchase: r.lastPurchase,
+      maxDaysOverdue: r.maxDaysOverdue, maxPastDue: r.maxPastDue,
+      profit: r2(r.profit), invoiceCountWindow: r.invoiceCountWindow,
+      latePaidWindow: r.latePaidWindow, bouncedPdc: r.bouncedPdc,
+      tier,                                          // best|better|good|watch|bad
+      financialStatus: isCredit ? "credit" : "cash", // ACCOUNT type, not balance
+      overLimit,
+      hasPdc: r.pdcAmount > 0.005,                    // holds uncleared cheques (badge)
       overdue: hasDue && r.maxDaysOverdue > 0,
     };
   }).sort((a, b) => b.amountDue - a.amountDue);
 
+  const tc = (t: string) => rows.filter((r) => r.tier === t).length;
   const totals = {
     customers: rows.length,
     totalInvoiced: r2(rows.reduce((s, r) => s + r.totalInvoiced, 0)),
     totalPaid: r2(rows.reduce((s, r) => s + r.totalPaid, 0)),
     totalDue: r2(rows.reduce((s, r) => s + r.amountDue, 0)),
     totalPdc: r2(rows.reduce((s, r) => s + r.pdcAmount, 0)),
-    cash: rows.filter((r) => r.isCash).length,
-    credit: rows.filter((r) => r.isCredit).length,
+    cash: rows.filter((r) => r.financialStatus === "cash").length,
+    credit: rows.filter((r) => r.financialStatus === "credit").length,
     overdue: rows.filter((r) => r.overdue).length,
     overLimit: rows.filter((r) => r.overLimit).length,
-    good: rows.filter((r) => r.rating === "good").length,
-    bad: rows.filter((r) => r.rating === "bad").length,
+    best: tc("best"), better: tc("better"), good: tc("good"),
+    watch: tc("watch"), bad: tc("bad"),
+    goodStanding: tc("best") + tc("better") + tc("good"),
   };
   return { rows, totals };
 }

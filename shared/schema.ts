@@ -32,6 +32,13 @@ export const settings = pgTable("settings", {
   creditTerms: integer("credit_terms").array().default([30, 60, 90]),
   pdcAlertDays: integer("pdc_alert_days").default(3),          // days before cheque date to alert
   maintenanceChequeThreshold: numeric("maintenance_cheque_threshold").default("10000"),
+  // ── Customer behaviour-tier engine (system-calculated; NEVER printed on customer-facing docs) ──
+  tierWindowMonths: integer("tier_window_months").default(6),          // rolling period for profit + frequency
+  tierBestPct: numeric("tier_best_pct").default("10"),                 // top X% by profit → BEST
+  tierBetterPct: numeric("tier_better_pct").default("30"),             // top X% by profit → BETTER (best..this band)
+  tierDefaultTermDays: integer("tier_default_term_days").default(30),  // credit term used when paymentTerms unset/unparseable
+  tierBadOverdueDays: integer("tier_bad_overdue_days").default(60),    // an invoice ≥ this many days past term → BAD
+  tierBadLateCount: integer("tier_bad_late_count").default(2),         // ≥ this many late-paid invoices in window → BAD
   // Store hours → business-day boundary. "Today" runs open→close, not midnight.
   storeOpenTime: text("store_open_time").default("05:00"),
   storeCloseTime: text("store_close_time").default("22:00"),

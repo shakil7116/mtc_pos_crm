@@ -20,7 +20,7 @@ export default function BusinessRulesSettings() {
     queryFn: () => fetch("/api/settings").then((r) => r.json()),
   });
 
-  const [form, setForm] = useState({ pdcThreshold: "", voidWindowHours: "", pdcAlertDays: "", maintenanceChequeThreshold: "", storeOpenTime: "", storeCloseTime: "", openingCash: "", openingBank: "" });
+  const [form, setForm] = useState({ pdcThreshold: "", voidWindowHours: "", pdcAlertDays: "", maintenanceChequeThreshold: "", storeOpenTime: "", storeCloseTime: "", openingCash: "", openingBank: "", tierWindowMonths: "", tierBestPct: "", tierBetterPct: "", tierDefaultTermDays: "", tierBadOverdueDays: "", tierBadLateCount: "" });
   useEffect(() => {
     if (settings) {
       setForm({
@@ -32,6 +32,12 @@ export default function BusinessRulesSettings() {
         storeCloseTime: String(settings.storeCloseTime ?? "22:00"),
         openingCash: String(settings.openingCash ?? 0),
         openingBank: String(settings.openingBank ?? 0),
+        tierWindowMonths: String(settings.tierWindowMonths ?? 6),
+        tierBestPct: String(settings.tierBestPct ?? 10),
+        tierBetterPct: String(settings.tierBetterPct ?? 30),
+        tierDefaultTermDays: String(settings.tierDefaultTermDays ?? 30),
+        tierBadOverdueDays: String(settings.tierBadOverdueDays ?? 60),
+        tierBadLateCount: String(settings.tierBadLateCount ?? 2),
       });
     }
   }, [settings]);
@@ -49,6 +55,12 @@ export default function BusinessRulesSettings() {
           storeCloseTime: form.storeCloseTime || "22:00",
           openingCash: String(Number(form.openingCash) || 0),
           openingBank: String(Number(form.openingBank) || 0),
+          tierWindowMonths: Number(form.tierWindowMonths) || 6,
+          tierBestPct: String(Number(form.tierBestPct) || 10),
+          tierBetterPct: String(Number(form.tierBetterPct) || 30),
+          tierDefaultTermDays: Number(form.tierDefaultTermDays) || 30,
+          tierBadOverdueDays: Number(form.tierBadOverdueDays) || 60,
+          tierBadLateCount: Number(form.tierBadLateCount) || 2,
         }),
       }).then(async (r) => { if (!r.ok) throw new Error("Save failed"); return r.json(); }),
     onSuccess: () => {
@@ -116,6 +128,44 @@ export default function BusinessRulesSettings() {
             <p className="text-[11px] text-muted-foreground mt-1">Bank balance on day one. Set once — never shows negative unless truly overdrawn.</p>
           </div>
         </div>
+      </div>
+
+      {/* Customer behaviour tiers — system-calculated (Best/Better/Good/Watch/Bad). Internal only. */}
+      <div className="pt-3 mt-1 border-t border-border/60">
+        <p className="text-xs font-semibold text-foreground mb-2">Customer Behaviour Tiers — internal categorization</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <Label className="text-xs">Rolling window (months)</Label>
+            <Input type="number" min={1} value={form.tierWindowMonths} onChange={(e) => setForm({ ...form, tierWindowMonths: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">Period for profit + purchase-frequency scoring.</p>
+          </div>
+          <div>
+            <Label className="text-xs">Default credit term (days)</Label>
+            <Input type="number" min={0} value={form.tierDefaultTermDays} onChange={(e) => setForm({ ...form, tierDefaultTermDays: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">Used when a customer has no payment term set. Overdue is measured past this.</p>
+          </div>
+          <div>
+            <Label className="text-xs">BEST — top profit %</Label>
+            <Input type="number" min={1} max={100} value={form.tierBestPct} onChange={(e) => setForm({ ...form, tierBestPct: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">Top X% by profit contributed → Best (repeat buyers only).</p>
+          </div>
+          <div>
+            <Label className="text-xs">BETTER — top profit %</Label>
+            <Input type="number" min={1} max={100} value={form.tierBetterPct} onChange={(e) => setForm({ ...form, tierBetterPct: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">Top X% band → Better. Everyone else with no bad history → Good.</p>
+          </div>
+          <div>
+            <Label className="text-xs">BAD — days overdue past term</Label>
+            <Input type="number" min={1} value={form.tierBadOverdueDays} onChange={(e) => setForm({ ...form, tierBadOverdueDays: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">Any invoice this many days past its term → Bad. Under this (but past term) → Watch.</p>
+          </div>
+          <div>
+            <Label className="text-xs">BAD — late-paid count in window</Label>
+            <Input type="number" min={1} value={form.tierBadLateCount} onChange={(e) => setForm({ ...form, tierBadLateCount: e.target.value })} className="h-9 font-mono" />
+            <p className="text-[11px] text-muted-foreground mt-1">This many late-paid invoices in the window → Bad. Credit accounts only.</p>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-2">Watch/Bad apply to credit accounts only — cash customers are never flagged. Tiers are internal and never printed on invoices, statements or receipts.</p>
       </div>
 
       <Button size="sm" className="bg-[#1e2a3a] text-white" disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>
