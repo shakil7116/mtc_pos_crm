@@ -43,15 +43,22 @@ interface Props {
   saving?: boolean;
   /** Remaining credit headroom for the customer; undefined = unknown/no limit. */
   creditRemaining?: number;
+  /** Selected customer (for the Cash→Credit upgrade guard). creditLimit≤0 = Cash account. */
+  customer?: { id: number; name: string; creditLimit: number };
+  /** Called after a Cash account is upgraded to Credit so the parent can refetch. */
+  onCustomerUpgraded?: () => void;
 }
 
 const METHODS: TenderMethod[] = ["Cash", "Card", "Online Transfer", "PDC", "Credit"];
 const isDeferred = (m: TenderMethod) => m === "PDC" || m === "Credit"; // not collected now
 
-export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining }: Props) {
+export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded }: Props) {
   const [transactionMode, setTransactionMode] = useState<TransactionMode>("real");
   const [lines, setLines] = useState<TenderLine[]>([{ method: "Cash", amount: total }]);
   const [override, setOverride] = useState(false);
+  const [upgraded, setUpgraded] = useState(false);   // Cash account promoted to Credit this session
+  const [newLimit, setNewLimit] = useState("");
+  const [upgrading, setUpgrading] = useState(false);
 
   // Credit term options come from Settings (11A) — zero hardcoded values.
   const { data: bizSettings } = useQuery<any>({
@@ -69,6 +76,9 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
       setTransactionMode("real");
       setLines([{ method: "Cash", amount: Number(total.toFixed(2)) }]);
       setOverride(false);
+      setUpgraded(false);
+      setNewLimit("");
+      setUpgrading(false);
     }
   }, [open, total]);
 
@@ -97,7 +107,29 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   };
   const linesValid = lines.every(lineComplete);
   const balanced = Math.abs(remaining) < 0.01;
-  const canConfirm = linesValid && balanced && (!exceedsLimit || override) &&
+
+  // Cash-account guard: a Cash customer (creditLimit≤0) cannot use PDC/Credit until the
+  // account is upgraded to Credit — no silent deferred balance without an account-type change.
+  const customerIsCash = !!customer && Number(customer.creditLimit || 0) <= 0 && !upgraded;
+  const hasDeferred = lines.some((l) => isDeferred(l.method) && Number(l.amount) > 0);
+  const cashNeedsUpgrade = customerIsCash && hasDeferred;
+
+  const upgradeToCredit = async () => {
+    if (!customer || !(Number(newLimit) > 0)) return;
+    setUpgrading(true);
+    try {
+      const r = await fetch(`/api/customers/${customer.id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ creditLimit: Number(newLimit) }),
+      });
+      if (!r.ok) throw new Error("upgrade failed");
+      setUpgraded(true);
+      onCustomerUpgraded?.();
+    } catch { /* keep the guard up; staff can retry or remove the deferred line */ }
+    finally { setUpgrading(false); }
+  };
+
+  const canConfirm = linesValid && balanced && (!exceedsLimit || override) && !cashNeedsUpgrade &&
     (transactionMode === "real" || transactionMode === "demo");
 
   const derivedLabel = (): string => {
@@ -204,6 +236,25 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                   {Math.abs(remaining) < 0.01 ? "Balanced" : `Remaining ${remaining.toFixed(2)}`}
                 </span>
               </div>
+
+              {/* Cash account trying to defer (PDC/Credit) → must upgrade the account first */}
+              {cashNeedsUpgrade && (
+                <div className="mt-2 text-[12px] bg-amber-50 border border-amber-300 text-amber-800 rounded p-2 space-y-1.5">
+                  <div className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="w-4 h-4" /> Cash account — deferred payment not allowed</div>
+                  <p><strong>{customer!.name}</strong> is a Cash account. PDC/Credit needs a Credit account. Upgrade it now (records the account-type change), or remove the PDC/Credit line.</p>
+                  <div className="flex items-center gap-2">
+                    <Input type="number" min={0} value={newLimit} onChange={(e) => setNewLimit(e.target.value)} className="h-8 text-xs w-36 font-mono" placeholder="Credit limit *" />
+                    <Button type="button" size="sm" onClick={upgradeToCredit} disabled={upgrading || !(Number(newLimit) > 0)} className="h-8 bg-[#1e2a3a] text-white text-xs">
+                      {upgrading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Upgrade to Credit"}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {upgraded && (
+                <div className="mt-2 text-[12px] bg-green-50 border border-green-200 text-green-700 rounded p-2 flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4" /> Account upgraded to Credit — deferred payment allowed.
+                </div>
+              )}
 
               {exceedsLimit && (
                 <div className="mt-2 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded p-2">

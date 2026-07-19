@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import AdminSettingsModal from "@/components/AdminSettingsModal";
 import SaveInterceptorModal, { type InterceptorResult } from "@/components/SaveInterceptorModal";
+import InlineAddCustomerDialog, { type QuickCustomer } from "@/components/InlineAddCustomerDialog";
 import CustomFields, { useFieldDefs } from "@/components/CustomFields";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useInvoiceConfig } from "@/lib/invoiceConfig";
@@ -193,6 +194,7 @@ export default function DocumentEditor({ type, params }: Props) {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [creditBannerDismissed, setCreditBannerDismissed] = useState(false);
+  const [addCustomerOpen, setAddCustomerOpen] = useState(false);
   const [items, setItems] = useState<LineItem[]>([makeBlankItem()]);
   const [docDiscountType, setDocDiscountType] = useState<"QAR" | "%">("QAR");
   const [docDiscountAmount, setDocDiscountAmount] = useState<number>(0);
@@ -567,7 +569,13 @@ export default function DocumentEditor({ type, params }: Props) {
   });
 
   const validate = (): string | null => {
-    if (!customerInput.trim()) return "Customer name is required.";
+    // Every invoice must have a LINKED customer record (walk-in cash sales included) —
+    // not just a typed name. Other doc types keep the lighter name-only requirement.
+    if (docType === "INV") {
+      if (!selectedCustomer?.id) return "Select an existing customer or add a new one before saving.";
+    } else if (!customerInput.trim()) {
+      return "Customer name is required.";
+    }
     const lines = items.filter((i) => i.description.trim());
     if (lines.length === 0) return "At least one line item is required.";
     // Per-line sanity: whole positive qty, price > 0 (except DN/QT drafts where
@@ -764,11 +772,11 @@ export default function DocumentEditor({ type, params }: Props) {
                     <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
                   </Field>
 
-                  <Field label="Customer Name" className="relative">
+                  <Field label={docType === "INV" ? "Customer *" : "Customer Name"} className="relative">
                     <input
                       ref={customerInputRef}
                       className={inputCls}
-                      placeholder="Enter customer name…"
+                      placeholder="Search name or phone…"
                       value={customerInput}
                       autoComplete="off"
                       onChange={(e) => { setCustomerInput(e.target.value); setSelectedCustomer(null); setShowCustomerDropdown(e.target.value.length > 0); setCreditBannerDismissed(false); }}
@@ -780,11 +788,19 @@ export default function DocumentEditor({ type, params }: Props) {
                         {filteredCustomers.slice(0, 8).map((c) => (
                           <button key={c.id} type="button" className="w-full text-left px-3 py-2.5 hover:bg-slate-50 text-sm" onMouseDown={() => handleCustomerSelect(c)}>
                             <div className="font-medium">{c.name}</div>
-                            <div className="text-slate-400 text-xs">{c.phone} · {c.type}</div>
+                            <div className="text-slate-400 text-xs">{c.phone} · {c.type} · {Number(c.creditLimit) > 0 ? "Credit" : "Cash"}</div>
                           </button>
                         ))}
                       </div>
                     )}
+                    <div className="mt-1.5 flex items-center justify-between gap-2">
+                      {selectedCustomer ? (
+                        <span className="text-[11px] font-semibold text-green-700">✓ {selectedCustomer.name} linked · {Number(selectedCustomer.creditLimit) > 0 ? "Credit" : "Cash"}</span>
+                      ) : (
+                        <span className="text-[11px] text-amber-600">{docType === "INV" ? "Select or add a customer before saving" : "Type a customer name"}</span>
+                      )}
+                      <button type="button" onClick={() => setAddCustomerOpen(true)} className="text-[11px] font-bold text-[#1e2a3a] hover:opacity-70 shrink-0">+ Add new customer</button>
+                    </div>
                   </Field>
 
                   <Field label="PO Number">
@@ -1050,6 +1066,18 @@ export default function DocumentEditor({ type, params }: Props) {
       {/* ── Admin Manual Settings ── */}
       <AdminSettingsModal open={adminSettingsOpen} onClose={() => setAdminSettingsOpen(false)} />
 
+      {/* ── Inline add-customer (mid-invoice, no navigation) ── */}
+      <InlineAddCustomerDialog
+        open={addCustomerOpen}
+        onClose={() => setAddCustomerOpen(false)}
+        onCreated={(c: QuickCustomer) => {
+          setSelectedCustomer(c as unknown as Customer);
+          setCustomerInput(c.name);
+          setShowCustomerDropdown(false);
+          setCreditBannerDismissed(false);
+        }}
+      />
+
       {/* ── Pre-save interceptor ── */}
       <SaveInterceptorModal
         open={interceptorOpen}
@@ -1059,6 +1087,12 @@ export default function DocumentEditor({ type, params }: Props) {
         total={total}
         saving={saveMutation.isPending}
         creditRemaining={customerBalance && Number(customerBalance.creditLimit || 0) > 0 ? Math.max(0, Number(customerBalance.creditLimit || 0) - Number(customerBalance.balance || 0)) : undefined}
+        customer={selectedCustomer ? { id: selectedCustomer.id, name: selectedCustomer.name, creditLimit: Number(selectedCustomer.creditLimit || 0) } : undefined}
+        onCustomerUpgraded={() => {
+          qc.invalidateQueries({ queryKey: ["customers"] });
+          qc.invalidateQueries({ queryKey: ["/api/customers"] });
+          qc.invalidateQueries({ queryKey: ["customer-balance", selectedCustomer?.id] });
+        }}
       />
 
       {/* ── Responsive A4 preview fit + print ── */}
