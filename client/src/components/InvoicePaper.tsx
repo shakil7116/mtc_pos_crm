@@ -290,14 +290,18 @@ const toArabicDigits = (num: string | number) => {
           </div>
 
           {!isDeliveryNote && <div className="w-[35%] flex flex-col gap-2">
-             {/* Footer prints Subtotal (gross) → Gross Discount → Total. */}
+             {/* Gross Discount is INTERNAL: the breakdown shows on the staff screen but
+                 the customer's printed/PDF copy shows only a clean net Subtotal + Total. */}
              <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100">
                <span className="text-[10px] font-bold tracking-widest text-gray-500" style={{ fontWeight: 700 }}>SUBTOTAL / المجموع</span>
-               <span className="font-mono font-bold text-sm text-gray-900" style={{ fontWeight: 700 }}>{money2(_n((invoice as any).subtotalAmount) || grandTotalCalc)}</span>
+               <span className="font-mono font-bold text-sm text-gray-900" style={{ fontWeight: 700 }}>
+                 <span className="print:hidden">{money2(_n((invoice as any).subtotalAmount) || grandTotalCalc)}</span>
+                 <span className="hidden print:inline">{money2(grandTotalCalc)}</span>
+               </span>
              </div>
              {_n((invoice as any).discountAmount) > 0 && (
-               <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100">
-                 <span className="text-[10px] font-bold tracking-widest text-amber-600" style={{ fontWeight: 700 }}>GROSS DISCOUNT / الخصم</span>
+               <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100 print:hidden">
+                 <span className="text-[10px] font-bold tracking-widest text-amber-600" style={{ fontWeight: 700 }}>GROSS DISCOUNT / الخصم <span className="text-[8px] normal-case">(internal)</span></span>
                  <span className="font-mono font-bold text-sm text-amber-700" style={{ fontWeight: 700 }}>− {money2(_n((invoice as any).discountAmount))}</span>
                </div>
              )}
