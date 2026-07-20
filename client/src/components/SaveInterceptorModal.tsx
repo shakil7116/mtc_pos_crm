@@ -47,12 +47,14 @@ interface Props {
   customer?: { id: number; name: string; creditLimit: number };
   /** Called after a Cash account is upgraded to Credit so the parent can refetch. */
   onCustomerUpgraded?: () => void;
+  /** Invoice Type toggle (INV only): "cash" = full non-PDC payment required; "credit" = anything. */
+  invoiceMode?: "cash" | "credit";
 }
 
 const METHODS: TenderMethod[] = ["Cash", "Card", "Online Transfer", "PDC", "Credit"];
 const isDeferred = (m: TenderMethod) => m === "PDC" || m === "Credit"; // not collected now
 
-export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded }: Props) {
+export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded, invoiceMode }: Props) {
   const [transactionMode, setTransactionMode] = useState<TransactionMode>("real");
   const [lines, setLines] = useState<TenderLine[]>([{ method: "Cash", amount: total }]);
   const [override, setOverride] = useState(false);
@@ -82,11 +84,17 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
     }
   }, [open, total]);
 
+  const cashOnly = invoiceMode === "cash";
+  const availableMethods: TenderMethod[] = cashOnly ? ["Cash", "Card", "Online Transfer"] : METHODS;
+
   const setLine = (i: number, patch: Partial<TenderLine>) =>
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const addLine = () => {
     const remaining = Math.max(0, total - tendered);
-    setLines((prev) => [...prev, { method: "Credit", amount: Number(remaining.toFixed(2)), creditTerm: 30 }]);
+    // Cash Invoice: extra tender lines are collected-now methods, never a deferred Credit line.
+    setLines((prev) => cashOnly
+      ? [...prev, { method: "Cash", amount: Number(remaining.toFixed(2)) }]
+      : [...prev, { method: "Credit", amount: Number(remaining.toFixed(2)), creditTerm: 30 }]);
   };
   const removeLine = (i: number) => setLines((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
 
@@ -129,7 +137,11 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
     finally { setUpgrading(false); }
   };
 
-  const canConfirm = linesValid && balanced && (!exceedsLimit || override) && !cashNeedsUpgrade &&
+  // Cash Invoice: no PDC/Credit (deferred) allowed, and must be paid in full now.
+  const cashHasDeferred = cashOnly && lines.some((l) => isDeferred(l.method) && Number(l.amount) > 0);
+  const cashViolation = cashOnly && (!balanced || cashHasDeferred);
+
+  const canConfirm = linesValid && balanced && (!exceedsLimit || override) && !cashNeedsUpgrade && !cashViolation &&
     (transactionMode === "real" || transactionMode === "demo");
 
   const derivedLabel = (): string => {
@@ -191,7 +203,7 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                     <div className="flex items-center gap-2">
                       <Select value={l.method} onValueChange={(v) => setLine(i, { method: v as TenderMethod })}>
                         <SelectTrigger className="h-8 text-sm w-40"><SelectValue /></SelectTrigger>
-                        <SelectContent>{METHODS.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
+                        <SelectContent>{availableMethods.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}</SelectContent>
                       </Select>
                       <Input type="number" min={0} value={l.amount || ""} onChange={(e) => setLine(i, { amount: Number(e.target.value) || 0 })}
                         className="h-8 text-sm text-right font-mono" placeholder="0.00" />
@@ -236,6 +248,14 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                   {Math.abs(remaining) < 0.01 ? "Balanced" : `Remaining ${remaining.toFixed(2)}`}
                 </span>
               </div>
+
+              {/* Cash Invoice guard — full non-PDC payment required */}
+              {cashViolation && (
+                <div className="mt-2 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded p-2 flex items-start gap-1.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Cash Invoice requires full payment now via Cash, Card, or Online Transfer only. Switch to Credit Invoice or complete payment to save.</span>
+                </div>
+              )}
 
               {/* Cash account trying to defer (PDC/Credit) → must upgrade the account first */}
               {cashNeedsUpgrade && (

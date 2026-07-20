@@ -37,6 +37,7 @@ import {
 import AdminSettingsModal from "@/components/AdminSettingsModal";
 import SaveInterceptorModal, { type InterceptorResult } from "@/components/SaveInterceptorModal";
 import InlineAddCustomerDialog, { type QuickCustomer } from "@/components/InlineAddCustomerDialog";
+import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs } from "@/components/CustomFields";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { useInvoiceConfig } from "@/lib/invoiceConfig";
@@ -195,6 +196,10 @@ export default function DocumentEditor({ type, params }: Props) {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [creditBannerDismissed, setCreditBannerDismissed] = useState(false);
   const [addCustomerOpen, setAddCustomerOpen] = useState(false);
+  // Invoice Type toggle (INV only) — exactly two: cash | credit. Defaults from the
+  // customer's Financial Status (creditLimit>0 = Credit), staff can override before payment.
+  const [invoiceMode, setInvoiceMode] = useState<"cash" | "credit">("cash");
+  const [invoiceModeTouched, setInvoiceModeTouched] = useState(false);
   const [items, setItems] = useState<LineItem[]>([makeBlankItem()]);
   const [docDiscountType, setDocDiscountType] = useState<"QAR" | "%">("QAR");
   const [docDiscountAmount, setDocDiscountAmount] = useState<number>(0);
@@ -320,6 +325,13 @@ export default function DocumentEditor({ type, params }: Props) {
     const c = customers.find((c) => c.id === Number(prefillCustomerId));
     if (c) { setSelectedCustomer(c); setCustomerInput(c.name); }
   }, [prefillCustomerId, customers, isEdit, refInvoiceId, selectedCustomer]);
+
+  // Default the Invoice Type from the selected customer's Financial Status, until
+  // staff manually flips it (invoiceModeTouched).
+  useEffect(() => {
+    if (invoiceModeTouched || !selectedCustomer) return;
+    setInvoiceMode(Number(selectedCustomer.creditLimit) > 0 ? "credit" : "cash");
+  }, [selectedCustomer, invoiceModeTouched]);
 
   const fetchNextNumber = useCallback(async (type: DocType) => {
     if (isEdit) return;
@@ -803,6 +815,33 @@ export default function DocumentEditor({ type, params }: Props) {
                     </div>
                   </Field>
 
+                  {docType === "INV" && (
+                    <Field label="Invoice Type">
+                      <div className="grid grid-cols-2 gap-2">
+                        {([["cash", "Cash Invoice"], ["credit", "Credit Invoice"]] as const).map(([val, label]) => (
+                          <button
+                            key={val}
+                            type="button"
+                            onClick={() => { setInvoiceMode(val); setInvoiceModeTouched(true); }}
+                            className={cn(
+                              "px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all",
+                              invoiceMode === val
+                                ? (val === "credit" ? "border-amber-500 bg-amber-50 text-amber-800" : "border-green-600 bg-green-50 text-green-800")
+                                : "border-slate-200 bg-slate-50/60 text-slate-500 hover:border-slate-400",
+                            )}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-1">
+                        {invoiceMode === "cash"
+                          ? "Full payment now via Cash / Card / Online Transfer. No PDC."
+                          : "Allows partial, zero, or PDC payment. Needs a Credit account."}
+                      </p>
+                    </Field>
+                  )}
+
                   <Field label="PO Number">
                     <input className={inputCls + " font-mono"} placeholder="Customer PO # (optional)" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
                   </Field>
@@ -1086,6 +1125,7 @@ export default function DocumentEditor({ type, params }: Props) {
         docLabel={docTypeLabel[docType]}
         total={total}
         saving={saveMutation.isPending}
+        invoiceMode={docType === "INV" ? invoiceMode : undefined}
         creditRemaining={customerBalance && Number(customerBalance.creditLimit || 0) > 0 ? Math.max(0, Number(customerBalance.creditLimit || 0) - Number(customerBalance.balance || 0)) : undefined}
         customer={selectedCustomer ? { id: selectedCustomer.id, name: selectedCustomer.name, creditLimit: Number(selectedCustomer.creditLimit || 0) } : undefined}
         onCustomerUpgraded={() => {
