@@ -234,12 +234,12 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                       </div>
                     )}
                     {l.method === "Card" && (
-                      <Input value={l.referenceNumber || ""} onChange={(e) => setLine(i, { referenceNumber: e.target.value })} className="h-8 text-xs" placeholder="Reference # from card terminal *" />
+                      <Input value={l.referenceNumber || ""} onChange={(e) => setLine(i, { referenceNumber: e.target.value })} className="h-8 text-xs no-uppercase" placeholder="Reference # from card terminal *" />
                     )}
                     {l.method === "Online Transfer" && (
                       <div className="grid grid-cols-3 gap-2">
-                        <Input value={l.accountNumber || ""} onChange={(e) => setLine(i, { accountNumber: e.target.value })} className="h-8 text-xs" placeholder="Sender account / IBAN *" />
-                        <Input value={l.referenceNumber || ""} onChange={(e) => setLine(i, { referenceNumber: e.target.value })} className="h-8 text-xs" placeholder="Reference # *" />
+                        <Input value={l.accountNumber || ""} onChange={(e) => setLine(i, { accountNumber: e.target.value })} className="h-8 text-xs no-uppercase" placeholder="Sender account / IBAN *" />
+                        <Input value={l.referenceNumber || ""} onChange={(e) => setLine(i, { referenceNumber: e.target.value })} className="h-8 text-xs no-uppercase" placeholder="Reference # *" />
                         <Input value={l.bankName || ""} onChange={(e) => setLine(i, { bankName: e.target.value })} className="h-8 text-xs" placeholder="Bank *" />
                       </div>
                     )}

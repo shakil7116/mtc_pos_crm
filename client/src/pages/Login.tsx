@@ -100,7 +100,7 @@ export default function Login() {
                   <Label className="text-xs">Username</Label>
                   <div className="relative">
                     <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input className="pl-9" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. shakil" autoCapitalize="none" autoCorrect="off" />
+                    <Input className="pl-9 no-uppercase" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. shakil" autoCapitalize="none" autoCorrect="off" />
                   </div>
                 </div>
                 <div>
