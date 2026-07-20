@@ -736,6 +736,28 @@ export default function DocumentDetail() {
               {stage === "picked" && !canAuthorize && <span className="text-xs text-muted-foreground self-center">Awaiting manager authorisation…</span>}
               {stage === "authorized" && !canDeliver && <span className="text-xs text-muted-foreground self-center">Authorised — awaiting driver dispatch…</span>}
             </div>
+            {/* Pick list grouped by physical location (staff-only, never printed). */}
+            {Array.isArray((doc as any).items) && (doc as any).items.length > 0 && (() => {
+              const groups: Record<number, any[]> = {};
+              for (const it of (doc as any).items) {
+                const k = it.locationStoreId ?? 0;
+                (groups[k] = groups[k] || []).push(it);
+              }
+              const nameOf = (id: number) => id ? (stores.find((s: any) => s.id === id)?.nameEn ?? `Store #${id}`) : "Unassigned";
+              return (
+                <div className="rounded-xl border border-purple-200 bg-white p-3 space-y-2">
+                  <p className="text-xs font-bold text-purple-800">Pick list by location</p>
+                  {Object.entries(groups).map(([k, its]) => (
+                    <div key={k}>
+                      <p className="text-[11px] font-bold text-purple-700 uppercase tracking-wide">{nameOf(Number(k))}</p>
+                      <ul className="text-xs text-slate-700 pl-4 list-disc">
+                        {its.map((it: any, i: number) => <li key={i}>{it.description} × {Number(it.qty)} {it.unit}</li>)}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
         );
       })()}

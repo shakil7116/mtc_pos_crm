@@ -593,19 +593,24 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         discountType: item.discountType,
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
+        locationStoreId: (item as any).locationStoreId ?? null,
       }))
     ).returning();
     items.push(...inserted);
   }
 
-  // Deduct stock for INV
-  if (req.type === "INV" && req.storeId) {
+  // Deduct stock for INV — from each line's OWN location (Quick Sale per-line location),
+  // falling back to the invoice store when a line has none.
+  if (req.type === "INV") {
     for (const item of req.items) {
       if (item.productId) {
-        await adjustStock(
-          item.productId, req.storeId, -parseFloat(String(item.qty)),
-          "sale", "Invoice sale", doc.id, req.createdBy,
-        );
+        const loc = (item as any).locationStoreId ?? req.storeId;
+        if (loc) {
+          await adjustStock(
+            item.productId, loc, -parseFloat(String(item.qty)),
+            "sale", "Invoice sale", doc.id, req.createdBy,
+          );
+        }
       }
     }
   }
@@ -635,6 +640,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         items: (req.items || []).map((i: any) => ({
           productId: i.productId, sku: i.sku, description: i.description,
           qty: i.qty, unit: i.unit, price: "0", discountType: "QAR", discountAmount: "0", amount: "0",
+          locationStoreId: i.locationStoreId ?? null, // carry per-line location → DN pick grouping
         })),
         createdBy: req.createdBy,
       } as any);

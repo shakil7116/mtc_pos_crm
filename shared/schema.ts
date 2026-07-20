@@ -232,6 +232,9 @@ export const documentItems = pgTable("document_items", {
   discountType: text("discount_type").default("QAR"),
   discountAmount: numeric("discount_amount").default("0"),
   amount: numeric("amount").notNull(),
+  // Physical location this line is pulled from (per-line, staff-only — NEVER printed on
+  // the customer copy). Drives per-location stock deduction + Delivery Note pick grouping.
+  locationStoreId: integer("location_store_id").references(() => stores.id),
 });
 
 // ─── Payments ────────────────────────────────────────────────────────────────
