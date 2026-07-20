@@ -36,7 +36,12 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
     QT: { en: "QUOTATION", ar: "عرض سعر" },
     DN: { en: "DELIVERY NOTE", ar: "إشعار تسليم" },
   };
-  const docTitle = titleMap[invoice.type] || titleMap.INV;
+  // For an invoice, the heading carries the Cash/Credit type.
+  const docTitle = invoice.type === "INV"
+    ? (invoice.invoiceType === "Cash Invoice" ? { en: "CASH INVOICE", ar: "فاتورة نقدية" }
+      : invoice.invoiceType === "Credit Invoice" ? { en: "CREDIT INVOICE", ar: "فاتورة آجلة" }
+      : { en: "TAX INVOICE", ar: "فاتورة" })
+    : (titleMap[invoice.type] || titleMap.INV);
 
   // Arabic company name split across two balanced lines to mirror the English wrap.
   const arNameWords = (settings.storeNameAr || "").trim().split(/\s+/).filter(Boolean);
@@ -122,7 +127,7 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
       </div>
 
       {/* ── 2. DOCUMENT TITLE BADGE ───────────────────────────────── */}
-      <div className="flex flex-col items-center mb-5">
+      <div className="flex justify-center mb-5">
         <div
           className="px-8 py-2 rounded-full text-white shadow-sm flex items-center gap-3"
           style={{ background: `linear-gradient(135deg, ${NAVY} 0%, ${NAVY_LIGHT} 100%)` }}
@@ -133,19 +138,6 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
             {docTitle.ar}
           </span>
         </div>
-        {invoice.type === "INV" && invoice.invoiceType && (
-          <span
-            className="mt-1.5 text-[9px] font-bold uppercase tracking-[0.18em] px-2.5 py-0.5 rounded border"
-            style={{
-              color: invoice.invoiceType === "Credit Invoice" ? "#b91c1c"
-                : invoice.invoiceType === "Cash Invoice" ? "#15803d" : "#334155",
-              borderColor: invoice.invoiceType === "Credit Invoice" ? "#b91c1c"
-                : invoice.invoiceType === "Cash Invoice" ? "#15803d" : "#334155",
-            }}
-          >
-            {invoice.invoiceType}
-          </span>
-        )}
       </div>
 
       {/* ── 3. METADATA GRID ──────────────────────────────────────── */}

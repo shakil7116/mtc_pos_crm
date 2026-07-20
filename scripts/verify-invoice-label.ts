@@ -12,15 +12,15 @@ const ok = (n: string, got: any, want: any) => { const p = got === want; R.push(
 
 // ── Part 1: pure rules (payments use the stored method labels; PDC → "Cheque") ──
 console.log("\n── Rule table (pure) ──");
-ok("A  cash-only full", computeInvoiceType(500, [{ method: "Cash", amount: 500 }], []), "Cash Invoice");
-ok("A  card+online full", computeInvoiceType(500, [{ method: "Credit Card", amount: 200 }, { method: "Bank Transfer", amount: 300 }], []), "Cash Invoice");
-ok("B  PDC-only full", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "pending" }]), "Invoice");
-ok("B  PDC-only cleared", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "cleared" }]), "Invoice");
-ok("C  unpaid (credit)", computeInvoiceType(500, [], []), "Credit Invoice");
-ok("C  partial cash", computeInvoiceType(500, [{ method: "Cash", amount: 200 }], []), "Credit Invoice");
-ok("C  mixed cash+PDC full", computeInvoiceType(500, [{ method: "Cash", amount: 250 }, { method: "Cheque", amount: 250 }], [{ amount: 250, status: "pending" }]), "Credit Invoice");
-ok("C  PDC bounced → unpaid again", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "bounced" }]), "Credit Invoice");
-ok("relabel: credit paid off by cash", computeInvoiceType(500, [{ method: "Cash", amount: 500 }], []), "Cash Invoice");
+ok("cash-only full → Cash", computeInvoiceType(500, [{ method: "Cash", amount: 500 }], []), "Cash Invoice");
+ok("card+online full → Cash", computeInvoiceType(500, [{ method: "Credit Card", amount: 200 }, { method: "Bank Transfer", amount: 300 }], []), "Cash Invoice");
+ok("PDC-only full → Credit (PDC always Credit)", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "pending" }]), "Credit Invoice");
+ok("PDC-only CLEARED → still Credit (permanent)", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "cleared" }]), "Credit Invoice");
+ok("unpaid → Credit", computeInvoiceType(500, [], []), "Credit Invoice");
+ok("partial cash → Credit", computeInvoiceType(500, [{ method: "Cash", amount: 200 }], []), "Credit Invoice");
+ok("mixed cash+PDC full → Credit", computeInvoiceType(500, [{ method: "Cash", amount: 250 }, { method: "Cheque", amount: 250 }], [{ amount: 250, status: "pending" }]), "Credit Invoice");
+ok("PDC bounced → Credit", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "bounced" }]), "Credit Invoice");
+ok("relabel: credit paid off by cash only → Cash", computeInvoiceType(500, [{ method: "Cash", amount: 500 }], []), "Cash Invoice");
 
 // ── Part 2: getDocument integration ──
 const MARK = "__LABELTEST__";
@@ -49,7 +49,10 @@ async function main() {
   ok("getDocument cash-only → Cash Invoice", (await getDocument(cash) as any).invoiceType, "Cash Invoice");
 
   const pdc = await mkInv(500, "unpaid"); await pay(pdc, "Cheque", 500); await chq(pdc, 500, "pending");
-  ok("getDocument PDC-only → Invoice", (await getDocument(pdc) as any).invoiceType, "Invoice");
+  ok("getDocument PDC-only → Credit Invoice", (await getDocument(pdc) as any).invoiceType, "Credit Invoice");
+
+  const pdcCleared = await mkInv(500, "unpaid"); await pay(pdcCleared, "Cheque", 500); await chq(pdcCleared, 500, "cleared");
+  ok("getDocument PDC cleared → still Credit", (await getDocument(pdcCleared) as any).invoiceType, "Credit Invoice");
 
   const part = await mkInv(500, "partial"); await pay(part, "Cash", 200);
   ok("getDocument partial → Credit Invoice", (await getDocument(part) as any).invoiceType, "Credit Invoice");
