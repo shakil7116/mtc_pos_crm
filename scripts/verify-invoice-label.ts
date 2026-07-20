@@ -4,7 +4,7 @@
 import "dotenv/config";
 import { db, pool } from "../server/db";
 import { documents, payments, cheques } from "@shared/schema";
-import { computeInvoiceType } from "@shared/invoiceType";
+import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import { getDocument } from "../server/storage";
 
 const R: boolean[] = [];
@@ -21,6 +21,16 @@ ok("partial cash → Credit", computeInvoiceType(500, [{ method: "Cash", amount:
 ok("mixed cash+PDC full → Credit", computeInvoiceType(500, [{ method: "Cash", amount: 250 }, { method: "Cheque", amount: 250 }], [{ amount: 250, status: "pending" }]), "Credit Invoice");
 ok("PDC bounced → Credit", computeInvoiceType(500, [{ method: "Cheque", amount: 500 }], [{ amount: 500, status: "bounced" }]), "Credit Invoice");
 ok("relabel: credit paid off by cash only → Cash", computeInvoiceType(500, [{ method: "Cash", amount: 500 }], []), "Cash Invoice");
+
+// ── Part 1b: footer terms (pure) ──
+console.log("\n── Footer terms (pure) ──");
+const okJ = (n: string, got: any, want: any) => { const p = JSON.stringify(got) === JSON.stringify(want); R.push(p); console.log(`   ${p ? "PASS" : "FAIL"} — ${n} :: ${JSON.stringify(got)}`); };
+const T = (o: any) => computeInvoiceTerms({ termDays: 30, ...o });
+okJ("cash → return policy only (no due)", T({ total: 500, date: "2026-07-01", invoiceType: "Cash Invoice", payments: [{ method: "Cash", amount: 500 }], cheques: [] }), { isCredit: false, chequeDue: [], standardDue: null });
+okJ("credit unpaid, no PDC → standard due (date+30)", T({ total: 500, date: "2026-07-01", invoiceType: "Credit Invoice", payments: [], cheques: [] }), { isCredit: true, chequeDue: [], standardDue: "2026-07-31" });
+okJ("credit single PDC covers all → cheque due, no standard", T({ total: 500, date: "2026-07-01", invoiceType: "Credit Invoice", payments: [{ method: "Cheque", amount: 500 }], cheques: [{ amount: 500, status: "pending", chequeNumber: "C1", chequeDate: "2026-08-10" }] }), { isCredit: true, chequeDue: [{ number: "C1", dueDate: "2026-08-10" }], standardDue: null });
+okJ("credit 2 PDC → both cheque dues", T({ total: 1000, date: "2026-07-01", invoiceType: "Credit Invoice", payments: [{ method: "Cheque", amount: 500 }, { method: "Cheque", amount: 500 }], cheques: [{ amount: 500, status: "pending", chequeNumber: "C1", chequeDate: "2026-08-10" }, { amount: 500, status: "pending", chequeNumber: "C2", chequeDate: "2026-09-10" }] }), { isCredit: true, chequeDue: [{ number: "C1", dueDate: "2026-08-10" }, { number: "C2", dueDate: "2026-09-10" }], standardDue: null });
+okJ("credit part PDC + part open → cheque due AND standard due", T({ total: 1000, date: "2026-07-01", invoiceType: "Credit Invoice", payments: [{ method: "Cheque", amount: 400 }], cheques: [{ amount: 400, status: "pending", chequeNumber: "C1", chequeDate: "2026-08-10" }] }), { isCredit: true, chequeDue: [{ number: "C1", dueDate: "2026-08-10" }], standardDue: "2026-07-31" });
 
 // ── Part 2: getDocument integration ──
 const MARK = "__LABELTEST__";

@@ -17,8 +17,14 @@ export interface TemplateInvoice {
   date: string;
   poNumber?: string | null;
   paymentType?: string | null;
-  /** Payment-composition label shown under the title (INV only): "Cash Invoice" | "Invoice" | "Credit Invoice". */
+  /** Payment-composition label carried by the heading (INV only): "Cash Invoice" | "Credit Invoice". */
   invoiceType?: string | null;
+  /** Footer terms (INV only, customer-facing): cheque due dates + standard credit due date. */
+  terms?: {
+    isCredit: boolean;
+    chequeDue: { number: string; dueDate: string }[];
+    standardDue: string | null;
+  } | null;
   customerName?: string | null;
   customerPhone?: string | null;
   items: TemplateItem[];

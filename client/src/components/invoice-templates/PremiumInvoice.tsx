@@ -2,6 +2,7 @@
 import clsx from "clsx";
 import { format } from "date-fns";
 import logoImg from "@assets/generated_images/minimalist_professional_mtc_text_logo.png";
+import { TermsFooter } from "./TermsFooter";
 
 // Convert Western digits (123) to Eastern Arabic-Indic digits (١٢٣) for the Arabic column.
 const toArabicDigits = (value: string | number) => {
@@ -333,6 +334,11 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
           </div>
         )}
       </div>
+
+      {/* Customer-facing terms (due dates + return policy) */}
+      {invoice.type === "INV" && (
+        <div className="pt-2"><TermsFooter terms={(invoice as any).terms} /></div>
+      )}
 
       {/* ── 7. SIGNATURES ─────────────────────────────────────────── */}
       {options.showSignature ? (

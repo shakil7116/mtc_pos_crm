@@ -4,6 +4,7 @@ import type { Settings, InvoiceWithItems } from "@shared/schema";
 import { format } from "date-fns";
 import { clsx } from "clsx";
 import logoImg from "@assets/generated_images/minimalist_professional_mtc_text_logo.png";
+import { TermsFooter } from "@/components/invoice-templates/TermsFooter";
 
 interface InvoicePaperProps {
   settings: Settings;
@@ -240,6 +241,9 @@ const toArabicDigits = (num: string | number) => {
                 <p className={clsx("text-[9px] tracking-widest font-bold mb-0.5 opacity-60", textColor)} style={{ fontWeight: 700 }}>AMOUNT IN WORDS / المبلغ بالحروف</p>
                 <p className={clsx("font-bold italic text-base uppercase leading-tight underline underline-offset-2 decoration-current/10", textColor)} style={{ fontWeight: 700 }}>{invoice.totalAmountWords?.toUpperCase() || "---"}</p>
              </div>
+             )}
+             {!isDeliveryNote && !isQuotation && (
+               <div className="px-4 mt-4"><TermsFooter terms={(invoice as any).terms} /></div>
              )}
              <div className="flex justify-between px-4 mt-8">
   {/* Invoice: Salesman + Receiver */}

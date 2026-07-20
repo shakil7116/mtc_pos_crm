@@ -1,5 +1,5 @@
 import { db } from "./db";
-import { computeInvoiceType } from "@shared/invoiceType";
+import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import {
   settings, stores, users, customers, products, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -495,14 +495,19 @@ export async function getDocument(id: number): Promise<DocumentWithItems | undef
   const customer = doc.customerId
     ? (await db.select().from(customers).where(eq(customers.id, doc.customerId)))[0]
     : null;
-  // Invoice type label (Cash Invoice / Invoice / Credit Invoice) — computed live from
-  // payments + linked cheques so it always reflects the current payment composition.
+  // Invoice type (Cash / Credit) + footer terms — computed live from payments + linked
+  // cheques so they always reflect the current payment composition.
   let invoiceType: string | undefined;
+  let terms: any;
   if (doc.type === "INV") {
     const chqs = await db.select().from(cheques).where(eq(cheques.documentId, id));
     invoiceType = computeInvoiceType(doc.total || "0", pays as any, chqs as any);
+    const cfg: any = await getSettings();
+    const m = String(customer?.paymentTerms || "").match(/\d+/);
+    const termDays = m ? parseInt(m[0], 10) : Number(cfg?.tierDefaultTermDays ?? 30);
+    terms = computeInvoiceTerms({ total: doc.total || "0", date: doc.date, invoiceType: invoiceType as any, payments: pays as any, cheques: chqs as any, termDays });
   }
-  return { ...doc, items, payments: pays, customer, invoiceType } as any;
+  return { ...doc, items, payments: pays, customer, invoiceType, terms } as any;
 }
 
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {
