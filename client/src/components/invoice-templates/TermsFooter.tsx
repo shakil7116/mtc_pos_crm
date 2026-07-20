@@ -17,24 +17,20 @@ const fmt = (iso: string): string => {
 
 export function TermsFooter({ terms }: { terms?: FooterTerms | null }) {
   if (!terms) return null; // non-INV / unsaved preview → nothing
+  const single = terms.chequeDue.length === 1;
   return (
     <div className="mt-2 pt-1.5 border-t border-gray-200 text-[7.5pt] leading-snug text-gray-600 space-y-0.5">
       {terms.isCredit && terms.chequeDue.map((c, i) => (
-        <p key={`chq-${i}`} className="flex justify-between gap-3">
-          <span dir="rtl">{`تاريخ استحقاق الشيك${c.number ? ` (${c.number})` : ""}: ${fmt(c.dueDate)}`}</span>
-          <span>{`Cheque Due${c.number ? ` (${c.number})` : ""}: ${fmt(c.dueDate)}`}</span>
+        <p key={`chq-${i}`}>
+          {single
+            ? `Cheque Due Date: ${fmt(c.dueDate)}`
+            : `Cheque${c.number ? ` ${c.number}` : ""} Due: ${fmt(c.dueDate)}`}
         </p>
       ))}
       {terms.isCredit && terms.standardDue && (
-        <p className="flex justify-between gap-3">
-          <span dir="rtl">{`تاريخ الاستحقاق: ${fmt(terms.standardDue)}`}</span>
-          <span>{`Payment Due: ${fmt(terms.standardDue)}`}</span>
-        </p>
+        <p>{`Payment Due Date: ${fmt(terms.standardDue)}`}</p>
       )}
-      <p className="flex justify-between gap-3">
-        <span dir="rtl">سياسة الإرجاع: خلال 7 أيام من تاريخ الشراء</span>
-        <span>Returns accepted within 7 days of purchase date</span>
-      </p>
+      <p>Return Policy: Items may be returned within 7 days of purchase date, in original condition with proof of purchase.</p>
     </div>
   );
 }
