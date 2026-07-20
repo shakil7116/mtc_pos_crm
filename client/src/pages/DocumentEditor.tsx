@@ -523,6 +523,7 @@ export default function DocumentEditor({ type, params }: Props) {
         transactionMode: intercept.transactionMode, paymentType: intercept.paymentType,
         payments: (intercept as any).payments || [],
         creditOverride: (intercept as any).creditOverride || false,
+        dueDate: (intercept as any).dueDate ?? null,
         ...(docType === "INV" ? {
           deliveryMethod,
           deliveryAddress: deliveryMethod === "deliver_site" ? deliveryAddress.trim() || null : null,
@@ -1125,6 +1126,7 @@ export default function DocumentEditor({ type, params }: Props) {
         docLabel={docTypeLabel[docType]}
         total={total}
         saving={saveMutation.isPending}
+        invoiceDate={date}
         invoiceMode={docType === "INV" ? invoiceMode : undefined}
         creditRemaining={customerBalance && Number(customerBalance.creditLimit || 0) > 0 ? Math.max(0, Number(customerBalance.creditLimit || 0) - Number(customerBalance.balance || 0)) : undefined}
         customer={selectedCustomer ? { id: selectedCustomer.id, name: selectedCustomer.name, creditLimit: Number(selectedCustomer.creditLimit || 0) } : undefined}

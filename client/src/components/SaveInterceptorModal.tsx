@@ -32,6 +32,7 @@ export interface InterceptorResult {
   payments: TenderLine[];
   paymentType: string;       // derived summary label (legacy field)
   creditOverride?: boolean;
+  dueDate?: string | null;   // credit payment deadline (invoice date + chosen term)
 }
 
 interface Props {
@@ -41,6 +42,8 @@ interface Props {
   docLabel: string;
   total: number;
   saving?: boolean;
+  /** Invoice date (YYYY-MM-DD) — drives the credit due date + the PDC 45-day check. */
+  invoiceDate?: string;
   /** Remaining credit headroom for the customer; undefined = unknown/no limit. */
   creditRemaining?: number;
   /** Selected customer (for the Cash→Credit upgrade guard). creditLimit≤0 = Cash account. */
@@ -54,7 +57,12 @@ interface Props {
 const METHODS: TenderMethod[] = ["Cash", "Card", "Online Transfer", "PDC", "Credit"];
 const isDeferred = (m: TenderMethod) => m === "PDC" || m === "Credit"; // not collected now
 
-export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded, invoiceMode }: Props) {
+export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded, invoiceMode, invoiceDate }: Props) {
+  // Date helpers for the credit due date + PDC 45-day timeline check.
+  const baseDate = invoiceDate || new Date().toISOString().slice(0, 10);
+  const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+  const daysBetween = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 86400000);
+  const PDC_MAX_DAYS = 45;
   const [transactionMode, setTransactionMode] = useState<TransactionMode>("real");
   const [lines, setLines] = useState<TenderLine[]>([{ method: "Cash", amount: total }]);
   const [override, setOverride] = useState(false);
@@ -68,10 +76,10 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
     queryFn: () => fetch("/api/settings").then((r) => r.json()),
     staleTime: 60_000,
   });
-  const creditTermOptions: number[] =
-    Array.isArray(bizSettings?.creditTerms) && bizSettings.creditTerms.length > 0
-      ? bizSettings.creditTerms
-      : [30, 60, 90];
+  const creditTermOptions: number[] = Array.from(new Set([
+    7,
+    ...(Array.isArray(bizSettings?.creditTerms) && bizSettings.creditTerms.length > 0 ? bizSettings.creditTerms : [30, 60, 90]),
+  ])).sort((a, b) => a - b);
 
   useEffect(() => {
     if (open) {
@@ -149,9 +157,16 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
     return "Split · " + lines.map((l) => l.method).join(" + ");
   };
 
+  // Credit due date = invoice date + the chosen Credit term (the deferred, non-PDC portion).
+  const creditLine = lines.find((l) => l.method === "Credit" && Number(l.amount) > 0);
+  const dueDate = creditLine ? addDays(baseDate, Number(creditLine.creditTerm ?? 30)) : null;
+
+  // PDC cheques whose clear date is more than 45 days out — warn (does not block).
+  const pdcBeyond45 = lines.filter((l) => l.method === "PDC" && l.chequeDate && daysBetween(l.chequeDate, baseDate) > PDC_MAX_DAYS);
+
   const confirm = () => {
     if (!canConfirm) return;
-    onConfirm({ transactionMode, payments: lines, paymentType: derivedLabel(), creditOverride: exceedsLimit ? override : undefined });
+    onConfirm({ transactionMode, payments: lines, paymentType: derivedLabel(), creditOverride: exceedsLimit ? override : undefined, dueDate });
   };
 
   return (
@@ -248,6 +263,24 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                   {Math.abs(remaining) < 0.01 ? "Balanced" : `Remaining ${remaining.toFixed(2)}`}
                 </span>
               </div>
+
+              {/* PDC clear date beyond 45 days — timeline warning (does not block). */}
+              {pdcBeyond45.length > 0 && (
+                <div className="mt-2 text-[12px] bg-amber-50 border border-amber-300 text-amber-800 rounded p-2 flex items-start gap-1.5">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>
+                    {pdcBeyond45.length === 1 ? "A PDC cheque is" : `${pdcBeyond45.length} PDC cheques are`} dated more than {PDC_MAX_DAYS} days out
+                    ({pdcBeyond45.map((l) => `${l.chequeNumber || "cheque"} · ${daysBetween(l.chequeDate!, baseDate)}d`).join(", ")}).
+                    Long collection timeline — you can still save.
+                  </span>
+                </div>
+              )}
+              {/* Credit due date preview */}
+              {dueDate && (
+                <div className="mt-2 text-[12px] bg-slate-50 border border-slate-200 text-slate-600 rounded p-2">
+                  Credit due date: <strong>{dueDate.split("-").reverse().join("/")}</strong> ({creditLine?.creditTerm ?? 30} days from invoice).
+                </div>
+              )}
 
               {/* Cash Invoice guard — full non-PDC payment required */}
               {cashViolation && (

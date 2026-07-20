@@ -132,6 +132,8 @@ export default function QuickSale() {
   const total = cart.reduce((s, l) => s + l.price * l.qty, 0);
   // Block charge until every multi-location line has a location picked.
   const locationPending = docType !== "QT" && cart.some((l) => l.locationStoreId == null && l.locOptions.length > 1);
+  // Every invoice (cash + credit) needs a customer. Quotations may stay anonymous.
+  const customerRequired = docType === "INV" && !customer;
 
   function addProduct(p: Product) {
     const price = Number(p.salePrice) || 0;
@@ -170,6 +172,7 @@ export default function QuickSale() {
         deliveryMethod: isQT ? "pickup_store" : deliveryMethod,
         deliveryAddress: (!isQT && deliveryMethod === "deliver_site") ? (deliveryAddress.trim() || null) : null,
         creditOverride: intercept?.creditOverride ?? false,
+        dueDate: intercept?.dueDate ?? null,
         discountType: "QAR", discountAmount: 0, subtotal: total, taxRate: 0, taxAmount: 0, total,
         payments,
         items: cart.map((l) => ({
@@ -404,7 +407,7 @@ export default function QuickSale() {
               </div>
               <Button
                 className="w-full h-14 text-base bg-green-600 hover:bg-green-700 text-white gap-2"
-                disabled={cart.length === 0 || !storeId || sale.isPending || locationPending}
+                disabled={cart.length === 0 || !storeId || sale.isPending || locationPending || customerRequired}
                 onClick={() => {
                   if (docType === "QT") { sale.mutate(undefined); return; }   // quotation — no payment
                   if (!isOnline()) { sale.mutate(undefined); return; }         // offline — straight cash queue
@@ -416,6 +419,7 @@ export default function QuickSale() {
               </Button>
               {!storeId && <p className="text-xs text-red-500 text-center">No store location set — add one in Settings.</p>}
               {locationPending && <p className="text-xs text-amber-600 text-center">Pick a location for the highlighted line(s) first.</p>}
+              {customerRequired && <p className="text-xs text-amber-600 text-center">Attach a customer — every invoice needs one. Search or “+ Add new”.</p>}
             </div>
           </div>
         </div>
@@ -429,6 +433,7 @@ export default function QuickSale() {
         docLabel="Invoice"
         total={total}
         saving={sale.isPending}
+        invoiceDate={new Date().toISOString().slice(0, 10)}
         invoiceMode={invoiceMode}
         customer={customer ? { id: customer.id, name: customer.name, creditLimit: customer.creditLimit } : undefined}
         onCustomerUpgraded={() => {

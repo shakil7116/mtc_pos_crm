@@ -505,12 +505,18 @@ export async function getDocument(id: number): Promise<DocumentWithItems | undef
     const cfg: any = await getSettings();
     const m = String(customer?.paymentTerms || "").match(/\d+/);
     const termDays = m ? parseInt(m[0], 10) : Number(cfg?.tierDefaultTermDays ?? 30);
-    terms = computeInvoiceTerms({ total: doc.total || "0", date: doc.date, invoiceType: invoiceType as any, payments: pays as any, cheques: chqs as any, termDays });
+    terms = computeInvoiceTerms({ total: doc.total || "0", date: doc.date, invoiceType: invoiceType as any, payments: pays as any, cheques: chqs as any, termDays, dueDate: (doc as any).dueDate ?? null });
   }
   return { ...doc, items, payments: pays, customer, invoiceType, terms } as any;
 }
 
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {
+  // ── Customer gate — every invoice (cash + credit) must have a linked customer.
+  // Blocks anonymous invoices at the API layer, not just in the UI.
+  if (req.type === "INV" && req.customerId == null) {
+    throw new Error("A customer is required for every invoice — select or add one before saving.");
+  }
+
   // ── Credit-limit gate (server-side, money integrity) ──
   // The client (SaveInterceptorModal) blocks this too, but a direct API POST must
   // not be able to bypass it. Credit + PDC tenders are deferred credit exposure.
@@ -542,6 +548,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     number,
     date: req.date,
     poNumber: req.poNumber,
+    dueDate: (req as any).dueDate ?? null,
     customerId: req.customerId,
     customerName: req.customerName,
     supplierId: (req as any).supplierId,

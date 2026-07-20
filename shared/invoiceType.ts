@@ -72,8 +72,9 @@ export function computeInvoiceTerms(opts: {
   payments: TenderForLabel[];
   cheques: ChequeForTerms[];
   termDays: number;
+  dueDate?: string | null;   // per-invoice deadline chosen at creation; wins over the term calc
 }): InvoiceTerms {
-  const { total, date, invoiceType, payments, cheques, termDays } = opts;
+  const { total, date, invoiceType, payments, cheques, termDays, dueDate } = opts;
   if (invoiceType !== "Credit Invoice") return { isCredit: false, chequeDue: [], standardDue: null };
 
   let cashLike = 0;
@@ -89,6 +90,6 @@ export function computeInvoiceTerms(opts: {
     .filter((c) => ["pending", "deposited"].includes(c.status))
     .map((c) => ({ number: c.chequeNumber || "", dueDate: c.chequeDate || "" }));
   const nonChequeOpen = num(total) - cashLike - activeAmt;
-  const standardDue = nonChequeOpen > 0.005 ? addDaysISO(date, termDays) : null;
+  const standardDue = nonChequeOpen > 0.005 ? (dueDate || addDaysISO(date, termDays)) : null;
   return { isCredit: true, chequeDue, standardDue };
 }

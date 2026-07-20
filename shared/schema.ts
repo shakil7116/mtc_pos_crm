@@ -184,6 +184,7 @@ export const documents = pgTable("documents", {
   number: text("number").notNull().unique(),
   date: date("date").notNull(),
   poNumber: text("po_number"),
+  dueDate: date("due_date"), // credit payment deadline (invoice date + chosen term) — drives the footer Payment Due
   customerId: integer("customer_id").references(() => customers.id),
   customerName: text("customer_name"),
   supplierId: integer("supplier_id").references(() => suppliers.id),

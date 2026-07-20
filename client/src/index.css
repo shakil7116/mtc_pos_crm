@@ -209,3 +209,17 @@ main {
   @apply bg-muted-foreground/45;
   background-clip: content-box;
 }
+
+/* ── All-caps inputs (invoicing convention) ──────────────────────────────────
+   Every typed field displays in capital letters. Password + email are excluded
+   so logins keep their exact case; the stored value is unchanged (search, SKU
+   matching and auth still use what was actually typed). `.no-uppercase` opts a
+   field out. Placeholders are left in normal case for readability. */
+input:not([type="password"]):not([type="email"]):not([type="date"]):not([type="time"]):not([type="number"]):not([type="tel"]):not([type="url"]):not(.no-uppercase),
+textarea:not(.no-uppercase) {
+  text-transform: uppercase;
+}
+input::placeholder,
+textarea::placeholder {
+  text-transform: none;
+}
