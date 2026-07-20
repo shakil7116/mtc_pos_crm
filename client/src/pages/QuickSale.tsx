@@ -41,6 +41,7 @@ export default function QuickSale() {
   const [invoiceMode, setInvoiceMode] = useState<"cash" | "credit">("cash"); // Task 2 — Cash | Credit
   const [invoiceModeTouched, setInvoiceModeTouched] = useState(false);
   const [deliveryMethod, setDeliveryMethod] = useState("pickup_store");  // Task 5
+  const [deliveryAddress, setDeliveryAddress] = useState("");            // free-text area/place name for site delivery
   const [interceptorOpen, setInterceptorOpen] = useState(false);
   // Customer: defaults to the walk-in "Cash Customer" (null) but can attach an account.
   // creditLimit is kept so the Invoice Type toggle can default correctly.
@@ -167,6 +168,7 @@ export default function QuickSale() {
         storeId, transactionMode: intercept?.transactionMode ?? "real",
         paymentType: isQT ? null : (intercept?.paymentType ?? "Cash"),
         deliveryMethod: isQT ? "pickup_store" : deliveryMethod,
+        deliveryAddress: (!isQT && deliveryMethod === "deliver_site") ? (deliveryAddress.trim() || null) : null,
         creditOverride: intercept?.creditOverride ?? false,
         discountType: "QAR", discountAmount: 0, subtotal: total, taxRate: 0, taxAmount: 0, total,
         payments,
@@ -203,7 +205,7 @@ export default function QuickSale() {
   function newSale() {
     setReceipt(null); setSearch(""); setCart([]); setCustomer(null); setCustSearch("");
     setDocType("INV"); setInvoiceMode("cash"); setInvoiceModeTouched(false); setDeliveryMethod("pickup_store");
-    setInterceptorOpen(false);
+    setDeliveryAddress(""); setInterceptorOpen(false);
     searchRef.current?.focus();
   }
 
@@ -295,6 +297,14 @@ export default function QuickSale() {
               <option value="pickup_warehouse">Pick up from Warehouse</option>
               <option value="deliver_site">Deliver to Site</option>
             </select>
+            {deliveryMethod === "deliver_site" && (
+              <Input
+                value={deliveryAddress}
+                onChange={(e) => setDeliveryAddress(e.target.value)}
+                placeholder="Delivery area / place — e.g. Najma, Al Matar Al Qadeem"
+                className="h-8 text-xs w-full sm:w-72"
+              />
+            )}
           </>
         )}
       </div>
