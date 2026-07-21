@@ -98,6 +98,7 @@ type Store = {
   nameAr: string;
   address: string;
   type: "store" | "warehouse";
+  ownerStoreId?: number | null;   // warehouse → which store owns it (null = common)
   active: boolean;
 };
 
@@ -382,7 +383,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
   });
 
   const [addOpen, setAddOpen] = useState(false);
-  const [addForm, setAddForm] = useState({ nameEn: "", nameAr: "", address: "", type: "store" as "store" | "warehouse" });
+  const [addForm, setAddForm] = useState({ nameEn: "", nameAr: "", address: "", type: "store" as "store" | "warehouse", ownerStoreId: null as number | null });
   const [editId, setEditId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<Store>>({});
 
@@ -396,7 +397,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/stores"] });
       setAddOpen(false);
-      setAddForm({ nameEn: "", nameAr: "", address: "", type: "store" });
+      setAddForm({ nameEn: "", nameAr: "", address: "", type: "store", ownerStoreId: null });
       toast({ title: "Store added" });
     },
     onError: () => toast({ title: "Failed to add store", variant: "destructive" }),
@@ -422,7 +423,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
 
   const startEdit = (store: Store) => {
     setEditId(store.id);
-    setEditForm({ nameEn: store.nameEn, nameAr: store.nameAr, address: store.address, type: store.type, active: store.active });
+    setEditForm({ nameEn: store.nameEn, nameAr: store.nameAr, address: store.address, type: store.type, ownerStoreId: store.ownerStoreId ?? null, active: store.active });
   };
 
   return (
@@ -492,6 +493,22 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                             </SelectContent>
                           </Select>
                         </Field>
+                        {editForm.type === "warehouse" && (
+                          <Field label="Owned by">
+                            <Select
+                              value={editForm.ownerStoreId != null ? String(editForm.ownerStoreId) : "common"}
+                              onValueChange={(v) => setEditForm((f) => ({ ...f, ownerStoreId: v === "common" ? null : Number(v) }))}
+                            >
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="common">Common (shared)</SelectItem>
+                                {stores.filter((s) => s.type === "store").map((s) => (
+                                  <SelectItem key={s.id} value={String(s.id)}>{s.nameEn}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                        )}
                       </div>
                       <div className="flex gap-2 justify-end">
                         <Button variant="ghost" size="sm" onClick={() => setEditId(null)}>
@@ -539,6 +556,11 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">{store.address}</p>
+                        {store.type === "warehouse" && (
+                          <p className="text-[11px] text-purple-600 font-medium">
+                            Owned by: {store.ownerStoreId != null ? (stores.find((s) => s.id === store.ownerStoreId)?.nameEn ?? `#${store.ownerStoreId}`) : "Common (shared)"}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => startEdit(store)}>
@@ -607,6 +629,22 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                   </SelectContent>
                 </Select>
               </Field>
+              {addForm.type === "warehouse" && (
+                <Field label="Owned by">
+                  <Select
+                    value={addForm.ownerStoreId != null ? String(addForm.ownerStoreId) : "common"}
+                    onValueChange={(v) => setAddForm((f) => ({ ...f, ownerStoreId: v === "common" ? null : Number(v) }))}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="common">Common (shared)</SelectItem>
+                      {stores.filter((s) => s.type === "store").map((s) => (
+                        <SelectItem key={s.id} value={String(s.id)}>{s.nameEn}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setAddOpen(false)}>

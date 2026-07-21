@@ -9,6 +9,7 @@ import {
   Minus,
   MessageSquare,
   FileText,
+  ArrowLeftRight,
   Pencil,
   Check,
   Warehouse,
@@ -51,6 +52,7 @@ import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
 import { validateSku, validatePositivePrice, validateNonNegative } from "@/lib/validation";
 import { Link, useSearch } from "wouter";
+import TransferModal from "@/components/TransferModal";
 
 /* ─────────────────────────────────────────
    Types
@@ -1892,6 +1894,87 @@ function AdjustmentsTab({
 /* ─────────────────────────────────────────
    Main Page
 ───────────────────────────────────────── */
+/* ─────────────────────────────────────────
+   Tab — Transfers (TR)
+───────────────────────────────────────── */
+function TransfersTab({ isAdmin, onNew }: { isAdmin: boolean; onNew: () => void }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const canApprove = ["admin", "manager"].includes(user?.role || "");
+  const { data: transfers = [], isLoading } = useQuery<any[]>({
+    queryKey: ["/api/transfers"],
+    queryFn: () => fetch("/api/transfers").then((r) => r.json()).catch(() => []),
+  });
+  const act = useMutation({
+    mutationFn: async ({ id, action }: { id: number; action: string }) => {
+      const r = await fetch(`/api/transfers/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: "{}" });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Action failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/transfers"] });
+      qc.invalidateQueries({ queryKey: ["/api/inventory"] });
+      qc.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
+    },
+    onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
+  });
+  const money = (n: any) => "QAR " + (Number(n) || 0).toFixed(2);
+  const STATUS: Record<string, string> = {
+    draft: "bg-slate-100 text-slate-700", approved: "bg-amber-100 text-amber-700",
+    received: "bg-green-100 text-green-700", cancelled: "bg-red-100 text-red-700",
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex justify-end">
+        <Button onClick={onNew} className="gap-2"><ArrowLeftRight className="w-4 h-4" /> New Transfer</Button>
+      </div>
+      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground text-center py-12">Loading…</p>
+        ) : transfers.length === 0 ? (
+          <p className="text-sm text-muted-foreground text-center py-12">No transfers yet.</p>
+        ) : (
+          <div className="divide-y">
+            {transfers.map((t: any) => (
+              <div key={t.id} className="px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+                <div className="flex-1 min-w-[220px]">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-mono font-bold text-sm">{t.number}</span>
+                    <Badge className={cn("text-[10px] capitalize border-0", STATUS[t.status] || "bg-gray-100")}>{t.status}</Badge>
+                    {t.crossOwner
+                      ? <Badge className="text-[10px] border-0 bg-amber-500 text-white">Cross-owner · {money(t.total)}</Badge>
+                      : <Badge className="text-[10px] border-0 bg-green-100 text-green-700">Internal · no charge</Badge>}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t.fromStore} <ArrowLeftRight className="w-3 h-3 inline mx-0.5" /> {t.toStore}
+                    {" · "}{t.date}{t.takenBy ? ` · by ${t.takenBy}` : ""}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                    {(t.items || []).map((i: any) => `${i.description} ×${Number(i.qty)}`).join(", ")}
+                  </p>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {t.status === "draft" && canApprove && (
+                    <Button size="sm" className="h-8 bg-[#1e2a3a] text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "approve" })}>Approve</Button>
+                  )}
+                  {t.status === "approved" && (
+                    <Button size="sm" className="h-8 bg-green-600 text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "receive" })}>Receive</Button>
+                  )}
+                  {(t.status === "draft" || t.status === "approved") && (
+                    <Button size="sm" variant="outline" className="h-8" disabled={act.isPending} onClick={() => { if (window.confirm("Cancel this transfer?")) act.mutate({ id: t.id, action: "cancel" }); }}>Cancel</Button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Inventory() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -1956,6 +2039,8 @@ export default function Inventory() {
   }
 
   const [adjOpen, setAdjOpen] = useState(false);
+  const [transferOpen, setTransferOpen] = useState(false);
+  const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
   // Dashboard "N products low on stock" widget deep-links here with ?filter=low-stock →
   // open the Low Stock tab (same /api/inventory/low-stock source as the widget count).
@@ -1984,12 +2069,18 @@ export default function Inventory() {
             <FileText className="w-4 h-4" />
             Export CSV
           </Button>
+          <Button variant="outline" onClick={() => { setTransferPrefill(undefined); setTransferOpen(true); }} className="gap-2">
+            <ArrowLeftRight className="w-4 h-4" />
+            Transfer
+          </Button>
           <Button onClick={() => setAdjOpen(true)} className="gap-2">
             <Plus className="w-4 h-4" />
             Stock Adjustment
           </Button>
         </div>
       </div>
+
+      <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} stores={stores} products={products} prefill={transferPrefill} />
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab}>
@@ -2004,6 +2095,7 @@ export default function Inventory() {
             )}
           </TabsTrigger>
           <TabsTrigger value="products">Products</TabsTrigger>
+          <TabsTrigger value="transfers">Transfers</TabsTrigger>
           <TabsTrigger value="adjustments">Adjustments</TabsTrigger>
         </TabsList>
 
@@ -2021,6 +2113,10 @@ export default function Inventory() {
 
         <TabsContent value="products">
           <ProductsTab isAdmin={isAdmin} suppliers={suppliers} />
+        </TabsContent>
+
+        <TabsContent value="transfers">
+          <TransfersTab isAdmin={isAdmin} onNew={() => { setTransferPrefill(undefined); setTransferOpen(true); }} />
         </TabsContent>
 
         <TabsContent value="adjustments">

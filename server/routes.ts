@@ -8,6 +8,7 @@ import {
   getCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
   getProducts, getProduct, createProduct, updateProduct,
   getInventory, adjustStock, getLowStockItems,
+  createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
   getPayments, createPayment,
@@ -1123,6 +1124,37 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // STOCK TRANSFERS (TR) — location-to-location, owner-aware
+  // ══════════════════════════════════════════════════════════════
+  app.get("/api/transfers", async (_req: Request, res: Response) => {
+    try { res.json(await getTransfers()); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+  app.post("/api/transfers", async (req: Request, res: Response) => {
+    try { res.json(await createTransfer({ ...req.body, createdBy: req.user?.id ?? null })); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  app.put("/api/transfers/:id", async (req: Request, res: Response) => {
+    try { res.json(await updateTransfer(Number(req.params.id), req.body)); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  // Approve (releases stock from source) — admin/manager only.
+  app.post("/api/transfers/:id/approve", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req)))
+      return res.status(403).json({ message: "Only an admin or manager can approve a transfer." });
+    try { res.json(await approveTransfer(Number(req.params.id), req.user?.id || undefined)); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  app.post("/api/transfers/:id/receive", async (req: Request, res: Response) => {
+    try { res.json(await receiveTransfer(Number(req.params.id), req.user?.id || undefined)); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  app.post("/api/transfers/:id/cancel", async (req: Request, res: Response) => {
+    try { res.json(await cancelTransfer(Number(req.params.id), req.user?.id || undefined)); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
 
   // ══════════════════════════════════════════════════════════════

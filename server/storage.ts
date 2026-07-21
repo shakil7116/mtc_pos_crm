@@ -522,6 +522,153 @@ export async function getDocument(id: number): Promise<DocumentWithItems | undef
   return { ...doc, items, payments: pays, customer, invoiceType, terms } as any;
 }
 
+// ─── Stock Transfers (TR) ────────────────────────────────────────────────────
+// Ownership group of a location: a store owns itself; a warehouse belongs to its
+// ownerStoreId (null = a common warehouse, its own group). SAME group → free stock
+// move (no money); DIFFERENT group → cross-owner transfer valued at cost price.
+function transferGroupKey(store: any): string {
+  if (!store) return "unknown";
+  if (store.type === "warehouse") return store.ownerStoreId != null ? `s:${store.ownerStoreId}` : "common";
+  return `s:${store.id}`;
+}
+export async function transferIsCrossOwner(fromStoreId: number, toStoreId: number): Promise<boolean> {
+  const [from] = await db.select().from(stores).where(eq(stores.id, fromStoreId));
+  const [to] = await db.select().from(stores).where(eq(stores.id, toStoreId));
+  return transferGroupKey(from) !== transferGroupKey(to);
+}
+
+interface TransferReq {
+  date: string; fromStoreId: number; toStoreId: number; takenBy?: string | null; notes?: string | null;
+  items: { productId: number; sku?: string | null; description: string; qty: number | string; unit: string }[];
+  createdBy?: number | null;
+}
+
+async function priceTransferItems(fromStoreId: number, toStoreId: number, items: TransferReq["items"]) {
+  const [from] = await db.select().from(stores).where(eq(stores.id, fromStoreId));
+  const [to] = await db.select().from(stores).where(eq(stores.id, toStoreId));
+  const crossOwner = transferGroupKey(from) !== transferGroupKey(to);
+  const prodIds = items.map((i) => i.productId).filter(Boolean) as number[];
+  const prods = prodIds.length ? await db.select().from(products).where(inArray(products.id, prodIds)) : [];
+  const costById: Record<number, number> = {};
+  for (const p of prods) costById[p.id] = Number((p as any).costPrice || 0);
+  let total = 0;
+  const priced = items.map((i) => {
+    const qty = Number(i.qty) || 0;
+    const cost = crossOwner ? (costById[i.productId] || 0) : 0; // same-owner → zero value
+    const amount = qty * cost;
+    total += amount;
+    return { ...i, qty, cost, amount };
+  });
+  return { crossOwner, total, priced };
+}
+
+export async function createTransfer(req: TransferReq): Promise<any> {
+  if (!req.fromStoreId || !req.toStoreId) throw new Error("Source and destination are required.");
+  if (req.fromStoreId === req.toStoreId) throw new Error("Source and destination must differ.");
+  if (!req.items?.length) throw new Error("Add at least one item to transfer.");
+
+  const { total, priced } = await priceTransferItems(req.fromStoreId, req.toStoreId, req.items);
+  const number = await resolveDocumentNumber("TR");
+  const [doc] = await db.insert(documents).values({
+    type: "TR", number, date: req.date, storeId: req.fromStoreId, toStoreId: req.toStoreId,
+    takenBy: req.takenBy ? String(req.takenBy).toUpperCase() : null,
+    status: "draft", transactionMode: "real",
+    subtotal: String(total), total: String(total), taxRate: "0", taxAmount: "0", discountAmount: "0",
+    notes: req.notes || null, createdBy: req.createdBy ?? null,
+  } as any).returning();
+
+  await db.insert(documentItems).values(priced.map((i) => ({
+    documentId: doc.id, productId: i.productId,
+    sku: i.sku ? String(i.sku).toUpperCase() : i.sku,
+    description: String(i.description).toUpperCase(),
+    qty: String(i.qty), unit: i.unit ? String(i.unit).toUpperCase() : i.unit,
+    price: String(i.cost), amount: String(i.amount), locationStoreId: req.fromStoreId,
+  })) as any);
+
+  return doc;
+}
+
+export async function updateTransfer(id: number, req: Partial<TransferReq>): Promise<any> {
+  const [doc] = await db.select().from(documents).where(and(eq(documents.id, id), eq(documents.type, "TR")));
+  if (!doc) throw new Error("Transfer not found.");
+  if (doc.status !== "draft") throw new Error("Only a draft transfer can be edited.");
+  const fromStoreId = req.fromStoreId ?? doc.storeId!;
+  const toStoreId = req.toStoreId ?? (doc as any).toStoreId;
+  if (fromStoreId === toStoreId) throw new Error("Source and destination must differ.");
+  const items = req.items ?? [];
+  const { total, priced } = await priceTransferItems(fromStoreId, toStoreId, items);
+  await db.update(documents).set({
+    storeId: fromStoreId, toStoreId, date: req.date ?? doc.date,
+    takenBy: req.takenBy !== undefined ? (req.takenBy ? String(req.takenBy).toUpperCase() : null) : (doc as any).takenBy,
+    notes: req.notes !== undefined ? req.notes : doc.notes,
+    subtotal: String(total), total: String(total),
+  } as any).where(eq(documents.id, id));
+  if (req.items) {
+    await db.delete(documentItems).where(eq(documentItems.documentId, id));
+    await db.insert(documentItems).values(priced.map((i) => ({
+      documentId: id, productId: i.productId,
+      sku: i.sku ? String(i.sku).toUpperCase() : i.sku,
+      description: String(i.description).toUpperCase(),
+      qty: String(i.qty), unit: i.unit ? String(i.unit).toUpperCase() : i.unit,
+      price: String(i.cost), amount: String(i.amount), locationStoreId: fromStoreId,
+    })) as any);
+  }
+  return { ok: true };
+}
+
+export async function getTransfers(): Promise<any[]> {
+  const docs = await db.select().from(documents).where(eq(documents.type, "TR")).orderBy(desc(documents.id));
+  const allStores = await db.select().from(stores);
+  const byId: Record<number, any> = {}; for (const s of allStores) byId[s.id] = s;
+  const ids = docs.map((d) => d.id);
+  const items = ids.length ? await db.select().from(documentItems).where(inArray(documentItems.documentId, ids)) : [];
+  const itemsByDoc: Record<number, any[]> = {};
+  for (const it of items as any[]) (itemsByDoc[it.documentId] = itemsByDoc[it.documentId] || []).push(it);
+  return docs.map((d) => ({
+    ...d,
+    fromStore: byId[d.storeId!]?.nameEn ?? `#${d.storeId}`,
+    toStore: byId[(d as any).toStoreId]?.nameEn ?? `#${(d as any).toStoreId}`,
+    crossOwner: transferGroupKey(byId[d.storeId!]) !== transferGroupKey(byId[(d as any).toStoreId]),
+    items: itemsByDoc[d.id] || [],
+  }));
+}
+
+async function loadTransfer(id: number) {
+  const [doc] = await db.select().from(documents).where(and(eq(documents.id, id), eq(documents.type, "TR")));
+  if (!doc) throw new Error("Transfer not found.");
+  const items = await db.select().from(documentItems).where(eq(documentItems.documentId, id));
+  return { doc, items };
+}
+
+export async function approveTransfer(id: number, userId?: number): Promise<any> {
+  const { doc, items } = await loadTransfer(id);
+  if (doc.status !== "draft") throw new Error("Only a draft transfer can be approved.");
+  for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, doc.storeId!, -parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} out`, id, userId); // stock leaves source
+  await db.update(documents).set({ status: "approved", authorizedBy: userId ?? null, authorizedAt: new Date() } as any).where(eq(documents.id, id));
+  await logEdit({ documentId: id, userId, field: "status", oldValue: "draft", newValue: "approved", reason: "Transfer approved — stock released from source" });
+  return { ok: true };
+}
+
+export async function receiveTransfer(id: number, userId?: number): Promise<any> {
+  const { doc, items } = await loadTransfer(id);
+  if (doc.status !== "approved") throw new Error("Only an approved transfer can be received.");
+  for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, (doc as any).toStoreId, parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} in`, id, userId); // stock lands at destination
+  await db.update(documents).set({ status: "received" } as any).where(eq(documents.id, id));
+  await logEdit({ documentId: id, userId, field: "status", oldValue: "approved", newValue: "received", reason: "Transfer received — qty checked in at destination" });
+  return { ok: true };
+}
+
+export async function cancelTransfer(id: number, userId?: number): Promise<any> {
+  const { doc, items } = await loadTransfer(id);
+  if (doc.status === "received") throw new Error("A received transfer cannot be cancelled — do a reverse transfer.");
+  if (doc.status === "approved") {
+    for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, doc.storeId!, parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} cancelled`, id, userId); // return released stock to source
+  }
+  await db.update(documents).set({ status: "cancelled" } as any).where(eq(documents.id, id));
+  await logEdit({ documentId: id, userId, field: "status", oldValue: doc.status, newValue: "cancelled", reason: "Transfer cancelled" });
+  return { ok: true };
+}
+
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {
   // ── Customer gate — every invoice (cash + credit) must have a linked customer.
   // Blocks anonymous invoices at the API layer, not just in the UI.

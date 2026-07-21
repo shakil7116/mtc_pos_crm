@@ -67,6 +67,10 @@ export const stores = pgTable("stores", {
   nameAr: text("name_ar"),
   address: text("address"),
   type: text("type").notNull().default("store"), // store | warehouse
+  // For a warehouse: which store OWNS it. Same owner = free stock move; different
+  // owner (or null = common) = cross-owner transfer that carries cost value.
+  // For a store row this is null (a store owns itself).
+  ownerStoreId: integer("owner_store_id"),
   active: boolean("active").notNull().default(true),
 });
 
@@ -185,6 +189,8 @@ export const documents = pgTable("documents", {
   date: date("date").notNull(),
   poNumber: text("po_number"),
   dueDate: date("due_date"), // credit payment deadline (invoice date + chosen term) — drives the footer Payment Due
+  toStoreId: integer("to_store_id"),   // TR transfer destination location (storeId = source)
+  takenBy: text("taken_by"),           // TR — who physically picked up the goods
   customerId: integer("customer_id").references(() => customers.id),
   customerName: text("customer_name"),
   supplierId: integer("supplier_id").references(() => suppliers.id),
