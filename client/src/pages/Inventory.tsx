@@ -50,7 +50,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
 import { validateSku, validatePositivePrice, validateNonNegative } from "@/lib/validation";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 
 /* ─────────────────────────────────────────
    Types
@@ -1957,6 +1957,14 @@ export default function Inventory() {
 
   const [adjOpen, setAdjOpen] = useState(false);
 
+  // Dashboard "N products low on stock" widget deep-links here with ?filter=low-stock →
+  // open the Low Stock tab (same /api/inventory/low-stock source as the widget count).
+  // Plain sidebar nav has no param → defaults to All Stock.
+  const urlSearch = useSearch();
+  const [tab, setTab] = useState(
+    () => (new URLSearchParams(urlSearch).get("filter") === "low-stock" ? "low" : "stock"),
+  );
+
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
       {/* Header */}
@@ -1984,7 +1992,7 @@ export default function Inventory() {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="stock">
+      <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="mb-4">
           <TabsTrigger value="stock">All Stock</TabsTrigger>
           <TabsTrigger value="low" className="gap-2">

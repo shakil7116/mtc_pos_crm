@@ -446,7 +446,7 @@ export default function Dashboard() {
             </Link>
           )}
           {lowStockCount > 0 && (
-            <Link href="/inventory">
+            <Link href="/inventory?filter=low-stock">
               <div className="flex items-center gap-3 bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 cursor-pointer hover:bg-red-100 transition-colors">
                 <Package className="w-5 h-5 shrink-0 text-red-500" />
                 <span className="text-sm font-semibold">
