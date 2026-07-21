@@ -289,13 +289,25 @@ export async function getCustomer(id: number): Promise<Customer | undefined> {
   return row;
 }
 
+// Store selected text fields in UPPER CASE so names/SKUs/descriptions read the same
+// everywhere — screen, print, reports and CSV. Only the listed fields are touched;
+// email/phone/TRN/notes/references keep their exact case.
+function upperFields<T extends Record<string, any>>(data: T, fields: string[]): T {
+  const out: any = { ...data };
+  for (const f of fields) if (typeof out[f] === "string" && out[f].length) out[f] = out[f].toUpperCase();
+  return out;
+}
+const CUSTOMER_UP = ["name", "address"];
+const PRODUCT_UP = ["name", "sku", "unit", "category", "description"];
+const ITEM_UP = ["description", "sku", "unit"];
+
 export async function createCustomer(data: InsertCustomer): Promise<Customer> {
-  const [row] = await db.insert(customers).values(data).returning();
+  const [row] = await db.insert(customers).values(upperFields(data, CUSTOMER_UP)).returning();
   return row;
 }
 
 export async function updateCustomer(id: number, data: Partial<InsertCustomer>): Promise<Customer> {
-  const [row] = await db.update(customers).set(data).where(eq(customers.id, id)).returning();
+  const [row] = await db.update(customers).set(upperFields(data, CUSTOMER_UP)).where(eq(customers.id, id)).returning();
   return row;
 }
 
@@ -334,12 +346,12 @@ export async function getProduct(id: number): Promise<Product | undefined> {
 }
 
 export async function createProduct(data: InsertProduct): Promise<Product> {
-  const [row] = await db.insert(products).values(data).returning();
+  const [row] = await db.insert(products).values(upperFields(data, PRODUCT_UP)).returning();
   return row;
 }
 
 export async function updateProduct(id: number, data: Partial<InsertProduct>): Promise<Product> {
-  const [row] = await db.update(products).set(data).where(eq(products.id, id)).returning();
+  const [row] = await db.update(products).set(upperFields(data, PRODUCT_UP)).where(eq(products.id, id)).returning();
   return row;
 }
 
@@ -550,7 +562,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     poNumber: req.poNumber,
     dueDate: (req as any).dueDate ?? null,
     customerId: req.customerId,
-    customerName: req.customerName,
+    customerName: req.customerName ? String(req.customerName).toUpperCase() : req.customerName,
     supplierId: (req as any).supplierId,
     expectedDate: (req as any).expectedDate,
     transactionMode: (req as any).transactionMode,
@@ -592,10 +604,10 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
       req.items.map(item => ({
         documentId: doc.id,
         productId: item.productId,
-        sku: item.sku,
-        description: item.description,
+        sku: item.sku ? String(item.sku).toUpperCase() : item.sku,
+        description: item.description ? String(item.description).toUpperCase() : item.description,
         qty: String(item.qty),
-        unit: item.unit,
+        unit: item.unit ? String(item.unit).toUpperCase() : item.unit,
         price: String(item.price),
         discountType: item.discountType,
         discountAmount: String(item.discountAmount || "0"),
