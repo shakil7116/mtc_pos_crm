@@ -541,6 +541,7 @@ interface TransferReq {
   date: string; fromStoreId: number; toStoreId: number; takenBy?: string | null; notes?: string | null;
   items: { productId: number; sku?: string | null; description: string; qty: number | string; unit: string }[];
   createdBy?: number | null;
+  linkedDocId?: number | null;   // original TR this one returns against
 }
 
 async function priceTransferItems(fromStoreId: number, toStoreId: number, items: TransferReq["items"]) {
@@ -574,7 +575,7 @@ export async function createTransfer(req: TransferReq): Promise<any> {
     takenBy: req.takenBy ? String(req.takenBy).toUpperCase() : null,
     status: "draft", transactionMode: "real",
     subtotal: String(total), total: String(total), taxRate: "0", taxAmount: "0", discountAmount: "0",
-    notes: req.notes || null, createdBy: req.createdBy ?? null,
+    notes: req.notes || null, linkedDocId: req.linkedDocId ?? null, createdBy: req.createdBy ?? null,
   } as any).returning();
 
   await db.insert(documentItems).values(priced.map((i) => ({
@@ -622,6 +623,7 @@ export async function getTransfers(): Promise<any[]> {
   const byId: Record<number, any> = {}; for (const s of allStores) byId[s.id] = s;
   const allUsers = await db.select().from(users);
   const userById: Record<number, any> = {}; for (const u of allUsers) userById[u.id] = u;
+  const numById: Record<number, string> = {}; for (const d of docs) numById[d.id] = d.number;
   const ids = docs.map((d) => d.id);
   const items = ids.length ? await db.select().from(documentItems).where(inArray(documentItems.documentId, ids)) : [];
   const itemsByDoc: Record<number, any[]> = {};
@@ -633,6 +635,7 @@ export async function getTransfers(): Promise<any[]> {
     crossOwner: transferGroupKey(byId[d.storeId!]) !== transferGroupKey(byId[(d as any).toStoreId]),
     approvedByName: (d as any).authorizedBy ? (userById[(d as any).authorizedBy]?.name ?? null) : null,
     receivedByName: (d as any).receivedBy ? (userById[(d as any).receivedBy]?.name ?? null) : null,
+    returnOfNumber: (d as any).linkedDocId ? (numById[(d as any).linkedDocId] ?? null) : null,
     items: itemsByDoc[d.id] || [],
   }));
 }

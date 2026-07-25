@@ -77,11 +77,12 @@ export default function TransferModal({
 
   const save = useMutation({
     mutationFn: async () => {
-      const body = {
+      const body: any = {
         date: new Date().toISOString().slice(0, 10),
         fromStoreId: Number(fromStoreId), toStoreId: Number(toStoreId), takenBy: takenBy.trim() || null,
         items: lines.map((l) => ({ productId: l.productId, sku: l.sku, description: l.name, qty: l.qty, unit: l.unit })),
       };
+      if (reverseTransfer) { body.linkedDocId = reverseTransfer.id; body.notes = `Return against ${reverseTransfer.number}`; }
       const url = isEdit ? `/api/transfers/${editTransfer.id}` : "/api/transfers";
       const r = await fetch(url, { method: isEdit ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Transfer failed");
