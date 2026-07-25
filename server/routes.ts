@@ -42,7 +42,7 @@ import {
 } from "./storage";
 import { normalizeRole } from "@shared/schema";
 import {
-  login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions,
+  login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword,
 } from "./auth";
 
 // Role from the verified JWT (req.user). No token → no role → every gate fails
@@ -506,8 +506,15 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.put("/api/users/:id", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     try {
-      const before = await getUser(Number(req.params.id));
-      const row = await updateUser(Number(req.params.id), req.body);
+      const id = Number(req.params.id);
+      const before = await getUser(id);
+      // Modifying ANOTHER admin's account requires the acting admin to re-enter their password.
+      if (before && before.role === "admin" && id !== req.user?.id) {
+        const okPw = await verifyUserPassword(req.user!.id, String(req.body?.confirmPassword || ""));
+        if (!okPw) return res.status(403).json({ message: "Enter your own password to change another admin's account." });
+      }
+      const { confirmPassword, ...body } = req.body || {};
+      const row = await updateUser(id, body);
       // Role or store change → kill existing sessions (forced re-login).
       if (before && (before.role !== row.role || before.storeId !== row.storeId)) {
         await invalidateUserSessions(row.id);
@@ -515,7 +522,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const { pin, ...safe } = row;
       res.json(safe);
     } catch (err) {
-      res.status(500).json({ message: String(err) });
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -568,7 +575,14 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/users/:id/reset-password", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     try {
-      await adminResetPassword(Number(req.params.id), String(req.body?.newPassword || ""));
+      const id = Number(req.params.id);
+      const target = await getUser(id);
+      // Resetting ANOTHER admin's password requires the acting admin to confirm their own.
+      if (target && target.role === "admin" && id !== req.user?.id) {
+        const okPw = await verifyUserPassword(req.user!.id, String(req.body?.confirmPassword || ""));
+        if (!okPw) return res.status(403).json({ message: "Enter your own password to reset another admin's password." });
+      }
+      await adminResetPassword(id, String(req.body?.newPassword || ""));
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });

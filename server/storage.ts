@@ -98,7 +98,29 @@ export async function createUser(data: InsertUser): Promise<User> {
 }
 
 export async function updateUser(id: number, data: Partial<InsertUser>): Promise<User> {
-  const [row] = await db.update(users).set(data).where(eq(users.id, id)).returning();
+  const [target] = await db.select().from(users).where(eq(users.id, id));
+  if (!target) throw new Error("User not found.");
+  const patch: any = { ...data };
+
+  // Usernames are matched lowercased at login → store lowercased + keep them unique.
+  if (patch.username !== undefined && patch.username !== null) {
+    const uname = String(patch.username).trim().toLowerCase();
+    if (uname.length < 3) throw new Error("Username must be at least 3 characters.");
+    if (/\s/.test(uname)) throw new Error("Username cannot contain spaces.");
+    const clash = await db.select().from(users).where(and(eq(users.username, uname), ne(users.id, id)));
+    if (clash.length) throw new Error(`Username "${uname}" is already taken.`);
+    patch.username = uname;
+  }
+
+  // Never let the last active admin be demoted or disabled — that locks everyone out.
+  const losingAdmin = (target.role === "admin") &&
+    ((patch.role !== undefined && patch.role !== "admin") || patch.active === false);
+  if (losingAdmin) {
+    const admins = await db.select().from(users).where(and(eq(users.role, "admin"), eq(users.active, true)));
+    if (admins.length <= 1) throw new Error("Cannot remove the last active admin — assign another admin first.");
+  }
+
+  const [row] = await db.update(users).set(patch).where(eq(users.id, id)).returning();
   return row;
 }
 

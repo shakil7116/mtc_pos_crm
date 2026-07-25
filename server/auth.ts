@@ -152,6 +152,13 @@ export async function adminResetPassword(targetUserId: number, newPassword: stri
   }).where(eq(users.id, targetUserId));
 }
 
+/** Verify a user's own login password — used to re-auth an admin before they
+ *  modify ANOTHER admin's credentials. Returns false if the user has no password. */
+export async function verifyUserPassword(userId: number, password: string): Promise<boolean> {
+  const [u] = await db.select().from(users).where(eq(users.id, userId));
+  return !!(u?.passwordHash && bcrypt.compareSync(String(password || ""), u.passwordHash));
+}
+
 /** Bump on role change → forces re-login everywhere. */
 export async function invalidateUserSessions(userId: number) {
   const [u] = await db.select().from(users).where(eq(users.id, userId));

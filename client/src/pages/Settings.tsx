@@ -705,6 +705,13 @@ function Section3({
   const [adminVerifyPin, setAdminVerifyPin] = useState("");
   const [showPin, setShowPin] = useState(false);
 
+  // Login access (username + password) — admin only.
+  const [loginDialog, setLoginDialog] = useState<{ userId: number; userName: string; currentUsername: string; targetIsAdmin: boolean } | null>(null);
+  const [loginUsername, setLoginUsername] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginAdminPw, setLoginAdminPw] = useState("");
+  const [showLoginPw, setShowLoginPw] = useState(false);
+
   const addMut = useMutation({
     mutationFn: (body: typeof addForm) =>
       fetch("/api/users", {
@@ -736,6 +743,38 @@ function Section3({
       toast({ title: "User updated" });
     },
     onError: () => toast({ title: "Update failed", variant: "destructive" }),
+  });
+
+  // Set username and/or a temporary password. Password reset forces the staff to
+  // choose their own on next login (mustChangePassword). Editing another admin
+  // needs the acting admin's own password.
+  const credMut = useMutation({
+    mutationFn: async () => {
+      if (!loginDialog) return;
+      const { userId, currentUsername, targetIsAdmin } = loginDialog;
+      const confirmPassword = targetIsAdmin && userId !== currentUserId ? loginAdminPw : undefined;
+      const newUsername = loginUsername.trim().toLowerCase();
+      if (newUsername && newUsername !== (currentUsername || "").toLowerCase()) {
+        const r = await fetch(`/api/users/${userId}`, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: newUsername, confirmPassword }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Username update failed");
+      }
+      if (loginPassword) {
+        const r = await fetch(`/api/users/${userId}/reset-password`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ newPassword: loginPassword, confirmPassword }),
+        });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Password reset failed");
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Login updated", description: loginPassword ? "Staff must set their own password on next login." : "" });
+      setLoginDialog(null); setLoginUsername(""); setLoginPassword(""); setLoginAdminPw("");
+    },
+    onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
   });
 
   const storeName = (id: number | null) => {
@@ -794,6 +833,7 @@ function Section3({
                 <thead className="bg-muted/40">
                   <tr>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
+                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground hidden sm:table-cell no-uppercase">Username</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Role</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground hidden md:table-cell">Store</th>
                     <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
@@ -804,6 +844,7 @@ function Section3({
                   {users.map((u) => (
                     <tr key={u.id} className={u.active ? "" : "opacity-50"}>
                       <td className="px-4 py-3 font-medium">{u.name}</td>
+                      <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell no-uppercase font-mono text-xs">{(u as any).username || "— not set —"}</td>
                       <td className="px-4 py-3">
                         <Badge
                           variant="outline"
@@ -833,6 +874,25 @@ function Section3({
                       </td>
                       <td className="px-4 py-3 text-right">
                         <div className="flex items-center justify-end gap-1.5">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs h-7 px-2 text-[#1e2a3a]"
+                            onClick={() => {
+                              setLoginDialog({
+                                userId: u.id,
+                                userName: u.name,
+                                currentUsername: (u as any).username || "",
+                                targetIsAdmin: u.role === "admin",
+                              });
+                              setLoginUsername((u as any).username || "");
+                              setLoginPassword("");
+                              setLoginAdminPw("");
+                              setShowLoginPw(false);
+                            }}
+                          >
+                            Login
+                          </Button>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -1009,6 +1069,73 @@ function Section3({
               >
                 {updateMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Update PIN
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Login Access Dialog — username + temporary password (admin only) */}
+        <Dialog open={!!loginDialog} onOpenChange={(v) => { if (!v) setLoginDialog(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Login access — {loginDialog?.userName}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-muted-foreground">
+                Set the username and a temporary password. On next login the staff member is
+                forced to choose their own password — you never keep it.
+              </div>
+              <Field label="Username">
+                <Input
+                  value={loginUsername}
+                  onChange={(e) => setLoginUsername(e.target.value.replace(/\s/g, "").toLowerCase())}
+                  placeholder="e.g. store2.salesman"
+                  className="no-uppercase font-mono"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Temporary password (leave blank to keep current)">
+                <div className="relative">
+                  <Input
+                    type={showLoginPw ? "text" : "password"}
+                    value={loginPassword}
+                    onChange={(e) => setLoginPassword(e.target.value)}
+                    placeholder="At least 8 characters"
+                    className="no-uppercase"
+                    autoComplete="new-password"
+                  />
+                  <button type="button" onClick={() => setShowLoginPw((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                    {showLoginPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+                {loginPassword && loginPassword.length < 8 && (
+                  <p className="text-[11px] text-red-500 mt-1">Password must be at least 8 characters.</p>
+                )}
+              </Field>
+              {loginDialog?.targetIsAdmin && loginDialog.userId !== currentUserId && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-amber-700"><Shield className="w-4 h-4 inline mr-1" />
+                    Changing another admin's login needs your own password.</p>
+                  <Input type="password" value={loginAdminPw} onChange={(e) => setLoginAdminPw(e.target.value)}
+                    placeholder="Your admin password" className="no-uppercase bg-white" autoComplete="off" />
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setLoginDialog(null)}>Cancel</Button>
+              <Button
+                onClick={() => credMut.mutate()}
+                disabled={
+                  credMut.isPending ||
+                  (loginPassword.length > 0 && loginPassword.length < 8) ||
+                  (loginUsername.trim().toLowerCase() === (loginDialog?.currentUsername || "").toLowerCase() && !loginPassword) ||
+                  (!!loginDialog?.targetIsAdmin && loginDialog.userId !== currentUserId && !loginAdminPw)
+                }
+                className="gap-2"
+              >
+                {credMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save login
               </Button>
             </DialogFooter>
           </DialogContent>
