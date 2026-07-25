@@ -10,7 +10,7 @@ import { Loader2, Plus, Trash2, ArrowRight, AlertTriangle } from "lucide-react";
 
 type Store = { id: number; nameEn: string; type: string; ownerStoreId?: number | null; active?: boolean | null };
 type Product = { id: number; name: string; sku?: string | null; unit?: string | null; costPrice?: number | string | null };
-type TLine = { productId: number; name: string; sku: string | null; unit: string; qty: number; cost: number };
+type TLine = { productId: number; name: string; sku: string | null; unit: string; qty: number; cost: number; max?: number };
 
 // Ownership group — same as the server: store owns itself; warehouse belongs to its
 // owner store (null = common). Same group → free move; different → cost value.
@@ -44,17 +44,19 @@ export default function TransferModal({
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    const seedFromItems = (src: any, fromId: number, toId: number) => {
+    const seedFromItems = (src: any, fromId: number, toId: number, capToOriginal: boolean) => {
       setFromStoreId(String(fromId));
       setToStoreId(String(toId));
       setTakenBy(isEdit ? (src.takenBy || "") : "");
       setLines((src.items || []).map((it: any) => {
         const p = products.find((x) => x.id === it.productId);
-        return { productId: it.productId, name: it.description || p?.name || "", sku: it.sku ?? p?.sku ?? null, unit: it.unit || p?.unit || "PCS", qty: Number(it.qty) || 1, cost: Number(p?.costPrice) || Number(it.price) || 0 };
+        const origQty = Number(it.qty) || 1;
+        // On a return, a line can never exceed what was originally transferred.
+        return { productId: it.productId, name: it.description || p?.name || "", sku: it.sku ?? p?.sku ?? null, unit: it.unit || p?.unit || "PCS", qty: origQty, cost: Number(p?.costPrice) || Number(it.price) || 0, max: capToOriginal ? origQty : undefined };
       }));
     };
-    if (editTransfer) { seedFromItems(editTransfer, editTransfer.storeId, editTransfer.toStoreId); return; }
-    if (reverseTransfer) { seedFromItems(reverseTransfer, reverseTransfer.toStoreId, reverseTransfer.storeId); return; } // reversed
+    if (editTransfer) { seedFromItems(editTransfer, editTransfer.storeId, editTransfer.toStoreId, false); return; }
+    if (reverseTransfer) { seedFromItems(reverseTransfer, reverseTransfer.toStoreId, reverseTransfer.storeId, true); return; } // reversed, capped
     setFromStoreId(prefill?.fromStoreId ? String(prefill.fromStoreId) : "");
     setToStoreId("");
     setTakenBy("");
@@ -72,7 +74,7 @@ export default function TransferModal({
     if (!p || lines.some((l) => l.productId === pid)) return;
     setLines((prev) => [...prev, { productId: p.id, name: p.name, sku: p.sku ?? null, unit: p.unit || "PCS", qty: 1, cost: Number(p.costPrice) || 0 }]);
   };
-  const setQty = (pid: number, qty: number) => setLines((prev) => prev.map((l) => (l.productId === pid ? { ...l, qty: Math.max(1, qty) } : l)));
+  const setQty = (pid: number, qty: number) => setLines((prev) => prev.map((l) => (l.productId === pid ? { ...l, qty: Math.max(1, l.max != null ? Math.min(qty, l.max) : qty) } : l)));
   const removeLine = (pid: number) => setLines((prev) => prev.filter((l) => l.productId !== pid));
 
   const save = useMutation({
@@ -161,9 +163,9 @@ export default function TransferModal({
                 <div key={l.productId} className="flex items-center gap-2 px-3 py-2">
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{l.name}</p>
-                    <p className="text-[11px] text-muted-foreground">{l.sku || "—"} · {l.unit}{crossOwner ? ` · cost ${money(l.cost)}` : ""}</p>
+                    <p className="text-[11px] text-muted-foreground">{l.sku || "—"} · {l.unit}{crossOwner ? ` · cost ${money(l.cost)}` : ""}{l.max != null ? ` · max ${l.max}` : ""}</p>
                   </div>
-                  <Input type="number" min={1} value={l.qty} onChange={(e) => setQty(l.productId, parseInt(e.target.value) || 1)} className="h-8 w-20 text-sm font-mono" />
+                  <Input type="number" min={1} max={l.max} value={l.qty} onChange={(e) => setQty(l.productId, parseInt(e.target.value) || 1)} className="h-8 w-20 text-sm font-mono" />
                   {crossOwner && <span className="w-24 text-right text-sm font-mono">{money(l.qty * l.cost)}</span>}
                   <button onClick={() => removeLine(l.productId)} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
                 </div>

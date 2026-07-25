@@ -567,6 +567,31 @@ export async function createTransfer(req: TransferReq): Promise<any> {
   if (!req.fromStoreId || !req.toStoreId) throw new Error("Source and destination are required.");
   if (req.fromStoreId === req.toStoreId) throw new Error("Source and destination must differ.");
   if (!req.items?.length) throw new Error("Add at least one item to transfer.");
+  for (const it of req.items) if (!(Number(it.qty) > 0)) throw new Error(`Quantity must be greater than zero for ${it.description || "an item"}.`);
+
+  // A RETURN can never exceed what was originally transferred, minus what was already
+  // returned. Guards against e.g. returning 155 against an original of 23.
+  if (req.linkedDocId) {
+    const [orig] = await db.select().from(documents).where(and(eq(documents.id, req.linkedDocId), eq(documents.type, "TR")));
+    if (!orig) throw new Error("Original transfer not found.");
+    if (orig.status !== "received") throw new Error(`Cannot return against ${orig.number} — it must be received first.`);
+    if (orig.linkedDocId) throw new Error(`${orig.number} is itself a return — you cannot return a return.`);
+    const origItems = await db.select().from(documentItems).where(eq(documentItems.documentId, req.linkedDocId));
+    const origByProd: Record<number, number> = {};
+    for (const it of origItems as any[]) if (it.productId != null) origByProd[it.productId] = (origByProd[it.productId] || 0) + Number(it.qty || 0);
+    const priorReturns = await db.select().from(documents).where(and(eq(documents.type, "TR"), eq(documents.linkedDocId, req.linkedDocId), ne(documents.status, "cancelled")));
+    const retIds = priorReturns.map((r) => r.id);
+    const retItems = retIds.length ? await db.select().from(documentItems).where(inArray(documentItems.documentId, retIds)) : [];
+    const returnedByProd: Record<number, number> = {};
+    for (const it of retItems as any[]) if (it.productId != null) returnedByProd[it.productId] = (returnedByProd[it.productId] || 0) + Number(it.qty || 0);
+    for (const item of req.items) {
+      if (!(item.productId in origByProd)) throw new Error(`${item.description} was not part of ${orig.number} — cannot return it.`);
+      const remaining = (origByProd[item.productId] || 0) - (returnedByProd[item.productId] || 0);
+      if (Number(item.qty) > remaining + 0.005) {
+        throw new Error(`Cannot return ${Number(item.qty)} of ${item.description} against ${orig.number} — only ${remaining} left to return (of ${origByProd[item.productId]} transferred).`);
+      }
+    }
+  }
 
   const { total, priced } = await priceTransferItems(req.fromStoreId, req.toStoreId, req.items);
   const number = await resolveDocumentNumber("TR");
@@ -697,6 +722,16 @@ export async function getTransferSettlement(start?: string, end?: string): Promi
 export async function approveTransfer(id: number, userId?: number): Promise<any> {
   const { doc, items } = await loadTransfer(id);
   if (doc.status !== "draft") throw new Error("Only a draft transfer can be approved.");
+  // Source must actually hold the stock. adjustStock clamps inventory at 0 but logs the
+  // full delta, so an over-deduct would silently create phantom stock at the destination.
+  // Block it here instead of corrupting the ledger.
+  for (const it of items as any[]) {
+    if (!it.productId) continue;
+    const qty = parseFloat(it.qty || "0");
+    const [inv] = await db.select().from(inventory).where(and(eq(inventory.productId, it.productId), eq(inventory.storeId, doc.storeId!)));
+    const have = parseFloat(inv?.qty || "0");
+    if (qty > have + 0.005) throw new Error(`Not enough stock to transfer ${qty} of ${it.description} — source has only ${have}.`);
+  }
   for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, doc.storeId!, -parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} out`, id, userId); // stock leaves source
   await db.update(documents).set({ status: "approved", authorizedBy: userId ?? null, authorizedAt: new Date() } as any).where(eq(documents.id, id));
   await logEdit({ documentId: id, userId, field: "status", oldValue: "draft", newValue: "approved", reason: "Transfer approved — stock released from source" });
