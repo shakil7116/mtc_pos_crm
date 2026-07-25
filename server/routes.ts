@@ -8,7 +8,7 @@ import {
   getCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
   getProducts, getProduct, createProduct, updateProduct,
   getInventory, adjustStock, getLowStockItems,
-  createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer,
+  createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer, getTransferSettlement,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
   getPayments, createPayment,
@@ -1131,6 +1131,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   // ══════════════════════════════════════════════════════════════
   app.get("/api/transfers", async (_req: Request, res: Response) => {
     try { res.json(await getTransfers()); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+  // Inter-store settlement (net who-owes-whom) for a period — declared before :id routes.
+  app.get("/api/transfers/settlement", async (req: Request, res: Response) => {
+    try { res.json(await getTransferSettlement(req.query.start as string, req.query.end as string)); }
     catch (err) { res.status(500).json({ message: String(err) }); }
   });
   app.post("/api/transfers", async (req: Request, res: Response) => {

@@ -53,6 +53,7 @@ import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/C
 import { validateSku, validatePositivePrice, validateNonNegative } from "@/lib/validation";
 import { Link, useSearch } from "wouter";
 import TransferModal from "@/components/TransferModal";
+import TransferVoucher from "@/components/TransferVoucher";
 
 /* ─────────────────────────────────────────
    Types
@@ -1906,6 +1907,15 @@ function TransfersTab({ isAdmin, onNew }: { isAdmin: boolean; onNew: () => void 
     queryKey: ["/api/transfers"],
     queryFn: () => fetch("/api/transfers").then((r) => r.json()).catch(() => []),
   });
+  const [voucher, setVoucher] = useState<any>(null);
+  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7)); // YYYY-MM
+  const [y, m] = month.split("-").map(Number);
+  const monthStart = `${month}-01`;
+  const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10); // last day of month
+  const { data: settlement } = useQuery<any>({
+    queryKey: ["/api/transfers/settlement", monthStart, monthEnd],
+    queryFn: () => fetch(`/api/transfers/settlement?start=${monthStart}&end=${monthEnd}`).then((r) => r.json()).catch(() => ({ settlements: [] })),
+  });
   const act = useMutation({
     mutationFn: async ({ id, action }: { id: number; action: string }) => {
       const r = await fetch(`/api/transfers/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: "{}" });
@@ -1927,6 +1937,27 @@ function TransfersTab({ isAdmin, onNew }: { isAdmin: boolean; onNew: () => void 
 
   return (
     <div className="space-y-3">
+      {/* Inter-store settlement — net who-owes-whom for the chosen month */}
+      <div className="rounded-2xl border border-border/40 bg-white shadow-sm p-4">
+        <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <h3 className="text-sm font-bold flex items-center gap-2"><FileText className="w-4 h-4 text-[#d4a017]" /> Inter-store Settlement</h3>
+          <input type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="h-8 rounded-lg border px-2 text-xs" />
+        </div>
+        {(!settlement?.settlements || settlement.settlements.length === 0) ? (
+          <p className="text-xs text-muted-foreground">No cross-store balances this month — all internal moves, or already even.</p>
+        ) : (
+          <div className="space-y-1.5">
+            {settlement.settlements.map((s: any, i: number) => (
+              <div key={i} className="flex items-center justify-between text-sm rounded-lg bg-amber-50/60 border border-amber-100 px-3 py-2">
+                <span><b>{s.debtor}</b> owes <b>{s.creditor}</b></span>
+                <span className="font-mono font-bold text-amber-700">{money(s.amount)}</span>
+              </div>
+            ))}
+            <p className="text-[11px] text-muted-foreground">Net of both directions ({settlement.transferCount} received transfer{settlement.transferCount === 1 ? "" : "s"}) — the net debtor pays.</p>
+          </div>
+        )}
+      </div>
+
       <div className="flex justify-end">
         <Button onClick={onNew} className="gap-2"><ArrowLeftRight className="w-4 h-4" /> New Transfer</Button>
       </div>
@@ -1956,6 +1987,7 @@ function TransfersTab({ isAdmin, onNew }: { isAdmin: boolean; onNew: () => void 
                   </p>
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
+                  <Button size="sm" variant="outline" className="h-8" onClick={() => setVoucher(t)}>Voucher</Button>
                   {t.status === "draft" && canApprove && (
                     <Button size="sm" className="h-8 bg-[#1e2a3a] text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "approve" })}>Approve</Button>
                   )}
@@ -1971,6 +2003,7 @@ function TransfersTab({ isAdmin, onNew }: { isAdmin: boolean; onNew: () => void 
           </div>
         )}
       </div>
+      <TransferVoucher transfer={voucher} onClose={() => setVoucher(null)} />
     </div>
   );
 }

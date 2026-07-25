@@ -640,6 +640,53 @@ async function loadTransfer(id: number) {
   return { doc, items };
 }
 
+// Inter-owner settlement: net the cost-valued cross-owner transfers between each
+// ownership-group pair over a period. Only RECEIVED (completed) transfers count.
+// Reverse-direction transfers cancel out → the net debtor pays the difference.
+export async function getTransferSettlement(start?: string, end?: string): Promise<any> {
+  const r2 = (n: number) => Number(n.toFixed(2));
+  const conds: any[] = [eq(documents.type, "TR"), eq(documents.status, "received")];
+  if (start) conds.push(gte(documents.date, start));
+  if (end) conds.push(lte(documents.date, end));
+  const docs = await db.select().from(documents).where(and(...conds));
+  const allStores = await db.select().from(stores);
+  const byId: Record<number, any> = {}; for (const s of allStores) byId[s.id] = s;
+  const groupName = (key: string) => (key === "common" ? "Common" : byId[Number(key.slice(2))]?.nameEn ?? key);
+
+  // Directed flow between groups (source GAVE value → destination OWES it).
+  const flow: Record<string, Record<string, number>> = {};
+  let count = 0;
+  for (const d of docs) {
+    const fromG = transferGroupKey(byId[d.storeId!]);
+    const toG = transferGroupKey(byId[(d as any).toStoreId]);
+    if (fromG === toG) continue;
+    const amt = Number(d.total || 0);
+    if (amt <= 0.005) continue;
+    (flow[fromG] = flow[fromG] || {});
+    flow[fromG][toG] = (flow[fromG][toG] || 0) + amt;
+    count++;
+  }
+
+  const groupKeys = Array.from(new Set([...Object.keys(flow), ...Object.values(flow).flatMap((o) => Object.keys(o))]));
+  const seen = new Set<string>();
+  const settlements: any[] = [];
+  for (const a of groupKeys) for (const b of groupKeys) {
+    if (a === b) continue;
+    const key = [a, b].sort().join("|");
+    if (seen.has(key)) continue; seen.add(key);
+    const aToB = flow[a]?.[b] || 0; // a gave b → b owes a
+    const bToA = flow[b]?.[a] || 0; // b gave a → a owes b
+    const net = aToB - bToA;
+    if (Math.abs(net) < 0.005) continue;
+    const [creditorKey, debtorKey, amount] = net > 0 ? [a, b, net] : [b, a, -net];
+    settlements.push({
+      creditor: groupName(creditorKey), debtor: groupName(debtorKey), amount: r2(amount),
+      grossCreditorGave: r2(net > 0 ? aToB : bToA), grossDebtorGave: r2(net > 0 ? bToA : aToB),
+    });
+  }
+  return { period: { start: start ?? null, end: end ?? null }, transferCount: count, settlements };
+}
+
 export async function approveTransfer(id: number, userId?: number): Promise<any> {
   const { doc, items } = await loadTransfer(id);
   if (doc.status !== "draft") throw new Error("Only a draft transfer can be approved.");

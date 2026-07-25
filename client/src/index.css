@@ -223,3 +223,15 @@ input::placeholder,
 textarea::placeholder {
   text-transform: none;
 }
+
+/* ── Transfer Voucher print isolation ──────────────────────────────────────
+   Only when a voucher modal is on screen (:has) do we hide the rest, so normal
+   invoice/statement printing is unaffected. */
+@media print {
+  body:has(.transfer-voucher-print) * { visibility: hidden; }
+  body:has(.transfer-voucher-print) .transfer-voucher-print,
+  body:has(.transfer-voucher-print) .transfer-voucher-print * { visibility: visible; }
+  body:has(.transfer-voucher-print) .transfer-voucher-print {
+    position: absolute; top: 0; left: 0; width: 100%;
+  }
+}
