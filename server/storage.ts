@@ -620,6 +620,8 @@ export async function getTransfers(): Promise<any[]> {
   const docs = await db.select().from(documents).where(eq(documents.type, "TR")).orderBy(desc(documents.id));
   const allStores = await db.select().from(stores);
   const byId: Record<number, any> = {}; for (const s of allStores) byId[s.id] = s;
+  const allUsers = await db.select().from(users);
+  const userById: Record<number, any> = {}; for (const u of allUsers) userById[u.id] = u;
   const ids = docs.map((d) => d.id);
   const items = ids.length ? await db.select().from(documentItems).where(inArray(documentItems.documentId, ids)) : [];
   const itemsByDoc: Record<number, any[]> = {};
@@ -629,6 +631,8 @@ export async function getTransfers(): Promise<any[]> {
     fromStore: byId[d.storeId!]?.nameEn ?? `#${d.storeId}`,
     toStore: byId[(d as any).toStoreId]?.nameEn ?? `#${(d as any).toStoreId}`,
     crossOwner: transferGroupKey(byId[d.storeId!]) !== transferGroupKey(byId[(d as any).toStoreId]),
+    approvedByName: (d as any).authorizedBy ? (userById[(d as any).authorizedBy]?.name ?? null) : null,
+    receivedByName: (d as any).receivedBy ? (userById[(d as any).receivedBy]?.name ?? null) : null,
     items: itemsByDoc[d.id] || [],
   }));
 }
@@ -700,7 +704,7 @@ export async function receiveTransfer(id: number, userId?: number): Promise<any>
   const { doc, items } = await loadTransfer(id);
   if (doc.status !== "approved") throw new Error("Only an approved transfer can be received.");
   for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, (doc as any).toStoreId, parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} in`, id, userId); // stock lands at destination
-  await db.update(documents).set({ status: "received" } as any).where(eq(documents.id, id));
+  await db.update(documents).set({ status: "received", receivedBy: userId ?? null, receivedAt: new Date() } as any).where(eq(documents.id, id));
   await logEdit({ documentId: id, userId, field: "status", oldValue: "approved", newValue: "received", reason: "Transfer received — qty checked in at destination" });
   return { ok: true };
 }

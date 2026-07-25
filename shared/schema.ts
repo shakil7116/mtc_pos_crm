@@ -191,6 +191,8 @@ export const documents = pgTable("documents", {
   dueDate: date("due_date"), // credit payment deadline (invoice date + chosen term) — drives the footer Payment Due
   toStoreId: integer("to_store_id"),   // TR transfer destination location (storeId = source)
   takenBy: text("taken_by"),           // TR — who physically picked up the goods
+  receivedBy: integer("received_by"),  // TR — the user who confirmed receipt at destination
+  receivedAt: timestamp("received_at"),
   customerId: integer("customer_id").references(() => customers.id),
   customerName: text("customer_name"),
   supplierId: integer("supplier_id").references(() => suppliers.id),

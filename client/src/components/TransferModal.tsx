@@ -20,14 +20,17 @@ const groupKey = (s?: Store) =>
 const money = (n: number) => "QAR " + (Number(n) || 0).toFixed(2);
 
 export default function TransferModal({
-  open, onClose, stores, products, prefill,
+  open, onClose, stores, products, prefill, editTransfer, reverseTransfer,
 }: {
   open: boolean;
   onClose: () => void;
   stores: Store[];
   products: Product[];
   prefill?: { productId?: number; fromStoreId?: number };
+  editTransfer?: any;      // draft being re-edited → PUT
+  reverseTransfer?: any;   // received transfer being returned → seed reversed, POST new
 }) {
+  const isEdit = !!editTransfer;
   const qc = useQueryClient();
   const { toast } = useToast();
   const [fromStoreId, setFromStoreId] = useState<string>("");
@@ -40,13 +43,24 @@ export default function TransferModal({
 
   useEffect(() => {
     if (!open) return;
+    setErr(null);
+    const seedFromItems = (src: any, fromId: number, toId: number) => {
+      setFromStoreId(String(fromId));
+      setToStoreId(String(toId));
+      setTakenBy(isEdit ? (src.takenBy || "") : "");
+      setLines((src.items || []).map((it: any) => {
+        const p = products.find((x) => x.id === it.productId);
+        return { productId: it.productId, name: it.description || p?.name || "", sku: it.sku ?? p?.sku ?? null, unit: it.unit || p?.unit || "PCS", qty: Number(it.qty) || 1, cost: Number(p?.costPrice) || Number(it.price) || 0 };
+      }));
+    };
+    if (editTransfer) { seedFromItems(editTransfer, editTransfer.storeId, editTransfer.toStoreId); return; }
+    if (reverseTransfer) { seedFromItems(reverseTransfer, reverseTransfer.toStoreId, reverseTransfer.storeId); return; } // reversed
     setFromStoreId(prefill?.fromStoreId ? String(prefill.fromStoreId) : "");
     setToStoreId("");
     setTakenBy("");
-    setErr(null);
     const p = prefill?.productId ? products.find((x) => x.id === prefill.productId) : null;
     setLines(p ? [{ productId: p.id, name: p.name, sku: p.sku ?? null, unit: p.unit || "PCS", qty: 1, cost: Number(p.costPrice) || 0 }] : []);
-  }, [open, prefill, products]);
+  }, [open, prefill, editTransfer, reverseTransfer, products, isEdit]);
 
   const from = activeStores.find((s) => s.id === Number(fromStoreId));
   const to = activeStores.find((s) => s.id === Number(toStoreId));
@@ -68,13 +82,15 @@ export default function TransferModal({
         fromStoreId: Number(fromStoreId), toStoreId: Number(toStoreId), takenBy: takenBy.trim() || null,
         items: lines.map((l) => ({ productId: l.productId, sku: l.sku, description: l.name, qty: l.qty, unit: l.unit })),
       };
-      const r = await fetch("/api/transfers", { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
+      const url = isEdit ? `/api/transfers/${editTransfer.id}` : "/api/transfers";
+      const r = await fetch(url, { method: isEdit ? "PUT" : "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Transfer failed");
       return r.json();
     },
     onSuccess: (d: any) => {
       qc.invalidateQueries({ queryKey: ["/api/transfers"] });
-      toast({ title: `Transfer ${d.number} created`, description: "Draft — awaiting approval." });
+      qc.invalidateQueries({ queryKey: ["/api/inventory"] });
+      toast({ title: isEdit ? "Transfer updated" : `Transfer ${d.number} created`, description: isEdit ? "" : "Draft — awaiting approval." });
       onClose();
     },
     onError: (e: any) => toast({ title: "Transfer failed", description: String(e?.message || ""), variant: "destructive" }),
@@ -103,7 +119,8 @@ export default function TransferModal({
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader><DialogTitle className="flex items-center gap-2"><ArrowRight className="w-5 h-5 text-[#d4a017]" /> Stock Transfer</DialogTitle></DialogHeader>
+        <DialogHeader><DialogTitle className="flex items-center gap-2"><ArrowRight className="w-5 h-5 text-[#d4a017]" /> {isEdit ? "Edit Transfer" : reverseTransfer ? "Return / Reverse Transfer" : "Stock Transfer"}</DialogTitle></DialogHeader>
+        {reverseTransfer && <p className="text-[11px] text-muted-foreground -mt-2 px-1">Returning against {reverseTransfer.number}. Set the qty going back — the settlement nets it against the original.</p>}
         <div className="space-y-4 py-1">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div><Label className="text-xs">From <span className="text-destructive">*</span></Label><StoreSelect value={fromStoreId} onChange={setFromStoreId} exclude={toStoreId} /></div>
@@ -161,7 +178,7 @@ export default function TransferModal({
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={save.isPending}>Cancel</Button>
           <Button onClick={submit} disabled={save.isPending} className="bg-[#1e2a3a] text-white gap-2">
-            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Create Transfer Note
+            {save.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} {isEdit ? "Save Changes" : reverseTransfer ? "Create Return" : "Create Transfer Note"}
           </Button>
         </DialogFooter>
       </DialogContent>
