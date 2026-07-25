@@ -92,6 +92,7 @@ export default function TransferModal({
     },
     onSuccess: (d: any) => {
       qc.invalidateQueries({ queryKey: ["/api/transfers"] });
+      qc.invalidateQueries({ queryKey: ["/api/transfers/settlement"] });
       qc.invalidateQueries({ queryKey: ["/api/inventory"] });
       toast({ title: isEdit ? "Transfer updated" : `Transfer ${d.number} created`, description: isEdit ? "" : "Draft — awaiting approval." });
       onClose();

@@ -1926,6 +1926,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/transfers"] });
+      qc.invalidateQueries({ queryKey: ["/api/transfers/settlement"] }); // net owed changes on receive/return/cancel
       qc.invalidateQueries({ queryKey: ["/api/inventory"] });
       qc.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
     },
