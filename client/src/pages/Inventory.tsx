@@ -1904,7 +1904,6 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
   const { toast } = useToast();
   const canApprove = ["admin", "manager"].includes(user?.role || "");
   const [editT, setEditT] = useState<any>(null);
-  const [reverseT, setReverseT] = useState<any>(null);
   const { data: transfers = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/transfers"],
     queryFn: () => fetch("/api/transfers").then((r) => r.json()).catch(() => []),
@@ -1995,13 +1994,10 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
                     <Button size="sm" variant="outline" className="h-8" onClick={() => setEditT(t)}>Edit</Button>
                   )}
                   {t.status === "draft" && canApprove && (
-                    <Button size="sm" className="h-8 bg-[#1e2a3a] text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "approve" })}>Approve</Button>
+                    <Button size="sm" className="h-8 bg-[#1e2a3a] text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "approve" })}>Send for confirmation</Button>
                   )}
                   {t.status === "approved" && (
-                    <Button size="sm" className="h-8 bg-green-600 text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "receive" })}>Receive</Button>
-                  )}
-                  {t.status === "received" && t.crossOwner && (
-                    <Button size="sm" variant="outline" className="h-8" onClick={() => setReverseT(t)}>Return</Button>
+                    <Button size="sm" className="h-8 bg-green-600 text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "receive" })}>Confirm receipt</Button>
                   )}
                   {(t.status === "draft" || t.status === "approved") && (
                     <Button size="sm" variant="outline" className="h-8" disabled={act.isPending} onClick={() => { if (window.confirm("Cancel this transfer?")) act.mutate({ id: t.id, action: "cancel" }); }}>Cancel</Button>
@@ -2014,12 +2010,11 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
       </div>
       <TransferVoucher transfer={voucher} onClose={() => setVoucher(null)} />
       <TransferModal
-        open={!!editT || !!reverseT}
-        onClose={() => { setEditT(null); setReverseT(null); }}
+        open={!!editT}
+        onClose={() => setEditT(null)}
         stores={stores}
         products={products}
         editTransfer={editT || undefined}
-        reverseTransfer={reverseT || undefined}
       />
     </div>
   );
