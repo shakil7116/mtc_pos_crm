@@ -54,7 +54,7 @@ export default function TransferVoucher({ transfer, onClose }: { transfer: any |
             <div className="text-right"><span className="text-slate-500">To:</span> <b>{transfer.toStore}</b></div>
             <div><span className="text-slate-500">Status:</span> <b className="capitalize">{transfer.status}</b></div>
             <div className="text-right"><span className="text-slate-500">Taken by:</span> <b>{transfer.takenBy || "—"}</b></div>
-            {transfer.receivedByName && <div className="col-span-2"><span className="text-slate-500">Received &amp; confirmed by:</span> <b>{transfer.receivedByName}</b></div>}
+            {transfer.receivedByName && <div className="col-span-2"><span className="text-slate-500">Received &amp; confirmed by:</span> <b>{transfer.receivedByName}</b>{transfer.confirmMethod && transfer.confirmMethod !== "on-system" ? <span className="text-slate-500"> · via {transfer.confirmMethod}</span> : null}</div>}
           </div>
 
           {/* Items */}

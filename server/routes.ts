@@ -1154,7 +1154,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
   app.post("/api/transfers/:id/receive", async (req: Request, res: Response) => {
-    try { res.json(await receiveTransfer(Number(req.params.id), req.user?.id || undefined)); }
+    const { method, externalReceiver } = req.body || {};
+    try { res.json(await receiveTransfer(Number(req.params.id), req.user?.id || undefined, { method, externalReceiver })); }
     catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
   app.post("/api/transfers/:id/cancel", async (req: Request, res: Response) => {

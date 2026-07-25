@@ -193,6 +193,8 @@ export const documents = pgTable("documents", {
   takenBy: text("taken_by"),           // TR — who physically picked up the goods
   receivedBy: integer("received_by"),  // TR — the user who confirmed receipt at destination
   receivedAt: timestamp("received_at"),
+  confirmMethod: text("confirm_method"),   // TR — how receipt was confirmed: on-system | signature | whatsapp | phone
+  externalReceiver: text("external_receiver"), // TR — name of an off-system party who took delivery
   customerId: integer("customer_id").references(() => customers.id),
   customerName: text("customer_name"),
   supplierId: integer("supplier_id").references(() => suppliers.id),

@@ -659,7 +659,12 @@ export async function getTransfers(): Promise<any[]> {
     toStore: byId[(d as any).toStoreId]?.nameEn ?? `#${(d as any).toStoreId}`,
     crossOwner: transferGroupKey(byId[d.storeId!]) !== transferGroupKey(byId[(d as any).toStoreId]),
     approvedByName: (d as any).authorizedBy ? (userById[(d as any).authorizedBy]?.name ?? null) : null,
-    receivedByName: (d as any).receivedBy ? (userById[(d as any).receivedBy]?.name ?? null) : null,
+    // Off-system receipt → show the external person's name; else the staff user who confirmed.
+    receivedByName: (d as any).externalReceiver
+      ? (d as any).externalReceiver
+      : ((d as any).receivedBy ? (userById[(d as any).receivedBy]?.name ?? null) : null),
+    confirmMethod: (d as any).confirmMethod ?? null,
+    externalReceiver: (d as any).externalReceiver ?? null,
     returnOfNumber: (d as any).linkedDocId ? (numById[(d as any).linkedDocId] ?? null) : null,
     items: itemsByDoc[d.id] || [],
   }));
@@ -738,12 +743,21 @@ export async function approveTransfer(id: number, userId?: number): Promise<any>
   return { ok: true };
 }
 
-export async function receiveTransfer(id: number, userId?: number): Promise<any> {
+const CONFIRM_METHODS = ["on-system", "signature", "whatsapp", "phone"];
+export async function receiveTransfer(
+  id: number, userId?: number,
+  opts?: { method?: string; externalReceiver?: string },
+): Promise<any> {
   const { doc, items } = await loadTransfer(id);
   if (doc.status !== "approved") throw new Error("Only an approved transfer can be received.");
+  // How the destination acknowledged. Default on-system (our own staff clicked Confirm).
+  // Off-system methods (signature/whatsapp/phone) also carry the external person's name.
+  const method = opts?.method && CONFIRM_METHODS.includes(opts.method) ? opts.method : "on-system";
+  const externalReceiver = method === "on-system" ? null : (opts?.externalReceiver ? String(opts.externalReceiver).toUpperCase().trim() || null : null);
+  if (method !== "on-system" && !externalReceiver) throw new Error("Name of who received the goods is required for an off-system confirmation.");
   for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, (doc as any).toStoreId, parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} in`, id, userId); // stock lands at destination
-  await db.update(documents).set({ status: "received", receivedBy: userId ?? null, receivedAt: new Date() } as any).where(eq(documents.id, id));
-  await logEdit({ documentId: id, userId, field: "status", oldValue: "approved", newValue: "received", reason: "Transfer received — qty checked in at destination" });
+  await db.update(documents).set({ status: "received", receivedBy: userId ?? null, receivedAt: new Date(), confirmMethod: method, externalReceiver } as any).where(eq(documents.id, id));
+  await logEdit({ documentId: id, userId, field: "status", oldValue: "approved", newValue: "received", reason: `Transfer received (${method}${externalReceiver ? ` — ${externalReceiver}` : ""})` });
   return { ok: true };
 }
 

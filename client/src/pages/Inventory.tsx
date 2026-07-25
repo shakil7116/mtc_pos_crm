@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Package,
@@ -1905,6 +1905,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
   const canApprove = ["admin", "manager"].includes(user?.role || "");
   const [editT, setEditT] = useState<any>(null);
   const [reverseT, setReverseT] = useState<any>(null);
+  const [receiveT, setReceiveT] = useState<any>(null); // transfer awaiting a "Confirm receipt" dialog
   const { data: transfers = [], isLoading } = useQuery<any[]>({
     queryKey: ["/api/transfers"],
     queryFn: () => fetch("/api/transfers").then((r) => r.json()).catch(() => []),
@@ -1919,8 +1920,8 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
     queryFn: () => fetch(`/api/transfers/settlement?start=${monthStart}&end=${monthEnd}`).then((r) => r.json()).catch(() => ({ settlements: [] })),
   });
   const act = useMutation({
-    mutationFn: async ({ id, action }: { id: number; action: string }) => {
-      const r = await fetch(`/api/transfers/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: "{}" });
+    mutationFn: async ({ id, action, body }: { id: number; action: string; body?: any }) => {
+      const r = await fetch(`/api/transfers/${id}/${action}`, { method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include", body: JSON.stringify(body || {}) });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Action failed");
       return r.json();
     },
@@ -1933,6 +1934,19 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
     onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
   });
   const money = (n: any) => "QAR " + (Number(n) || 0).toFixed(2);
+  // Share a transfer note to any WhatsApp contact (chooser opens — no stored number needed).
+  // For an off-system store: they get the note, reply to confirm, staff logs receipt.
+  const waShare = (t: any) => {
+    const lines = (t.items || []).map((i: any) => `• ${i.description} ×${Number(i.qty)} ${i.unit || ""}`.trim()).join("\n");
+    const msg =
+      `*STOCK TRANSFER — ${t.number}*\n` +
+      `${t.fromStore} → ${t.toStore}\n` +
+      `Date: ${t.date}${t.takenBy ? `\nTaken by: ${t.takenBy}` : ""}\n\n` +
+      `${lines}\n\n` +
+      (t.crossOwner ? `Value (at cost): ${money(t.total)}\n\n` : "") +
+      `Please confirm you received these goods — reply *RECEIVED* with your name.`;
+    window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
+  };
   const STATUS: Record<string, string> = {
     draft: "bg-slate-100 text-slate-700", approved: "bg-amber-100 text-amber-700",
     received: "bg-green-100 text-green-700", cancelled: "bg-red-100 text-red-700",
@@ -1985,7 +1999,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
                   <p className="text-xs text-muted-foreground mt-0.5">
                     {t.fromStore} <ArrowLeftRight className="w-3 h-3 inline mx-0.5" /> {t.toStore}
                     {" · "}{t.date}{t.takenBy ? ` · taken by ${t.takenBy}` : ""}
-                    {t.receivedByName ? ` · received by ${t.receivedByName}` : ""}
+                    {t.receivedByName ? ` · received by ${t.receivedByName}${t.confirmMethod && t.confirmMethod !== "on-system" ? ` (via ${t.confirmMethod})` : ""}` : ""}
                   </p>
                   <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
                     {(t.items || []).map((i: any) => `${i.description} ×${Number(i.qty)}`).join(", ")}
@@ -1993,6 +2007,9 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
                 </div>
                 <div className="flex items-center gap-1.5 shrink-0">
                   <Button size="sm" variant="outline" className="h-8" onClick={() => setVoucher(t)}>Voucher</Button>
+                  {(t.status === "approved" || t.status === "received") && (
+                    <Button size="sm" variant="outline" className="h-8 gap-1 text-green-700 border-green-300" onClick={() => waShare(t)} title="Send this note on WhatsApp"><MessageSquare className="w-3.5 h-3.5" /> WhatsApp</Button>
+                  )}
                   {t.status === "draft" && (
                     <Button size="sm" variant="outline" className="h-8" onClick={() => setEditT(t)}>Edit</Button>
                   )}
@@ -2000,7 +2017,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
                     <Button size="sm" className="h-8 bg-[#1e2a3a] text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "approve" })}>Send for confirmation</Button>
                   )}
                   {t.status === "approved" && (
-                    <Button size="sm" className="h-8 bg-green-600 text-white" disabled={act.isPending} onClick={() => act.mutate({ id: t.id, action: "receive" })}>Confirm receipt</Button>
+                    <Button size="sm" className="h-8 bg-green-600 text-white" disabled={act.isPending} onClick={() => setReceiveT(t)}>Confirm receipt</Button>
                   )}
                   {t.status === "received" && !t.returnOfNumber && (
                     <Button size="sm" variant="outline" className="h-8" onClick={() => setReverseT(t)}>Return</Button>
@@ -2015,6 +2032,13 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         )}
       </div>
       <TransferVoucher transfer={voucher} onClose={() => setVoucher(null)} />
+      <ReceiveConfirmDialog
+        transfer={receiveT}
+        currentUserName={user?.name || ""}
+        pending={act.isPending}
+        onClose={() => setReceiveT(null)}
+        onConfirm={(body) => act.mutate({ id: receiveT.id, action: "receive", body }, { onSuccess: () => setReceiveT(null) })}
+      />
       <TransferModal
         open={!!editT || !!reverseT}
         onClose={() => { setEditT(null); setReverseT(null); }}
@@ -2024,6 +2048,70 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         reverseTransfer={reverseT || undefined}
       />
     </div>
+  );
+}
+
+// Confirm-receipt dialog. Default = on-system (our own staff took delivery, one click).
+// For an off-system store, pick how they confirmed (signature/WhatsApp/phone) and name them.
+const CONFIRM_METHODS: { key: string; label: string }[] = [
+  { key: "on-system", label: "Our staff (on-system)" },
+  { key: "signature", label: "Signed voucher" },
+  { key: "whatsapp", label: "WhatsApp" },
+  { key: "phone", label: "Phone" },
+];
+function ReceiveConfirmDialog({
+  transfer, currentUserName, pending, onClose, onConfirm,
+}: {
+  transfer: any | null;
+  currentUserName: string;
+  pending: boolean;
+  onClose: () => void;
+  onConfirm: (body: { method: string; externalReceiver?: string }) => void;
+}) {
+  const [method, setMethod] = useState("on-system");
+  const [name, setName] = useState("");
+  useEffect(() => { if (transfer) { setMethod("on-system"); setName(""); } }, [transfer]);
+  if (!transfer) return null;
+  const offSystem = method !== "on-system";
+  const canSubmit = !offSystem || name.trim().length > 0;
+
+  return (
+    <Dialog open={!!transfer} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Confirm receipt — {transfer.number}</DialogTitle></DialogHeader>
+        <div className="space-y-4 py-1">
+          <p className="text-xs text-muted-foreground">
+            {transfer.fromStore} → <b>{transfer.toStore}</b>. Records who took delivery and how it was confirmed.
+          </p>
+          <div>
+            <Label className="text-xs">How was receipt confirmed?</Label>
+            <div className="grid grid-cols-2 gap-1.5 mt-1">
+              {CONFIRM_METHODS.map((m) => (
+                <button key={m.key} type="button" onClick={() => setMethod(m.key)}
+                  className={cn("text-xs rounded-md border px-2 py-1.5 text-left", method === m.key ? "border-[#1e2a3a] bg-[#1e2a3a] text-white" : "border-border hover:bg-muted")}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {offSystem ? (
+            <div>
+              <Label className="text-xs">Received by (name at destination) <span className="text-destructive">*</span></Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Who signed / replied for the goods" className="h-9" />
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">Will record <b>{currentUserName || "you"}</b> as the receiver.</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
+          <Button className="bg-green-600 text-white" disabled={pending || !canSubmit}
+            onClick={() => onConfirm(offSystem ? { method, externalReceiver: name.trim() } : { method: "on-system" })}>
+            {pending ? "Saving…" : "Confirm receipt"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
