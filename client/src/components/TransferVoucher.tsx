@@ -91,10 +91,21 @@ export default function TransferVoucher({ transfer, onClose }: { transfer: any |
             </div>
           )}
 
-          {/* Signatures */}
+          {/* Signatures — destination line pre-stamped with the recorded receiver + method */}
           <div className="grid grid-cols-2 gap-8 mt-10">
-            <div className="text-center"><div className="border-t border-slate-400 mb-1" /><p className="text-[10px] uppercase text-slate-500">Released by (source)</p></div>
-            <div className="text-center"><div className="border-t border-slate-400 mb-1" /><p className="text-[10px] uppercase text-slate-500">Received by (destination)</p></div>
+            <div className="text-center">
+              <p className="text-[11px] font-medium h-4">&nbsp;</p>
+              <div className="border-t border-slate-400 mb-1" />
+              <p className="text-[10px] uppercase text-slate-500">Released by (source){transfer.takenBy ? ` · ${transfer.takenBy}` : ""}</p>
+            </div>
+            <div className="text-center">
+              <p className="text-[11px] font-medium h-4">{transfer.receivedByName || " "}</p>
+              <div className="border-t border-slate-400 mb-1" />
+              <p className="text-[10px] uppercase text-slate-500">
+                Received by (destination)
+                {transfer.confirmMethod ? ` · confirmed via ${transfer.confirmMethod === "on-system" ? "system" : transfer.confirmMethod}` : ""}
+              </p>
+            </div>
           </div>
         </div>
       </DialogContent>

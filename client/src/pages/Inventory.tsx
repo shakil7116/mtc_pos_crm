@@ -1934,6 +1934,27 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
     onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
   });
   const money = (n: any) => "QAR " + (Number(n) || 0).toFixed(2);
+  // Export the transfer register (incl. how each was confirmed + who received off-system).
+  const exportTransfersCsv = () => {
+    const headers = ["No.", "Date", "From", "To", "Type", "Status", "Value (QAR)", "Taken by", "Received by", "Confirm method", "Return of", "Items"];
+    const esc = (v: any) => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const lines = [headers.join(",")];
+    for (const t of transfers as any[]) {
+      const items = (t.items || []).map((i: any) => `${i.description} x${Number(i.qty)}`).join(" | ");
+      lines.push([
+        t.number, t.date, t.fromStore, t.toStore, t.crossOwner ? "Cross-owner" : "Internal",
+        t.status, t.crossOwner ? Number(t.total || 0).toFixed(2) : "0.00",
+        t.takenBy || "", t.receivedByName || "",
+        t.confirmMethod || (t.status === "received" ? "on-system" : ""),
+        t.returnOfNumber || "", items,
+      ].map(esc).join(","));
+    }
+    const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "transfers.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
   // Share a transfer note to any WhatsApp contact (chooser opens — no stored number needed).
   // For an off-system store: they get the note, reply to confirm, staff logs receipt.
   const waShare = (t: any) => {
@@ -1975,7 +1996,8 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         )}
       </div>
 
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={exportTransfersCsv} disabled={transfers.length === 0} className="gap-2"><FileText className="w-4 h-4" /> Export CSV</Button>
         <Button onClick={onNew} className="gap-2"><ArrowLeftRight className="w-4 h-4" /> New Transfer</Button>
       </div>
       <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
