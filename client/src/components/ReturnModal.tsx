@@ -83,8 +83,19 @@ export default function ReturnModal({
   const [resultCN, setResultCN] = useState("");
   const [daysOld, setDaysOld] = useState(0);
   const [adminOverride, setAdminOverride] = useState(false);
+  const [threshold, setThreshold] = useState(1000);   // returns over this need manager approval
+  const [resultProcessed, setResultProcessed] = useState(false); // true = processed now, false = pending
 
   const isAdmin = user?.role === "admin";
+  const isBoss = user?.role === "admin" || user?.role === "manager";
+
+  // Manager-approval threshold (admin-editable in Settings → Business Rules).
+  useEffect(() => {
+    if (!open) return;
+    fetch("/api/settings").then((r) => r.json()).then((s) => {
+      if (s?.returnApprovalThreshold != null) setThreshold(Number(s.returnApprovalThreshold));
+    }).catch(() => {});
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -218,8 +229,22 @@ export default function ReturnModal({
       }
 
       const data = await res.json();
-      const voucher = data.returnVoucher?.voucherNumber || "RV-??????";
+      const created = data.returnVoucher || {};
+      const voucher = created.voucherNumber || "RV-??????";
       setResultCN(voucher);
+
+      // Routine returns (at/under the threshold, excluding damage claims which route to
+      // the supplier) are processed on the spot. Larger ones stay pending for a manager.
+      let processed = false;
+      const eligible = returnType !== "damage_claim" && returnCredit <= threshold && created.id;
+      if (eligible) {
+        const ap = await fetch(`/api/returns/${created.id}/approve`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refundMethod }),
+        });
+        processed = ap.ok; // if the funds guard or a race blocks it, it simply stays pending
+      }
+      setResultProcessed(processed);
       setStep("result");
       qc.invalidateQueries({ queryKey: ["document", invoiceId] });
       qc.invalidateQueries({ queryKey: ["documents"] });
@@ -570,6 +595,21 @@ export default function ReturnModal({
               />
             </div>
 
+            {/* Approval routing notice */}
+            {returnType !== "damage_claim" && (
+              returnCredit > threshold ? (
+                <div className="bg-amber-50 border border-amber-300 rounded p-3 text-sm text-amber-800 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>This return is <strong>QAR {returnCredit.toFixed(2)}</strong> — over the <strong>QAR {threshold}</strong> limit, so a <strong>manager must approve</strong> it. It will be submitted as pending.</span>
+                </div>
+              ) : (
+                <div className="bg-green-50 border border-green-200 rounded p-3 text-sm text-green-800 flex items-start gap-2">
+                  <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Routine return (QAR {returnCredit.toFixed(2)}, within the QAR {threshold} limit) — it will be <strong>processed immediately</strong> on submit.</span>
+                </div>
+              )
+            )}
+
             <DialogFooter>
               <Button variant="outline" onClick={() => setStep("type_select")}>Back</Button>
               <Button
@@ -583,7 +623,7 @@ export default function ReturnModal({
                 }}
                 className="bg-[#1e2a3a] text-white hover:bg-[#2d3f55]"
               >
-                {loading ? "Submitting…" : "📤 Submit for approval"}
+                {loading ? "Submitting…" : returnType !== "damage_claim" && returnCredit <= threshold ? "✅ Process return" : "📤 Submit for approval"}
               </Button>
             </DialogFooter>
           </div>
@@ -649,22 +689,33 @@ export default function ReturnModal({
         {/* ── RESULT ── */}
         {step === "result" && (
           <div className="text-center py-6">
-            <Clock size={48} className="text-amber-500 mx-auto mb-4" />
-            <h3 className="text-xl font-bold mb-2">Submitted for approval</h3>
-            <p className="text-gray-600 mb-1">
-              Return request <strong className="text-[#1e2a3a]">{resultCN}</strong> is now <strong>pending</strong>.
-            </p>
-            <p className="text-sm text-gray-500 mb-6">
-              An admin or manager will review and approve it. Nothing has changed yet —
-              stock reverses and any refund is issued only after approval.
-            </p>
+            {resultProcessed ? (
+              <>
+                <CheckCircle size={48} className="text-green-500 mx-auto mb-4" />
+                <h3 className="text-xl font-bold mb-2">Return processed</h3>
+                <p className="text-gray-600 mb-1">
+                  Return <strong className="text-[#1e2a3a]">{resultCN}</strong> is <strong>done</strong>.
+                </p>
+                <p className="text-sm text-gray-500 mb-6">
+                  Stock reversed and the refund was issued. (Routine return, QAR {returnCredit.toFixed(2)} — at or under the QAR {threshold} limit.)
+                </p>
+              </>
+            ) : (
+              <>
+                <Clock size={48} className="text-amber-500 mx-auto mb-4" />
+                <h3 className="text-xl font-bold mb-2">Sent to manager for approval</h3>
+                <p className="text-gray-600 mb-1">
+                  Return <strong className="text-[#1e2a3a]">{resultCN}</strong> is now <strong>pending</strong>.
+                </p>
+                <p className="text-sm text-gray-500 mb-6">
+                  {returnCredit > threshold
+                    ? `This return is QAR ${returnCredit.toFixed(2)} — over the QAR ${threshold} limit, so a manager must approve it.`
+                    : "A manager will review and approve it."} Nothing changes until then — stock reverses and any refund issues only after approval.
+                </p>
+              </>
+            )}
             <div className="flex gap-3 justify-center">
-              <Button
-                onClick={onClose}
-                className="bg-[#1e2a3a] text-white"
-              >
-                Done
-              </Button>
+              <Button onClick={onClose} className="bg-[#1e2a3a] text-white">Done</Button>
             </div>
           </div>
         )}

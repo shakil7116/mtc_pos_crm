@@ -28,6 +28,7 @@ export const settings = pgTable("settings", {
   // ── 11A configurable business rules (admin-editable, zero-hardcoded) ──
   pdcThreshold: numeric("pdc_threshold").default("4000"),      // VOID refunds ≥ this go out as PDC
   returnPdcThreshold: numeric("return_pdc_threshold").default("5000"), // RETURN refunds ≥ this → PDC or online (manager decides)
+  returnApprovalThreshold: numeric("return_approval_threshold").default("1000"), // returns OVER this need manager/admin; at/under → salesman can process
   voidWindowHours: integer("void_window_hours").default(12),   // hours an invoice stays voidable
   creditTerms: integer("credit_terms").array().default([30, 60, 90]),
   pdcAlertDays: integer("pdc_alert_days").default(3),          // days before cheque date to alert

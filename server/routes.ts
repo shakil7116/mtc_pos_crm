@@ -15,7 +15,7 @@ import {
   getPayments, createPayment,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
-  createReturn, getReturns, getReturn, approveReturn, rejectReturn,
+  createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
   resolveDeliveryNote, pickDeliveryNote, authorizeDeliveryNote, markDeliveryNoteDelivered,
   getProductActivity, getReorderSuggestions,
   createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure, getCustomerOverview,
@@ -1365,11 +1365,25 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   const reqUid = (req: Request) => (req.user?.id || undefined);
 
   app.post("/api/returns/:id/approve", async (req: Request, res: Response) => {
-    if (!approver(req)) return res.status(403).json({ message: "Only an admin or manager can approve returns" });
+    const role = reqRole(req);
+    const isBoss = ["admin", "manager"].includes(role);
+    // Salesman (and helper) may process a routine return AT OR UNDER the threshold;
+    // anything over needs a manager/admin. Others cannot approve at all.
+    if (!isBoss && !["salesman", "salesman_helper"].includes(role)) {
+      return res.status(403).json({ message: "You are not allowed to approve returns." });
+    }
     try {
+      if (!isBoss) {
+        const ret: any = await getReturn(Number(req.params.id));
+        const { returnApprovalThreshold } = await getBusinessRules();
+        const total = Number(ret?.total ?? ret?.refundAmount ?? 0);
+        if (total > returnApprovalThreshold) {
+          return res.status(403).json({ message: `This return is QAR ${total.toFixed(2)} — returns over QAR ${returnApprovalThreshold} need manager approval.` });
+        }
+      }
       // Optional body { refundMethod } — the approver's payout choice for large returns.
       // Only an admin may override the insufficient-funds guard (with a reason).
-      const canOverride = reqRole(req) === "admin";
+      const canOverride = role === "admin";
       res.json(await approveReturn(Number(req.params.id), reqUid(req), req.body?.refundMethod, {
         override: canOverride && req.body?.override === true,
         overrideReason: req.body?.overrideReason,

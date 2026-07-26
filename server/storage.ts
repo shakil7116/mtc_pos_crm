@@ -1127,11 +1127,12 @@ export async function deleteDocument(id: number): Promise<void> {
 
 // Business rules (11A) — read live from Settings so the admin can change them
 // anytime without code. Falls back to spec defaults if Settings row is missing.
-export async function getBusinessRules(): Promise<{ pdcThreshold: number; returnPdcThreshold: number; voidWindowHours: number; pdcAlertDays: number; maintenanceChequeThreshold: number }> {
+export async function getBusinessRules(): Promise<{ pdcThreshold: number; returnPdcThreshold: number; returnApprovalThreshold: number; voidWindowHours: number; pdcAlertDays: number; maintenanceChequeThreshold: number }> {
   const s: any = await getSettings();
   return {
     pdcThreshold: Number(s?.pdcThreshold ?? 4000),               // VOID refunds only
     returnPdcThreshold: Number(s?.returnPdcThreshold ?? 5000),   // RETURN refunds (separate rule)
+    returnApprovalThreshold: Number(s?.returnApprovalThreshold ?? 1000), // returns OVER this need manager
     voidWindowHours: Number(s?.voidWindowHours ?? 12),
     pdcAlertDays: Number(s?.pdcAlertDays ?? 3),
     maintenanceChequeThreshold: Number(s?.maintenanceChequeThreshold ?? 10000),
