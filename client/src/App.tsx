@@ -8,6 +8,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { canAccess, navKeyForPath, ROLE_HOME } from "@shared/permissions";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
+import SetPin from "@/pages/SetPin";
 import Dashboard from "@/pages/Dashboard";
 import Documents from "@/pages/Documents";
 import QuickSale from "@/pages/QuickSale";
@@ -48,6 +49,7 @@ function ProtectedApp() {
   if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
   if (!user) return <Login />;
   if (user.mustChangePassword) return <Login />; // Login renders the forced change-password step
+  if (user.mustChangePin) return <SetPin />;     // forced PIN reset before the app loads
   if (denied) return null; // redirecting
 
   return (

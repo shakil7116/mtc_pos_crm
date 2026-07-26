@@ -122,6 +122,7 @@ export async function login(usernameRaw: string, password: string, rememberMe: b
     user: {
       id: u.id, name: u.name, role: normalizeRole(u.role), storeId: u.storeId ?? null,
       mustChangePassword: !!u.mustChangePassword,
+      mustChangePin: !!u.mustChangePin,
     },
   };
 }

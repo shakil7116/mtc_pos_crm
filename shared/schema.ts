@@ -86,6 +86,7 @@ export const users = pgTable("users", {
   username: text("username").unique(),           // login identifier
   passwordHash: text("password_hash"),           // bcrypt
   mustChangePassword: boolean("must_change_password").default(true), // first login forces change
+  mustChangePin: boolean("must_change_pin").default(false), // force a fresh unique PIN on next login
   tokenVersion: integer("token_version").notNull().default(0), // bump → all tokens invalid
   failedAttempts: integer("failed_attempts").notNull().default(0),
   lockedUntil: timestamp("locked_until"),        // 10-min lock after too many failures

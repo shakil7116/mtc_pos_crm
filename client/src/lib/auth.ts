@@ -11,6 +11,7 @@ export type SessionUser = {
   role: Role;
   storeId: number | null;
   mustChangePassword?: boolean;
+  mustChangePin?: boolean;
 };
 
 export function getCachedUser(): SessionUser | null {
@@ -26,7 +27,7 @@ export function getCachedUser(): SessionUser | null {
 }
 
 export function setCachedUser(user: {
-  id: number; name: string; role: string; storeId: number | null; mustChangePassword?: boolean;
+  id: number; name: string; role: string; storeId: number | null; mustChangePassword?: boolean; mustChangePin?: boolean;
 }): void {
   localStorage.setItem(SESSION_KEY, JSON.stringify({ ...user, role: normalizeRole(user.role) }));
 }

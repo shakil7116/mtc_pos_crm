@@ -4,7 +4,7 @@ import { openai } from "./replit_integrations/audio/client";
 import {
   getSettings, upsertSettings,
   getStores, createStore, updateStore,
-  getUsers, getUser, createUser, updateUser, verifyUserPin,
+  getUsers, getUser, createUser, updateUser, verifyUserPin, changeOwnPin,
   createTask, getTasks, updateTask, deleteTask,
   getCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
   getProducts, getProduct, createProduct, updateProduct,
@@ -556,6 +556,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     res.json({ user: {
       id: req.user.id, name: req.user.name, role: req.user.role, storeId: req.user.storeId,
       mustChangePassword: !!(u as any)?.mustChangePassword,
+      mustChangePin: !!(u as any)?.mustChangePin,
     } });
   });
 
@@ -570,6 +571,17 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try {
       await changePassword(req.user.id, String(req.body?.currentPassword || ""), String(req.body?.newPassword || ""));
       clearTokenCookie(res); // old token invalid (tokenVersion bumped) → re-login
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Change own PIN (forced reset routes here too). Enforces non-trivial + unique.
+  app.post("/api/auth/change-pin", async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ message: "Not authenticated" });
+    try {
+      await changeOwnPin(req.user.id, String(req.body?.newPin || ""));
       res.json({ ok: true });
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });

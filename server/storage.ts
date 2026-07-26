@@ -129,6 +129,18 @@ export async function verifyUserPin(userId: number, pin: string): Promise<boolea
   return user?.pin === pin && user?.active === true;
 }
 
+const WEAK_PINS = new Set(["1234", "12345", "123456", "0123", "01234", "012345", "4321", "54321", "654321"]);
+// A staff member sets their own PIN. Must be non-trivial and unique across staff,
+// so a supervisor override (manager PIN) can't be guessed or shared.
+export async function changeOwnPin(userId: number, newPin: string): Promise<void> {
+  const pin = String(newPin || "").trim();
+  if (!/^\d{4,6}$/.test(pin)) throw new Error("PIN must be 4 to 6 digits.");
+  if (WEAK_PINS.has(pin) || /^(\d)\1+$/.test(pin)) throw new Error("Choose a less obvious PIN — not a sequence like 1234 or the same digit repeated.");
+  const clash = await db.select().from(users).where(and(eq(users.pin, pin), ne(users.id, userId)));
+  if (clash.length) throw new Error("That PIN is already used by another staff member — pick a different one.");
+  await db.update(users).set({ pin, mustChangePin: false }).where(eq(users.id, userId));
+}
+
 // ─── Tasks (manager → staff workflow) ────────────────────────────────────────
 const TASK_STATUS = ["open", "in_progress", "done"];
 export async function createTask(data: {
