@@ -284,14 +284,19 @@ export default function Dashboard() {
     queryFn: () => fetch("/api/inventory/low-stock").then((r) => r.json()),
   });
 
-  // Admin location filter (spec 8: dashboard filterable by location).
-  // "all" = company-wide; otherwise a storeId scoping summary + low stock + deliveries.
-  const [locFilter, setLocFilter] = useState<string>("all");
+  // Location filter (spec 8). Admin (or a head-manager with no store) = "all";
+  // a store-assigned MANAGER is locked to their own store (per-store manager).
+  const scopedStoreId = user?.role === "manager" && user?.storeId ? user.storeId : null;
+  const [locFilter, setLocFilter] = useState<string>(scopedStoreId ? String(scopedStoreId) : "all");
   const { data: allStores = [] } = useQuery<any[]>({
     queryKey: ["/api/stores"],
     queryFn: () => fetch("/api/stores").then((r) => r.json()),
     staleTime: 60_000,
   });
+  // A scoped manager may only view their store + the warehouses it owns.
+  const locationOptions = scopedStoreId
+    ? allStores.filter((s: any) => s.active !== false && (s.id === scopedStoreId || s.ownerStoreId === scopedStoreId))
+    : allStores.filter((s: any) => s.active !== false);
   const locParam = locFilter !== "all" ? `?storeId=${locFilter}` : "";
 
   // Real-time dashboard metrics (Drizzle-computed), location-scoped when filtered
@@ -405,15 +410,15 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Location filter — all locations or one store/warehouse (spec 8) */}
+          {/* Location filter — admin sees all; a store-assigned manager is locked to theirs */}
           <select
             value={locFilter}
             onChange={(e) => setLocFilter(e.target.value)}
             className="text-xs font-medium bg-white border border-border/40 px-3 py-1.5 rounded-full shadow-sm cursor-pointer outline-none"
             title="Filter dashboard by location"
           >
-            <option value="all">🌍 All locations</option>
-            {allStores.filter((s: any) => s.active !== false).map((s: any) => (
+            {!scopedStoreId && <option value="all">🌍 All locations</option>}
+            {locationOptions.map((s: any) => (
               <option key={s.id} value={String(s.id)}>{s.nameEn}</option>
             ))}
           </select>

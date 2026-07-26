@@ -2370,7 +2370,12 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
       const isReal = (d: any) => d.transactionMode !== "demo";
       // Optional location filter — salesman/warehouse dashboards are store-scoped.
-      const storeFilter = req.query.storeId ? Number(req.query.storeId) : null;
+      // Any store-assigned staff (salesman, manager, warehouse…) is LOCKED to their
+      // own store server-side — a raw ?storeId= call can't widen the scope. Only an
+      // admin (no assigned store) sees whatever location is asked for.
+      const actorRole = normalizeRoleStrict(req);
+      const lockedStore = actorRole !== "admin" && req.user?.storeId ? req.user.storeId : null;
+      const storeFilter = lockedStore ?? (req.query.storeId ? Number(req.query.storeId) : null);
       const inStore = (d: any) => !storeFilter || d.storeId === storeFilter;
 
       // A doc belongs to today's business day if its date matches, OR it was created
