@@ -596,6 +596,8 @@ function ProductDialog({
   isAdmin: boolean;
 }) {
   const isEdit = !!editProduct;
+  const { user: priceUser } = useAuth();
+  const canEditPrice = priceUser?.role === "admin" || priceUser?.role === "manager"; // prices = manager/admin
   const [form, setForm] = useState<ProductForm>(() =>
     editProduct
       ? {
@@ -673,10 +675,12 @@ function ProductDialog({
     if (!form.name.trim()) errs.name = "Name is required";
     const skuErr = validateSku(form.sku);
     if (skuErr) errs.sku = skuErr;
-    const priceErr = validatePositivePrice(form.salePrice, "Sell price");
-    if (priceErr) errs.salePrice = priceErr;
-    const costErr = validateNonNegative(form.costPrice, "Cost price");
-    if (costErr) errs.costPrice = costErr;
+    if (canEditPrice) {
+      const priceErr = validatePositivePrice(form.salePrice, "Sell price");
+      if (priceErr) errs.salePrice = priceErr;
+      const costErr = validateNonNegative(form.costPrice, "Cost price");
+      if (costErr) errs.costPrice = costErr;
+    }
     const minErr = validateNonNegative(form.minStockQty, "Minimum stock");
     if (minErr) errs.minStockQty = minErr;
     setErrors(errs);
@@ -776,7 +780,7 @@ function ProductDialog({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {canEditPrice && (<div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="p-sale">Retail Price (QAR) <span className="text-red-500">*</span></Label>
               <Input
@@ -824,7 +828,7 @@ function ProductDialog({
                 )}
               </div>
             )}
-          </div>
+          </div>)}
 
           <div className="grid grid-cols-2 gap-3">
             {!isEdit && (

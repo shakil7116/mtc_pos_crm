@@ -1088,6 +1088,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try {
       // openingQty = current stock to seed at the product's location on creation.
       const { openingQty, ...productData } = req.body || {};
+      // Prices are a manager/admin decision. A salesman/warehouse may add a product
+      // and its details, but not set prices — they default to 0 until a manager sets them.
+      if (!["admin", "manager"].includes(reqRole(req))) {
+        delete productData.salePrice; delete productData.wholesalePrice; delete productData.costPrice;
+      }
       // Reject a duplicate SKU (2.2 Test 4) — SKUs must be unique.
       const sku = (productData.sku || "").trim();
       if (sku) {
@@ -1136,7 +1141,12 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.put("/api/products/:id", async (req: Request, res: Response) => {
     try {
-      const row = await updateProduct(Number(req.params.id), req.body);
+      const body = { ...req.body };
+      // Only a manager/admin may change a product's prices; others edit details only.
+      if (!["admin", "manager"].includes(reqRole(req))) {
+        delete body.salePrice; delete body.wholesalePrice; delete body.costPrice;
+      }
+      const row = await updateProduct(Number(req.params.id), body);
       res.json(row);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -1244,6 +1254,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   app.post("/api/suppliers", async (req: Request, res: Response) => {
+    // Suppliers (and their terms/pricing) are a manager/admin domain.
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only." });
     try {
       const row = await createSupplier(req.body);
       res.status(201).json(row);
@@ -1263,6 +1275,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   app.put("/api/suppliers/:id", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only." });
     try {
       const row = await updateSupplier(Number(req.params.id), req.body);
       res.json(row);
