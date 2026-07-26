@@ -4,6 +4,7 @@ import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { Store, FilePlus2, FileText, Users, AlertTriangle, Trophy, Star } from "lucide-react";
 import { useStores, useLowStock, locPath, money, todayStr } from "./shared";
+import TasksPanel from "@/components/TasksPanel";
 
 /**
  * Salesman Dashboard (Module 8B) — STORE-FILTERED to their assigned store.
@@ -166,6 +167,9 @@ export default function SalesmanDashboard() {
           </div>
         </section>
       )}
+
+      {/* Tasks assigned to me (and, if I can assign, to my helper) */}
+      <TasksPanel />
 
       {/* Shift invoice list — this salesman's own invoices today */}
       <section className="rounded-xl border p-4">

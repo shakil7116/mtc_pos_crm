@@ -2,7 +2,7 @@
 // route guards (client + server). Client-safe (no Drizzle imports).
 // Editable from Settings in a later phase.
 
-export const ROLES = ["admin", "manager", "warehouse", "salesman", "driver"] as const;
+export const ROLES = ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper", "driver"] as const;
 export type Role = (typeof ROLES)[number];
 export function normalizeRole(r?: string | null): Role {
   if (r === "staff") return "salesman"; // legacy alias
@@ -16,18 +16,18 @@ export type NavKey =
 
 // Which roles may access each module. Per MTC_MASTER_SPEC Module 10.
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
-  dashboard:   ["admin", "manager", "warehouse", "salesman", "driver"],
-  documents:   ["admin", "manager", "salesman"],
-  customers:   ["admin", "manager", "salesman"],
-  inventory:   ["admin", "manager", "warehouse", "salesman"],
+  dashboard:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper", "driver"],
+  documents:   ["admin", "manager", "salesman", "salesman_helper"],
+  customers:   ["admin", "manager", "salesman", "salesman_helper"],
+  inventory:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper"],
   suppliers:   ["admin", "manager"],
   reports:     ["admin", "manager"],
   messages:    ["admin", "manager"],
   settings:    ["admin"],
-  deliveries:  ["admin", "manager", "warehouse", "driver"],
+  deliveries:  ["admin", "manager", "warehouse", "warehouse_manager", "driver"],
   expenses:    ["admin", "manager"],
   finance:     ["admin", "manager"],
-  maintenance: ["admin", "manager", "warehouse"],
+  maintenance: ["admin", "manager", "warehouse", "warehouse_manager"],
   pdc:         ["admin", "manager"],
   approvals:   ["admin", "manager"],
 };
@@ -71,7 +71,9 @@ export const ROLE_HOME: Record<Role, string> = {
   admin: "/",
   manager: "/",
   warehouse: "/",
+  warehouse_manager: "/",
   salesman: "/",
+  salesman_helper: "/",
   // Driver lands on the dashboard until the dedicated deliveries page ships (later phase).
   // Keep this in sync with the routed pages so no role bounces to NotFound.
   driver: "/",
@@ -95,6 +97,8 @@ export const ROLE_LABEL: Record<Role, string> = {
   admin: "Admin / Owner",
   manager: "Manager",
   warehouse: "Warehouse Keeper",
+  warehouse_manager: "Warehouse Manager",
   salesman: "Salesman",
+  salesman_helper: "Helper Salesman",
   driver: "Driver",
 };

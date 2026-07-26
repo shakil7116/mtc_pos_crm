@@ -5,6 +5,7 @@ import {
   getSettings, upsertSettings,
   getStores, createStore, updateStore,
   getUsers, getUser, createUser, updateUser, verifyUserPin,
+  createTask, getTasks, updateTask, deleteTask,
   getCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
   getProducts, getProduct, createProduct, updateProduct,
   getInventory, adjustStock, getLowStockItems,
@@ -485,7 +486,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
     try {
       const rows = await getUsers();
-      const safe = rows.map(({ pin, ...u }) => u);
+      // Never expose secrets/security state to the client (any authed user can read this list).
+      const safe = rows.map(({ pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...u }) => u);
       res.json(safe);
     } catch (err) {
       res.json(DEMO_USERS.map(({ pin, ...u }) => u));
@@ -496,7 +498,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     if (!requireAdmin(req, res)) return;
     try {
       const row = await createUser(req.body);
-      const { pin, ...safe } = row;
+      const { pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...safe } = row;
       res.status(201).json(safe);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -519,7 +521,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       if (before && (before.role !== row.role || before.storeId !== row.storeId)) {
         await invalidateUserSessions(row.id);
       }
-      const { pin, ...safe } = row;
+      const { pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...safe } = row;
       res.json(safe);
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
@@ -587,6 +589,34 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // TASKS — manager (and warehouse-manager / main salesman) assign to staff
+  // ══════════════════════════════════════════════════════════════
+  const canAssignTasks = (req: Request) => ["admin", "manager", "warehouse_manager", "salesman"].includes(reqRole(req));
+  app.get("/api/tasks", async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ message: "Not authenticated" });
+    const seesAll = ["admin", "manager"].includes(reqRole(req));
+    // Managers/admin see the whole board; everyone else sees only their own tasks.
+    const mine = req.query.scope === "mine" || !seesAll;
+    try { res.json(await getTasks(mine ? { mineUserId: req.user.id } : {})); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+  app.post("/api/tasks", async (req: Request, res: Response) => {
+    if (!canAssignTasks(req)) return res.status(403).json({ message: "You are not allowed to assign tasks." });
+    try { res.status(201).json(await createTask({ ...req.body, assignedBy: req.user?.id ?? null })); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  app.patch("/api/tasks/:id", async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ message: "Not authenticated" });
+    try { res.json(await updateTask(Number(req.params.id), req.body, { id: req.user.id, role: reqRole(req) })); }
+    catch (err) { res.status(err instanceof Error && /not allowed/i.test(err.message) ? 403 : 400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+  app.delete("/api/tasks/:id", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only." });
+    try { await deleteTask(Number(req.params.id)); res.json({ ok: true }); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
 
   // ══════════════════════════════════════════════════════════════

@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Truck, MapPin, Package, CheckCircle2, FileText, ChevronLeft, ChevronRight } from "lucide-react";
 import { useDeliveries, todayStr } from "./shared";
+import TasksPanel from "@/components/TasksPanel";
 
 /**
  * Driver Dashboard — ultra simple, full screen, ONE delivery at a time.
@@ -63,6 +64,8 @@ export default function DriverDashboard() {
           <span className="text-sm font-bold bg-slate-100 rounded-full px-3 py-1">{idx + 1} / {pending.length}</span>
         )}
       </header>
+
+      <TasksPanel />
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 

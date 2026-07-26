@@ -4,6 +4,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useToast } from "@/hooks/use-toast";
 import { Warehouse, PackageOpen, AlertTriangle, Wrench, CheckCircle2, Truck, Plus } from "lucide-react";
 import { useStores, useLowStock, useDeliveries, locPath, todayStr } from "./shared";
+import TasksPanel from "@/components/TasksPanel";
 
 const ISSUE_BADGE: Record<string, string> = {
   open: "bg-red-100 text-red-700",
@@ -69,6 +70,9 @@ export default function WarehouseDashboard() {
           <p className="text-sm text-muted-foreground">{user?.name} · location-filtered view</p>
         </div>
       </header>
+
+      {/* Tasks (warehouse manager assigns to warehouse staff) */}
+      <TasksPanel />
 
       {/* Incoming deliveries expected today */}
       <section className="rounded-xl border p-4">

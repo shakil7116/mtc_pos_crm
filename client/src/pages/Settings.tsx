@@ -958,8 +958,10 @@ function Section3({
                   <SelectContent>
                     <SelectItem value="admin">Admin / Owner</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="warehouse_manager">Warehouse Manager</SelectItem>
                     <SelectItem value="warehouse">Warehouse Keeper</SelectItem>
                     <SelectItem value="salesman">Salesman</SelectItem>
+                    <SelectItem value="salesman_helper">Helper Salesman</SelectItem>
                     <SelectItem value="driver">Driver</SelectItem>
                   </SelectContent>
                 </Select>

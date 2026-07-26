@@ -7,7 +7,7 @@ import {
   documentCounters, damageClaims,
   supplierReturns, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
-  ownerLoans,
+  ownerLoans, tasks,
   type Settings, type InsertSettings,
   type Store, type InsertStore,
   type User, type InsertUser,
@@ -127,6 +127,78 @@ export async function updateUser(id: number, data: Partial<InsertUser>): Promise
 export async function verifyUserPin(userId: number, pin: string): Promise<boolean> {
   const user = await getUser(userId);
   return user?.pin === pin && user?.active === true;
+}
+
+// ─── Tasks (manager → staff workflow) ────────────────────────────────────────
+const TASK_STATUS = ["open", "in_progress", "done"];
+export async function createTask(data: {
+  title: string; note?: string | null; assignedTo: number; assignedBy?: number | null;
+  storeId?: number | null; dueDate?: string | null;
+}): Promise<any> {
+  if (!data.title?.trim()) throw new Error("Task title is required.");
+  if (!data.assignedTo) throw new Error("Pick who the task is for.");
+  const [row] = await db.insert(tasks).values({
+    title: data.title.trim(), note: data.note?.trim() || null,
+    assignedTo: data.assignedTo, assignedBy: data.assignedBy ?? null,
+    storeId: data.storeId ?? null, dueDate: data.dueDate || null, status: "open",
+  } as any).returning();
+  await createNotification({
+    targetUserId: data.assignedTo, type: "task", title: "New task assigned",
+    message: data.title.trim(), entityType: "task", entityId: row.id,
+  }).catch(() => {});
+  return row;
+}
+
+// All tasks (admin/manager) or only those assigned to `mineUserId`.
+export async function getTasks(opts?: { mineUserId?: number; storeId?: number | null }): Promise<any[]> {
+  const conds: any[] = [];
+  if (opts?.mineUserId) conds.push(eq(tasks.assignedTo, opts.mineUserId));
+  if (opts?.storeId != null) conds.push(eq(tasks.storeId, opts.storeId));
+  const rows = conds.length
+    ? await db.select().from(tasks).where(and(...conds)).orderBy(desc(tasks.id))
+    : await db.select().from(tasks).orderBy(desc(tasks.id));
+  const allUsers = await db.select().from(users);
+  const nameById: Record<number, string> = {}; for (const u of allUsers) nameById[u.id] = u.name;
+  const allStores = await db.select().from(stores);
+  const storeById: Record<number, string> = {}; for (const s of allStores) storeById[s.id] = s.nameEn;
+  return rows.map((t) => ({
+    ...t,
+    assignedToName: nameById[t.assignedTo] ?? `#${t.assignedTo}`,
+    assignedByName: t.assignedBy ? (nameById[t.assignedBy] ?? null) : null,
+    storeName: t.storeId ? (storeById[t.storeId] ?? null) : null,
+  }));
+}
+
+export async function updateTask(
+  id: number,
+  data: { status?: string; title?: string; note?: string | null; dueDate?: string | null; assignedTo?: number },
+  actor?: { id: number; role: string },
+): Promise<any> {
+  const [existing] = await db.select().from(tasks).where(eq(tasks.id, id));
+  if (!existing) throw new Error("Task not found.");
+  // The assignee may update their own task (e.g. mark it done); managers/admin/
+  // warehouse-managers may update any; the assigner may update the one they made.
+  if (actor) {
+    const boss = ["admin", "manager", "warehouse_manager"].includes(actor.role);
+    const owns = existing.assignedTo === actor.id || existing.assignedBy === actor.id;
+    if (!boss && !owns) throw new Error("You are not allowed to change this task.");
+  }
+  const patch: any = {};
+  if (data.title !== undefined) patch.title = String(data.title).trim();
+  if (data.note !== undefined) patch.note = data.note ? String(data.note).trim() : null;
+  if (data.dueDate !== undefined) patch.dueDate = data.dueDate || null;
+  if (data.assignedTo !== undefined) patch.assignedTo = data.assignedTo;
+  if (data.status !== undefined) {
+    if (!TASK_STATUS.includes(data.status)) throw new Error("Invalid task status.");
+    patch.status = data.status;
+    patch.completedAt = data.status === "done" ? new Date() : null;
+  }
+  const [row] = await db.update(tasks).set(patch).where(eq(tasks.id, id)).returning();
+  return row;
+}
+
+export async function deleteTask(id: number): Promise<void> {
+  await db.delete(tasks).where(eq(tasks.id, id));
 }
 
 // ─── Document Counters ───────────────────────────────────────────────────────

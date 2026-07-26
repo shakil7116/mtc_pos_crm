@@ -612,10 +612,25 @@ export const paymentsRelations = relations(payments, ({ one }) => ({
   cheque: one(cheques, { fields: [payments.id], references: [cheques.paymentId] }),
 }));
 
+// ─── Tasks (manager → staff workflow) ────────────────────────────────────────
+export const tasks = pgTable("tasks", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  note: text("note"),
+  assignedTo: integer("assigned_to").notNull(),   // user who must do it
+  assignedBy: integer("assigned_by"),             // user who created it
+  storeId: integer("store_id"),                   // store context (optional)
+  dueDate: date("due_date"),
+  status: text("status").notNull().default("open"), // open | in_progress | done
+  completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ─── Insert Schemas ───────────────────────────────────────────────────────────
 export const insertSettingsSchema = createInsertSchema(settings).omit({ id: true });
 export const insertStoreSchema = createInsertSchema(stores).omit({ id: true });
 export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
+export const insertTaskSchema = createInsertSchema(tasks).omit({ id: true, createdAt: true, completedAt: true });
 export const insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true });
 export const insertInventorySchema = createInsertSchema(inventory).omit({ id: true, updatedAt: true });
@@ -649,6 +664,8 @@ export type Store = typeof stores.$inferSelect;
 export type InsertStore = z.infer<typeof insertStoreSchema>;
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
+export type Task = typeof tasks.$inferSelect;
+export type InsertTask = z.infer<typeof insertTaskSchema>;
 export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Product = typeof products.$inferSelect;

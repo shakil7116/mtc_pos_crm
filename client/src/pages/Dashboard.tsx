@@ -28,6 +28,7 @@ import { format, isToday, addDays, isBefore } from "date-fns";
 import DriverDashboard from "@/pages/dashboards/DriverDashboard";
 import WarehouseDashboard from "@/pages/dashboards/WarehouseDashboard";
 import SalesmanDashboard from "@/pages/dashboards/SalesmanDashboard";
+import TasksPanel from "@/components/TasksPanel";
 import AdminExtras from "@/pages/dashboards/AdminExtras";
 
 /* ─────────────────────────────────────────
@@ -235,8 +236,8 @@ export default function Dashboard() {
 
   // Role dashboards (Module 8) — each role gets its own location-filtered view.
   if (user?.role === "driver") return <DriverDashboard />;
-  if (user?.role === "warehouse") return <WarehouseDashboard />;
-  if (user?.role === "salesman") return <SalesmanDashboard />;
+  if (user?.role === "warehouse" || user?.role === "warehouse_manager") return <WarehouseDashboard />;
+  if (user?.role === "salesman" || user?.role === "salesman_helper") return <SalesmanDashboard />;
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -751,6 +752,9 @@ export default function Dashboard() {
       {/* ══ 4b. ADMIN EXTRAS (Module 8C: aging, PDC today, cash by location,
              supplier dues, expenses, returns, delivery board) ═════════════ */}
       {isAdmin && <AdminExtras reminders={paymentReminders} storeFilter={locFilter === "all" ? null : Number(locFilter)} />}
+
+      {/* Task board — assign to any staff, track status (managers + admin) */}
+      {isAdmin && <TasksPanel />}
 
       {/* Quick Actions / Recent Documents / PDC & Cheques removed from the dashboard
           per owner request — each lives on its own page (Documents, PDC Tracker). */}
