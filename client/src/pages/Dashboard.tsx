@@ -28,7 +28,6 @@ import { format, isToday, addDays, isBefore } from "date-fns";
 import DriverDashboard from "@/pages/dashboards/DriverDashboard";
 import WarehouseDashboard from "@/pages/dashboards/WarehouseDashboard";
 import SalesmanDashboard from "@/pages/dashboards/SalesmanDashboard";
-import ManagerDashboard from "@/pages/dashboards/ManagerDashboard";
 import AdminExtras from "@/pages/dashboards/AdminExtras";
 
 /* ─────────────────────────────────────────
@@ -228,13 +227,16 @@ function StatSkeleton() {
 ───────────────────────────────────────── */
 export default function Dashboard() {
   const { user } = useAuth();
-  const isAdmin = user?.role === "admin";
+  // Manager shares the ADMIN dashboard view — same overview, all locations.
+  // The difference is authority on ACTION pages/endpoints (admin can change critical
+  // system settings; manager cannot), not what the dashboard shows. So `isAdmin`
+  // here gates the full-overview VIEW and includes manager.
+  const isAdmin = user?.role === "admin" || user?.role === "manager";
 
   // Role dashboards (Module 8) — each role gets its own location-filtered view.
   if (user?.role === "driver") return <DriverDashboard />;
   if (user?.role === "warehouse") return <WarehouseDashboard />;
   if (user?.role === "salesman") return <SalesmanDashboard />;
-  if (user?.role === "manager") return <ManagerDashboard />;
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
@@ -569,18 +571,6 @@ export default function Dashboard() {
                 (removed the duplicate here — Bug 6). Profit + Cash Position live
                 in the CEO hero row now. */}
 
-            {/* Cash & Loans — money borrowed from owner/office still owed.
-                (Total Outstanding widget removed — it duplicated Credit Exposure
-                in the CEO hero row above; Credit Exposure is the single source.) */}
-            <StatCard
-              icon={<Landmark className="w-5 h-5 text-purple-600" />}
-              label="Cash & Loans"
-              value={fmt(ownerLoans?.summary?.outstanding ?? 0)}
-              sub={`injected ${fmt(ownerLoans?.summary?.injected ?? 0)} · repaid ${fmt(ownerLoans?.summary?.repaid ?? 0)} outstanding`}
-              color="bg-purple-50"
-              href="/finance?tab=cash-loans"
-            />
-
             {/* New Invoices Today */}
             <StatCard
               icon={<FileText className="w-5 h-5 text-blue-600" />}
@@ -762,7 +752,9 @@ export default function Dashboard() {
              supplier dues, expenses, returns, delivery board) ═════════════ */}
       {isAdmin && <AdminExtras reminders={paymentReminders} storeFilter={locFilter === "all" ? null : Number(locFilter)} />}
 
-      {/* ══ 5. QUICK ACTIONS ═══════════════════════════════ */}
+      {/* Quick Actions / Recent Documents / PDC & Cheques removed from the dashboard
+          per owner request — each lives on its own page (Documents, PDC Tracker). */}
+      {false && (<>
       <section>
         <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-3">
           Quick Actions
@@ -956,6 +948,7 @@ export default function Dashboard() {
           )}
         </div>
       </section>
+      </>)}
 
       {/* bottom padding for mobile nav */}
       <div className="h-4" />

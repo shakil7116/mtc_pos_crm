@@ -56,6 +56,12 @@ export default function SalesmanDashboard() {
   // "Shift list" = invoices THIS salesman created today (spec 8B), not the whole store's.
   const myShiftDocs = todayDocs.filter((d) => !user?.id || Number(d.createdBy) === Number(user.id));
 
+  // Store overview — month-to-date sales + still-unpaid, my store only.
+  const monthStart = today.slice(0, 8) + "01"; // YYYY-MM-01
+  const monthTotal = docs.filter((d) => d.date >= monthStart).reduce((s, d) => s + Number(d.total || 0), 0);
+  const unpaidDocs = docs.filter((d) => d.status !== "paid" && d.status !== "void");
+  const unpaidTotal = unpaidDocs.reduce((s, d) => s + Number((d as any).remaining ?? d.total ?? 0), 0);
+
   return (
     <div className="max-w-3xl mx-auto p-4 sm:p-6 space-y-5">
       <header className="flex items-center gap-3">
@@ -87,6 +93,25 @@ export default function SalesmanDashboard() {
         <p className="font-mono font-bold text-3xl mt-0.5">{money(totalToday)}</p>
         <p className="text-[11px] text-white/60">{todayDocs.length} store invoice{todayDocs.length === 1 ? "" : "s"} today</p>
       </Link>
+
+      {/* Store overview — month sales + unpaid + inventory check */}
+      <div className="grid grid-cols-3 gap-3">
+        <Link href="/documents" className="rounded-xl border p-3 hover:bg-slate-50">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">This month</p>
+          <p className="font-mono font-bold text-lg text-[#1e2a3a]">{money(monthTotal)}</p>
+          <p className="text-[11px] text-muted-foreground">my store sales</p>
+        </Link>
+        <Link href="/documents?status=unpaid" className="rounded-xl border p-3 hover:bg-slate-50">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Unpaid</p>
+          <p className="font-mono font-bold text-lg text-red-600">{money(unpaidTotal)}</p>
+          <p className="text-[11px] text-muted-foreground">{unpaidDocs.length} invoice{unpaidDocs.length === 1 ? "" : "s"}</p>
+        </Link>
+        <Link href="/inventory" className="rounded-xl border p-3 hover:bg-slate-50">
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Inventory</p>
+          <p className="font-mono font-bold text-lg text-[#1e2a3a]">{lowStock.length}</p>
+          <p className="text-[11px] text-muted-foreground">low — tap to check</p>
+        </Link>
+      </div>
 
       {/* Middle row */}
       <div className="grid grid-cols-2 gap-3">

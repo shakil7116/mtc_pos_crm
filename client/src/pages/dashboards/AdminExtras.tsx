@@ -64,21 +64,8 @@ export default function AdminExtras({ reminders = [], storeFilter = null }: { re
 
   return (
     <div className="space-y-4">
-      {/* Bad debt aging — red-flagged buckets */}
-      <section className="rounded-xl border border-red-200 p-4">
-        <h2 className="text-xs font-bold uppercase tracking-wider text-red-600 flex items-center gap-1.5 mb-2">
-          <AlertOctagon className="w-3.5 h-3.5" /> Bad debt — overdue aging
-        </h2>
-        <div className="grid grid-cols-4 gap-2">
-          {(["1-29", "30-59", "60-89", "90+"] as const).map((k) => (
-            <Link key={k} href="/credit-exposure" className={`rounded-lg p-2 text-center ${k === "90+" ? "bg-red-600 text-white" : k === "60-89" ? "bg-red-100 text-red-700" : k === "30-59" ? "bg-amber-100 text-amber-700" : "bg-slate-50 text-slate-600"}`}>
-              <p className="text-[10px] font-bold uppercase">{k} days</p>
-              <p className="font-mono font-bold text-sm">{buckets[k]}</p>
-              <p className="text-[10px] font-mono">{money(bucketAmt[k])}</p>
-            </Link>
-          ))}
-        </div>
-      </section>
+      {/* Bad debt aging removed from the dashboard per owner request — full aging
+          lives on the Credit Exposure page. */}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         {/* PDC due today — both directions */}
