@@ -53,6 +53,13 @@ function normalizeRoleStrict(req: Request): string {
   return req.user ? normalizeRole(req.user.role) : "";
 }
 
+// Per-store isolation: a store-assigned non-admin (salesman, manager, warehouse…)
+// is hard-locked to their own store on data reads — a raw ?storeId= call can't
+// widen it. Admin, and a non-admin with no assigned store, are not locked.
+function lockedStoreId(req: Request): number | null {
+  return normalizeRoleStrict(req) !== "admin" && req.user?.storeId ? req.user.storeId : null;
+}
+
 // Insufficient cash/bank → 409 with a machine-readable code so the UI can offer an
 // admin override dialog. Returns true if it handled the error.
 function sendFundsError(res: Response, err: unknown): boolean {
@@ -735,7 +742,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.get("/api/documents", async (req: Request, res: Response) => {
     try {
       const type = req.query.type as string | undefined;
-      const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
+      const locked = lockedStoreId(req);
+      const storeId = locked ?? (req.query.storeId ? Number(req.query.storeId) : undefined);
       const customerId = req.query.customerId ? Number(req.query.customerId) : undefined;
       let rows = await getDocuments(type, storeId);
       // P0 fix: customer history must be isolated to THAT customer — server-side filter.
@@ -880,6 +888,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
           };
         });
 
+      const lockedS = lockedStoreId(req);
+      if (lockedS) rows = rows.filter((d) => d.storeId === lockedS);
       const { driverId, status, date } = req.query as Record<string, string>;
       if (driverId) rows = rows.filter((d) => Number(d.driverId) === Number(driverId));
       if (status) rows = rows.filter((d) => d.deliveryStatus === status);
@@ -1159,7 +1169,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.get("/api/inventory", async (req: Request, res: Response) => {
     try {
-      const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
+      const locked = lockedStoreId(req);
+      const storeId = locked ?? (req.query.storeId ? Number(req.query.storeId) : undefined);
       const rows = await getInventory(storeId);
       res.json(rows);
     } catch (err) {
@@ -1187,7 +1198,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.get("/api/inventory/low-stock", async (req: Request, res: Response) => {
     try {
-      const rows = await getLowStockItems();
+      const locked = lockedStoreId(req);
+      let rows = await getLowStockItems();
+      if (locked) rows = rows.filter((i: any) => i.storeId === locked);
       res.json(rows);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -1384,7 +1397,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.get("/api/returns", async (req: Request, res: Response) => {
     try {
       const invoiceId = req.query.invoiceId ? Number(req.query.invoiceId) : undefined;
-      res.json(await getReturns(invoiceId));
+      const locked = lockedStoreId(req);
+      let rows = await getReturns(invoiceId);
+      if (locked) rows = (rows as any[]).filter((r) => r.storeId == null || r.storeId === locked);
+      res.json(rows);
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
