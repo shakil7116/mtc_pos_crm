@@ -426,6 +426,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   app.post("/api/settings", async (req: Request, res: Response) => {
+    // System configuration (business rules, tax, thresholds, company info, numbering)
+    // is a CRITICAL setting — admin only. Managers run operations, not system config.
+    if (reqRole(req) !== "admin") return res.status(403).json({ message: "Only an admin can change system settings." });
     try {
       const updated = await upsertSettings(req.body);
       res.json(updated);
@@ -634,7 +637,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.post("/api/customers", async (req: Request, res: Response) => {
     try {
-      const row = await createCustomer(req.body);
+      const body = { ...req.body };
+      // Only a manager/admin sets a credit limit; a salesman-created customer starts at 0.
+      if (body.creditLimit !== undefined && !["admin", "manager"].includes(reqRole(req))) delete body.creditLimit;
+      const row = await createCustomer(body);
       res.status(201).json(row);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -653,7 +659,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.put("/api/customers/:id", async (req: Request, res: Response) => {
     try {
-      const row = await updateCustomer(Number(req.params.id), req.body);
+      const body = { ...req.body };
+      // Credit limit is a manager/admin decision. A salesman may edit a customer's
+      // details but not raise/lower their credit — silently drop it if they try.
+      if (body.creditLimit !== undefined && !["admin", "manager"].includes(reqRole(req))) delete body.creditLimit;
+      const row = await updateCustomer(Number(req.params.id), body);
       res.json(row);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -1280,6 +1290,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   app.post("/api/cheques", async (req: Request, res: Response) => {
+    // Manual PDC entry is a treasury action (admin/manager). Invoice PDCs are booked
+    // server-side during createDocument, so this gate does not affect a sale.
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only." });
     try {
       const row = await createCheque(req.body);
       res.status(201).json(row);
@@ -1291,6 +1304,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   // Legacy clear endpoint → routed through the tracker's status machine so
   // clearance books the cashflow movement too.
   app.put("/api/cheques/:id/clear", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only." });
     try {
       const canOverride = reqRole(req) === "admin";
       res.json(await setChequeStatus(Number(req.params.id), "cleared", (req.user?.id || undefined), {
