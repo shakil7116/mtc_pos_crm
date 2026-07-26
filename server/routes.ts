@@ -32,7 +32,7 @@ import {
   softDeleteExpense, reverseDelivery, reverseReturnApproval,
   getDailySalesSummary, getUnpaidInvoices,
   getNextDocNumber, peekNextDocNumber,
-  DuplicateDocumentNumberError, InvalidDocumentNumberError, CreditLimitExceededError,
+  DuplicateDocumentNumberError, InvalidDocumentNumberError, CreditLimitExceededError, PricingApprovalRequiredError,
   seedDatabase,
   storage,
   getManagedList, getAllManagedLists, createManagedListItem, updateManagedListItem, deleteManagedListItem,
@@ -1054,6 +1054,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.status(201).json(newInv);
     } catch (err) {
       if (err instanceof CreditLimitExceededError) return res.status(400).json({ message: err.message, code: "CREDIT_LIMIT_EXCEEDED" });
+      if (err instanceof PricingApprovalRequiredError) return res.status(400).json({ message: err.message, code: "PRICING_APPROVAL_REQUIRED" });
       res.status(500).json({ message: String(err) });
     }
   });

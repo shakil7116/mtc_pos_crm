@@ -288,6 +288,22 @@ export class CreditLimitExceededError extends Error {
   }
 }
 
+export class PricingApprovalRequiredError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PricingApprovalRequiredError";
+  }
+}
+
+/** Supervisor override: find an ACTIVE admin/manager whose PIN matches, used to
+ *  authorise a salesman's discount / price change on the spot. Null if no match. */
+export async function getManagerByPin(pin: string): Promise<User | null> {
+  const clean = String(pin || "").trim();
+  if (clean.length < 4) return null;
+  const rows = await db.select().from(users).where(and(eq(users.pin, clean), eq(users.active, true)));
+  return rows.find((u) => ["admin", "manager"].includes(String(u.role))) ?? null;
+}
+
 /** Reserve the next sequential number (increments counter). */
 export async function getNextDocNumber(type: string): Promise<string> {
   const [counter] = await db
@@ -897,6 +913,31 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     }
   }
 
+  // ── Discount / price-change gate (money integrity) ──
+  // A salesman lowering a line price or applying a discount needs a manager's
+  // on-the-spot approval (supervisor PIN). Admin/manager price freely. The client
+  // prompts for the PIN, but this server check is what actually enforces it.
+  let pricingApprovedBy: number | null = null;
+  if (req.type === "INV") {
+    const invItems: any[] = (req.items as any[]) || [];
+    const footerDisc = Number((req as any).discountAmount || 0) > 0;
+    const lineReduced = invItems.some((i) =>
+      Number(i.discountAmount || 0) > 0 ||
+      (i.originalPrice != null && Number(i.price) < Number(i.originalPrice) - 0.005),
+    );
+    if (footerDisc || lineReduced) {
+      const actor = req.createdBy ? await getUser(req.createdBy) : null;
+      const isBoss = actor ? ["admin", "manager"].includes(String(actor.role)) : false;
+      if (!isBoss) {
+        const approver = await getManagerByPin(String((req as any).pricingOverridePin || ""));
+        if (!approver) {
+          throw new PricingApprovalRequiredError("A discount or price change needs a manager's approval — ask a manager to enter their PIN.");
+        }
+        pricingApprovedBy = approver.id;
+      }
+    }
+  }
+
   const number = await resolveDocumentNumber(req.type, req.number);
 
   const [doc] = await db.insert(documents).values({
@@ -905,6 +946,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     date: req.date,
     poNumber: req.poNumber,
     dueDate: (req as any).dueDate ?? null,
+    pricingApprovedBy,
     customerId: req.customerId,
     customerName: req.customerName ? String(req.customerName).toUpperCase() : req.customerName,
     supplierId: (req as any).supplierId,

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import AdminSettingsModal from "@/components/AdminSettingsModal";
 import SaveInterceptorModal, { type InterceptorResult } from "@/components/SaveInterceptorModal";
+import ManagerPinModal from "@/components/ManagerPinModal";
 import InlineAddCustomerDialog, { type QuickCustomer } from "@/components/InlineAddCustomerDialog";
 import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs } from "@/components/CustomFields";
@@ -213,6 +214,11 @@ export default function DocumentEditor({ type, params }: Props) {
   const [savedDocId, setSavedDocId] = useState<number | null>(null);
   const [adminSettingsOpen, setAdminSettingsOpen] = useState(false);
   const [interceptorOpen, setInterceptorOpen] = useState(false);
+  // Manager approval for a salesman's discount / price change (supervisor PIN).
+  const [pinModalOpen, setPinModalOpen] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pendingIntercept, setPendingIntercept] = useState<InterceptorResult | null>(null);
+  const pricingPinRef = useRef("");
   // Colour theme === document template (the old InvoicePaper's 5 variants)
   const [theme, setTheme] = useState<ThemeKey>(() => {
     const k = templateToTheme(getSavedTemplate());
@@ -539,8 +545,11 @@ export default function DocumentEditor({ type, params }: Props) {
         subtotal, taxRate: 0, taxAmount: 0, total, totalWords,
         customData: docCustomData,
         notes: receiver.trim() ? `Received by: ${receiver.trim()}` : notes,
+        // originalPrice lets the server detect a salesman price reduction; the PIN
+        // (from the manager-approval modal) authorises it.
+        pricingOverridePin: pricingPinRef.current || undefined,
         items: items.filter((i) => i.description.trim()).map((i) => ({
-          productId: i.productId ?? null, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit, price: i.price, discountType: i.discountType, discountAmount: i.discountAmount, amount: i.amount,
+          productId: i.productId ?? null, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit, price: i.price, originalPrice: i.originalPrice ?? i.price, discountType: i.discountType, discountAmount: i.discountAmount, amount: i.amount,
         })),
         createdBy: user?.id ?? null,
       };
@@ -555,11 +564,15 @@ export default function DocumentEditor({ type, params }: Props) {
         if (res.status === 400 && err.code === "INVALID_NUMBER") {
           throw new Error("Invalid document number. Use format INV-123456 or enter digits only.");
         }
+        if (res.status === 400 && err.code === "PRICING_APPROVAL_REQUIRED") {
+          throw new Error("PRICING_PIN_NEEDED");
+        }
         throw new Error(err.message ?? "Failed to save document");
       }
       return res.json();
     },
     onSuccess: (data) => {
+      pricingPinRef.current = ""; // consume the approval
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["/api/documents"] });
       toast({ title: isEdit ? "Document updated" : "Document created" });
@@ -568,7 +581,17 @@ export default function DocumentEditor({ type, params }: Props) {
       setSavedDocId(id);
       navigate(`/documents/${id}`);
     },
-    onError: (err: Error) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+    onError: (err: Error, intercept) => {
+      // A salesman discount / price change → collect a manager's PIN, then retry.
+      if (err.message === "PRICING_PIN_NEEDED") {
+        // If a PIN was already tried (ref still set), it was wrong.
+        if (pricingPinRef.current) { setPinError("Incorrect manager PIN — try again."); pricingPinRef.current = ""; }
+        setPendingIntercept(intercept);
+        setPinModalOpen(true);
+        return;
+      }
+      toast({ title: "Save failed", description: err.message, variant: "destructive" });
+    },
   });
 
   const convertMutation = useMutation({
@@ -1102,6 +1125,20 @@ export default function DocumentEditor({ type, params }: Props) {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* ── Manager approval for a discount / price change ── */}
+      <ManagerPinModal
+        open={pinModalOpen}
+        error={pinError}
+        pending={saveMutation.isPending}
+        onClose={() => { setPinModalOpen(false); setPinError(null); }}
+        onApprove={(pin) => {
+          setPinError(null);
+          pricingPinRef.current = pin;
+          setPinModalOpen(false);
+          if (pendingIntercept) saveMutation.mutate(pendingIntercept);
+        }}
+      />
 
       {/* ── Admin Manual Settings ── */}
       <AdminSettingsModal open={adminSettingsOpen} onClose={() => setAdminSettingsOpen(false)} />
