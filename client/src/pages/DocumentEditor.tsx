@@ -183,6 +183,9 @@ export default function DocumentEditor({ type, params }: Props) {
   // ── Form state ──
   const [date, setDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
   const [storeId, setStoreId] = useState<number | null>(user?.storeId ?? null);
+  // Live-preview fit: scale the A4 paper to whatever width the preview box has, so
+  // the WHOLE invoice is always visible (never clipped) at the largest readable size.
+  const previewBoxRef = useRef<HTMLDivElement>(null);
   const [poNumber, setPoNumber] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("pickup_store"); // pickup_store | pickup_warehouse | deliver_site
   const [deliveryAddress, setDeliveryAddress] = useState("");
@@ -389,6 +392,26 @@ export default function DocumentEditor({ type, params }: Props) {
   const docDiscount = docDiscountType === "QAR" ? docDiscountAmount : (subtotal * docDiscountAmount) / 100;
   const total = Math.max(0, subtotal - docDiscount);
   const totalWords = amountInWords(total);
+
+  // Scale the A4 live preview to fit its box width (full invoice, never clipped).
+  useEffect(() => {
+    const box = previewBoxRef.current;
+    if (!box) return;
+    const fit = () => {
+      const paper = box.querySelector(".paper-fit") as HTMLElement | null;
+      const inner = paper?.firstElementChild as HTMLElement | null;
+      if (!paper || !inner) return;
+      paper.style.zoom = "1";                       // reset to read natural width
+      const natural = inner.offsetWidth || 794;     // A4 @96dpi
+      const avail = box.clientWidth - 24;           // minus p-3
+      paper.style.zoom = String(Math.min(1, Math.max(0.3, avail / natural)));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(box);
+    window.addEventListener("resize", fit);
+    return () => { ro.disconnect(); window.removeEventListener("resize", fit); };
+  }, [settings, previewTemplate, docType]);
 
   const previewInvoice = useMemo(
     () => normalizeInvoice({
@@ -732,7 +755,7 @@ export default function DocumentEditor({ type, params }: Props) {
         </div>
 
         {/* ── Main grid: product grid + work area + right rail ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_300px] gap-6 items-start">
+        <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)] gap-6 items-start">
 
           {/* ── POS Product Grid: always visible, tap a card to add / bump qty ── */}
           <aside className="lg:sticky lg:top-6 self-start bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex flex-col print:hidden" style={{ maxHeight: "calc(100vh - 7rem)" }}>
@@ -771,7 +794,7 @@ export default function DocumentEditor({ type, params }: Props) {
             {/* LIVE PREVIEW card */}
             <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 sm:p-7">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4">Live Preview</p>
-              <div id="invoice-print-area" className="rounded-xl bg-slate-50/60 border border-slate-100 p-3 overflow-auto flex justify-start" style={{ maxHeight: "70vh" }}>
+              <div ref={previewBoxRef} id="invoice-print-area" className="rounded-xl bg-slate-50/60 border border-slate-100 p-3 overflow-auto flex justify-center" style={{ maxHeight: "72vh" }}>
                 {settings && (
                   <div className="paper-fit origin-top shadow-xl">
                     <InvoiceRenderer
@@ -973,7 +996,12 @@ export default function DocumentEditor({ type, params }: Props) {
               <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 sm:p-7">
                 <div className="flex items-center justify-between mb-5">
                   <h2 className="text-lg font-black uppercase tracking-tight text-slate-900" style={{ fontFamily: "var(--font-sans)" }}>Items</h2>
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
+                    <button onClick={() => (voiceMode === "items" ? stopVoice() : startVoice("items"))}
+                      title="Speak items — e.g. 'add 20 bags of cement at 15'"
+                      className={`flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide transition ${voiceMode === "items" ? "text-red-500 animate-pulse" : "text-slate-500 hover:text-slate-900"}`}>
+                      {voiceMode === "items" ? <MicOff size={15} /> : <Mic size={15} />} Voice
+                    </button>
                     <button onClick={() => setProductDialogOpen(true)} className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 hover:text-slate-900 transition">
                       <PackagePlus size={15} /> Products
                     </button>
@@ -1087,41 +1115,6 @@ export default function DocumentEditor({ type, params }: Props) {
             </ErrorBoundary>
           </div>
 
-          {/* ── Right rail: voice + guide ── */}
-          <aside className="space-y-5 lg:sticky lg:top-6">
-            {/* AI Voice */}
-            <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-6 flex flex-col items-center text-center">
-              <button
-                onClick={() => (voiceMode === "items" ? stopVoice() : startVoice("items"))}
-                className={`w-20 h-20 rounded-full flex items-center justify-center text-white shadow-lg transition active:scale-95 ${
-                  voiceMode === "items" ? "bg-red-500 animate-pulse" : "bg-slate-900 hover:bg-slate-800"
-                }`}
-              >
-                {voiceMode === "items" ? <MicOff size={30} /> : <Mic size={30} />}
-              </button>
-              <p className="mt-4 text-sm font-black uppercase tracking-wide text-slate-900">AI Voice Input</p>
-              <p className="text-[11px] text-slate-400 mt-1 leading-relaxed">Click to start · speak items · click to stop</p>
-            </section>
-
-            {/* Guide */}
-            <section className="rounded-2xl shadow-sm p-6 text-white" style={{ background: accent }}>
-              <p className="text-xs font-black uppercase tracking-widest flex items-center gap-2 mb-4">
-                <span className="w-1.5 h-1.5 rounded-full bg-white/80 inline-block" /> Guide
-              </p>
-              <ol className="space-y-3">
-                {[
-                  "Talk to AI like a conversation",
-                  '"Add 20 bags of cement for 15 each"',
-                  "Items appear instantly in the grid",
-                ].map((tip, i) => (
-                  <li key={i} className="flex gap-3 text-[12px] leading-snug">
-                    <span className="font-mono font-bold opacity-70">0{i + 1}</span>
-                    <span className="font-medium opacity-95 uppercase tracking-wide">{tip}</span>
-                  </li>
-                ))}
-              </ol>
-            </section>
-          </aside>
         </div>
       </div>
 
@@ -1251,12 +1244,8 @@ export default function DocumentEditor({ type, params }: Props) {
           #invoice-editor-root textarea,
           #invoice-editor-root select { font-size: 16px !important; }
         }
-        .paper-fit { zoom: 0.44; }
-        @media (min-width: 480px) { .paper-fit { zoom: 0.54; } }
-        @media (min-width: 640px) { .paper-fit { zoom: 0.62; } }
-        @media (min-width: 1024px) { .paper-fit { zoom: 0.56; } }
-        @media (min-width: 1280px) { .paper-fit { zoom: 0.64; } }
-        @media (min-width: 1536px) { .paper-fit { zoom: 0.74; } }
+        /* Fallback before the JS fit runs; the fit effect sets an inline zoom that wins. */
+        .paper-fit { zoom: 0.5; }
         @page { size: A4; margin: 15mm; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
