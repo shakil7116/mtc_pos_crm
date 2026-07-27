@@ -771,7 +771,7 @@ export default function DocumentEditor({ type, params }: Props) {
             {/* LIVE PREVIEW card */}
             <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 sm:p-7">
               <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-4">Live Preview</p>
-              <div id="invoice-print-area" className="rounded-xl bg-slate-50/60 border border-slate-100 p-3 overflow-auto flex justify-center" style={{ maxHeight: "70vh" }}>
+              <div id="invoice-print-area" className="rounded-xl bg-slate-50/60 border border-slate-100 p-3 overflow-auto flex justify-start" style={{ maxHeight: "70vh" }}>
                 {settings && (
                   <div className="paper-fit origin-top shadow-xl">
                     <InvoiceRenderer
@@ -1251,11 +1251,12 @@ export default function DocumentEditor({ type, params }: Props) {
           #invoice-editor-root textarea,
           #invoice-editor-root select { font-size: 16px !important; }
         }
-        .paper-fit { zoom: 0.46; }
-        @media (min-width: 480px) { .paper-fit { zoom: 0.58; } }
-        @media (min-width: 640px) { .paper-fit { zoom: 0.66; } }
-        @media (min-width: 1024px) { .paper-fit { zoom: 0.72; } }
-        @media (min-width: 1280px) { .paper-fit { zoom: 0.82; } }
+        .paper-fit { zoom: 0.44; }
+        @media (min-width: 480px) { .paper-fit { zoom: 0.54; } }
+        @media (min-width: 640px) { .paper-fit { zoom: 0.62; } }
+        @media (min-width: 1024px) { .paper-fit { zoom: 0.56; } }
+        @media (min-width: 1280px) { .paper-fit { zoom: 0.64; } }
+        @media (min-width: 1536px) { .paper-fit { zoom: 0.74; } }
         @page { size: A4; margin: 15mm; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
