@@ -1246,7 +1246,10 @@ export default function DocumentEditor({ type, params }: Props) {
         }
         /* Fallback before the JS fit runs; the fit effect sets an inline zoom that wins. */
         .paper-fit { zoom: 0.5; }
-        @page { size: A4; margin: 15mm; }
+        /* No @page margin — the 210×297mm paper maps 1:1 to the A4 sheet and its own
+           ~10mm padding is the margin. (A @page margin here would double up, overflow
+           the printable area, and spill a blank trailing page.) */
+        @page { size: A4; margin: 0; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           body * { visibility: hidden !important; }
