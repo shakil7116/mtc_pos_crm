@@ -103,7 +103,7 @@ const toArabicDigits = (num: string | number) => {
       <div 
         ref={ref} 
         className={clsx(
-          "bg-white text-black w-[210mm] h-[297mm] max-h-[297mm] shadow-xl print:shadow-none relative overflow-hidden flex flex-col uppercase print:w-[210mm] print:h-[297mm] print:max-h-[297mm] print:m-0 print:p-[10mm]",
+          "bg-white text-black w-[210mm] min-h-[297mm] shadow-xl print:shadow-none relative flex flex-col uppercase print:w-[210mm] print:min-h-[297mm] print:m-0 print:p-[10mm]",
           className
         )}
         style={{ 
@@ -199,7 +199,7 @@ const toArabicDigits = (num: string | number) => {
         </div>
 
         {/* Items Table - Standard 11pt Body, Reduced Padding, Modern Styling */}
-        <div className="relative z-10 mb-2 flex-1 overflow-hidden px-1">
+        <div className="relative z-10 mb-2 flex-1 px-1">
           <table className="w-full border-collapse">
             <thead>
               <tr className={clsx("border-b-2", borderColor, headerBgColor, headerTextColor)}>
@@ -214,7 +214,7 @@ const toArabicDigits = (num: string | number) => {
             </thead>
             <tbody>
               {invoice.items.map((item, idx) => (
-                <tr key={idx} className={clsx("border-b transition-colors", isTemplate2 ? "border-[#fef3c7]/30" : "border-gray-100")}>
+                <tr key={idx} className={clsx("border-b transition-colors print:break-inside-avoid", isTemplate2 ? "border-[#fef3c7]/30" : "border-gray-100")}>
                   <td className={clsx("py-[2px] px-1 text-center text-[11pt] font-bold text-gray-400")}>{idx + 1}</td>
                   <td className={clsx("py-[2px] px-1 text-[11pt] font-bold text-gray-900")} style={{ fontWeight: 700 }}>{item.description.toUpperCase()}</td>
                   <td className={clsx("py-[2px] px-1 text-center text-[11pt] font-mono font-bold text-gray-700")}>{item.quantity}</td>

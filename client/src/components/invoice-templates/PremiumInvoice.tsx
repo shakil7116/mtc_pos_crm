@@ -59,7 +59,7 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
   return (
     <div
       className={clsx(
-        "bg-white text-slate-900 w-[210mm] h-[297mm] max-h-[297mm] shadow-xl print:shadow-none relative overflow-hidden flex flex-col print:w-[210mm] print:h-[297mm] print:max-h-[297mm] print:m-0",
+        "bg-white text-slate-900 w-[210mm] min-h-[297mm] shadow-xl print:shadow-none relative flex flex-col print:w-[210mm] print:min-h-[297mm] print:m-0",
         className
       )}
       style={{ boxSizing: "border-box", margin: "0 auto", padding: "12mm" }}
@@ -197,7 +197,7 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
       </div>
 
       {/* ── 5. ITEMS TABLE ────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden mb-4">
+      <div className="flex-1 mb-4">
         <table className="w-full border-collapse">
           <thead>
             <tr className="text-white" style={{ backgroundColor: NAVY }}>
@@ -229,7 +229,7 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
               <tr
                 key={idx}
                 className={clsx(
-                  "border-b border-slate-200 align-top",
+                  "border-b border-slate-200 align-top print:break-inside-avoid",
                   idx % 2 === 1 && "bg-slate-50"
                 )}
               >
