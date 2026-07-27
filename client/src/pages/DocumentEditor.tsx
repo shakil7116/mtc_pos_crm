@@ -19,6 +19,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogFooter,
 } from "@/components/ui/dialog";
 import {
   Trash2,
@@ -442,9 +443,19 @@ export default function DocumentEditor({ type, params }: Props) {
   };
   const addProductToItems = (p: Product) => {
     const sp = tierPrice(p);
-    const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku, description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0 };
-    setItems((prev) => [...prev.filter((i) => i.description || i.qty > 1), newItem]);
-    setProductDialogOpen(false); setProductSearch("");
+    // Same product already on the bill → bump its qty; else add a line. Keep the
+    // dialog OPEN so the biller can add many items fast without reopening.
+    setItems((prev) => {
+      const base = prev.filter((i) => i.description || i.qty > 1);
+      const existing = base.find((i) => i.productId === p.id);
+      if (existing) {
+        const q = existing.qty + 1;
+        const net = existing.discountType === "QAR" ? Math.max(0, existing.price - existing.discountAmount) : existing.price * (1 - existing.discountAmount / 100);
+        return base.map((i) => i.id === existing.id ? { ...i, qty: q, amount: Math.max(0, q * net) } : i);
+      }
+      const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku, description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0 };
+      return [...base, newItem];
+    });
   };
 
   // ── File upload (PDF / image / CSV → parse to items) ──
@@ -655,7 +666,7 @@ export default function DocumentEditor({ type, params }: Props) {
     <div id="invoice-editor-root" className="min-h-screen bg-slate-50">
       <datalist id="unit-options">{UNITS.map((u) => <option key={u} value={u} />)}</datalist>
 
-      <div className="max-w-[1500px] mx-auto px-4 lg:px-8 py-6">
+      <div className="max-w-[1500px] mx-auto px-4 lg:px-8 pt-6 pb-28">
         {/* ── Top bar ── */}
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 mb-6">
           <div className="flex items-start gap-3">
@@ -682,20 +693,17 @@ export default function DocumentEditor({ type, params }: Props) {
                   </button>
                 ))}
               </div>
-              {/* theme pills */}
-              <div className="flex flex-wrap gap-1.5 mt-1.5">
-                {THEMES.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => changeTheme(t.key)}
-                    className={`px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider transition ${
-                      theme === t.key ? "text-white" : "bg-slate-100 text-slate-400 hover:text-slate-600"
-                    }`}
-                    style={theme === t.key ? { background: t.accent } : undefined}
-                  >
-                    {t.label}
-                  </button>
-                ))}
+              {/* theme — compact color picker (decluttered from 6 chips) */}
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <span className="w-3.5 h-3.5 rounded-full ring-1 ring-slate-200 shrink-0" style={{ background: accent }} title="Document colour" />
+                <select
+                  value={theme}
+                  onChange={(e) => changeTheme(e.target.value as ThemeKey)}
+                  className="text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-md pl-2 pr-1 py-1 outline-none cursor-pointer transition"
+                  title="Document colour theme"
+                >
+                  {THEMES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                </select>
               </div>
             </div>
           </div>
@@ -1097,32 +1105,39 @@ export default function DocumentEditor({ type, params }: Props) {
               <div className="text-center text-muted-foreground py-10">No products found.</div>
             ) : (
               <div className="space-y-1">
-                {filteredProducts.map((p) => (
-                  <button key={p.id} className="w-full text-left px-3 py-3 rounded-lg hover:bg-muted transition-colors" onClick={() => addProductToItems(p)}>
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex items-start gap-2">
-                        {p.imageUrl && <img src={p.imageUrl} alt="" className="w-9 h-9 rounded object-cover border shrink-0" />}
-                        <div>
-                        <span className="font-medium">{p.name}</span>
-                        <div className="text-xs text-muted-foreground mt-0.5">SKU: {p.sku} · {p.category} · {p.unit}</div>
-                        {/* Physical location so staff can walk straight to the item */}
-                        {(p.locationStoreId || p.locationArea) && (
-                          <div className="text-[11px] text-emerald-700 mt-0.5">
-                            📍 {[
-                              p.locationStoreId ? stores.find((s: any) => s.id === p.locationStoreId)?.nameEn : null,
-                              p.locationArea, p.locationRack, p.locationShelf,
-                            ].filter(Boolean).join(" → ")}
-                          </div>
-                        )}
+                {filteredProducts.map((p) => {
+                  const inCart = items.filter((i) => i.productId === p.id).reduce((s, i) => s + i.qty, 0);
+                  return (
+                  <button key={p.id} className={`w-full text-left px-3 py-3 rounded-lg transition-colors flex items-center gap-3 ${inCart > 0 ? "bg-emerald-50 hover:bg-emerald-100" : "hover:bg-muted"}`} onClick={() => addProductToItems(p)}>
+                    {p.imageUrl && <img src={p.imageUrl} alt="" className="w-10 h-10 rounded object-cover border shrink-0" />}
+                    <div className="min-w-0 flex-1">
+                      <span className="font-medium">{p.name}</span>
+                      <div className="text-xs text-muted-foreground mt-0.5">SKU: {p.sku} · {p.category} · {p.unit}</div>
+                      {(p.locationStoreId || p.locationArea) && (
+                        <div className="text-[11px] text-emerald-700 mt-0.5 truncate">
+                          📍 {[
+                            p.locationStoreId ? stores.find((s: any) => s.id === p.locationStoreId)?.nameEn : null,
+                            p.locationArea, p.locationRack, p.locationShelf,
+                          ].filter(Boolean).join(" → ")}
                         </div>
-                      </div>
-                      <div className="text-right shrink-0"><div className="font-semibold">QAR {Number(p.salePrice || 0).toFixed(2)}</div></div>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0 flex items-center gap-2">
+                      <div className="font-semibold whitespace-nowrap">QAR {Number(p.salePrice || 0).toFixed(2)}</div>
+                      {inCart > 0
+                        ? <span className="inline-flex items-center justify-center min-w-[28px] h-7 px-1.5 rounded-full bg-emerald-600 text-white text-xs font-bold">{inCart}</span>
+                        : <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-slate-900 text-white shrink-0"><Plus size={16} /></span>}
                     </div>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
+          <DialogFooter className="mt-2">
+            <span className="text-xs text-muted-foreground mr-auto self-center">Tap a product to add · tap again for more</span>
+            <Button onClick={() => { setProductDialogOpen(false); setProductSearch(""); }} className="rounded-xl">Done</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1173,6 +1188,27 @@ export default function DocumentEditor({ type, params }: Props) {
           qc.invalidateQueries({ queryKey: ["customer-balance", selectedCustomer?.id] });
         }}
       />
+
+      {/* ── Sticky action bar — payable total + save, always in reach ── */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 border-t border-slate-200 bg-white/95 backdrop-blur shadow-[0_-4px_20px_rgba(0,0,0,0.07)] print:hidden">
+        <div className="max-w-[1500px] mx-auto px-4 lg:px-8 py-2.5 flex items-center justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 leading-none">Grand Total</p>
+            <p className="text-2xl font-black text-slate-900 leading-tight font-mono">QAR {total.toFixed(2)}</p>
+            <p className="text-[11px] text-slate-400 truncate leading-none">
+              {items.filter((i) => i.description.trim()).length} item(s){docDiscount > 0 ? ` · disc −${docDiscount.toFixed(2)}` : ""}
+            </p>
+          </div>
+          <Button
+            onClick={handleSave}
+            disabled={saveMutation.isPending}
+            className="rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-bold tracking-wide uppercase px-8 h-12 shadow-lg shrink-0"
+          >
+            {saveMutation.isPending ? <Loader2 size={18} className="mr-2 animate-spin" /> : <Save size={18} className="mr-2" />}
+            {isEdit ? "Update" : "Save"} {docTypeLabel[docType]}
+          </Button>
+        </div>
+      </div>
 
       {/* ── Responsive A4 preview fit + print ── */}
       <style>{`
@@ -1273,7 +1309,7 @@ function LineItemRow({ item, index, isDeliveryNote, onChange, onDelete, autoFocu
             <button type="button" tabIndex={-1} onClick={() => onChange({ discountType: item.discountType === "QAR" ? "%" : "QAR" })} className="px-1.5 text-[10px] font-bold text-slate-500 hover:text-slate-900 shrink-0" title="Toggle discount type (QAR / %)">{item.discountType === "%" ? "%" : "QAR"}</button>
           </div>
         </td>
-        <td className="border border-slate-200 px-2 text-right font-mono font-semibold text-sm tabular-nums w-28 bg-slate-50/40">{item.amount.toFixed(2)}</td>
+        <td className="border border-slate-200 px-2 text-right font-mono font-bold text-sm text-slate-900 tabular-nums w-28 bg-slate-50/60">{item.amount.toFixed(2)}</td>
       </>)}
       <td className="border border-slate-200 text-center w-8">
         <button onClick={onDelete} tabIndex={-1} className="text-slate-300 hover:text-destructive transition-colors p-1 opacity-0 group-hover:opacity-100" title="Remove row"><Trash2 size={14} /></button>
