@@ -731,8 +731,41 @@ export default function DocumentEditor({ type, params }: Props) {
           </div>
         </div>
 
-        {/* ── Main grid: center work area + right rail ── */}
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_300px] gap-6 items-start">
+        {/* ── Main grid: product grid + work area + right rail ── */}
+        <div className="grid grid-cols-1 lg:grid-cols-[300px_minmax(0,1fr)_300px] gap-6 items-start">
+
+          {/* ── POS Product Grid: always visible, tap a card to add / bump qty ── */}
+          <aside className="lg:sticky lg:top-6 self-start bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex flex-col print:hidden" style={{ maxHeight: "calc(100vh - 7rem)" }}>
+            <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2 px-1">Product Grid</p>
+            <div className="relative mb-2">
+              <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <Input className="pl-8 h-9 text-sm" placeholder="Search product / SKU…" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />
+            </div>
+            <div className="overflow-y-auto flex-1 -mx-1 px-1">
+              {filteredProducts.length === 0 ? (
+                <p className="text-xs text-slate-400 text-center py-8">No products.</p>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  {filteredProducts.slice(0, 60).map((p) => {
+                    const inCart = items.filter((i) => i.productId === p.id).reduce((s, i) => s + i.qty, 0);
+                    return (
+                      <button key={p.id} onClick={() => addProductToItems(p)}
+                        className={`relative text-left rounded-xl border p-2 transition ${inCart > 0 ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:border-slate-400 hover:shadow-sm"}`}>
+                        {p.imageUrl
+                          ? <img src={p.imageUrl} alt="" className="w-full h-14 object-cover rounded-lg mb-1.5" />
+                          : <div className="w-full h-14 rounded-lg bg-slate-100 mb-1.5 flex items-center justify-center text-slate-300"><PackagePlus size={20} /></div>}
+                        <p className="text-[11px] font-semibold leading-tight line-clamp-2 min-h-[28px]">{p.name}</p>
+                        <p className="text-[11px] font-bold text-[#d4a017] mt-0.5">QAR {Number(p.salePrice || 0).toFixed(2)}</p>
+                        <span className={`absolute top-1 right-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full text-[10px] font-bold ${inCart > 0 ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"}`}>{inCart > 0 ? inCart : "+"}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <p className="text-[10px] text-slate-400 text-center mt-2">Tap to add · tap again for more</p>
+          </aside>
+
           <div className="space-y-6 min-w-0">
 
             {/* LIVE PREVIEW card */}
