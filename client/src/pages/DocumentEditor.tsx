@@ -1246,16 +1246,20 @@ export default function DocumentEditor({ type, params }: Props) {
         }
         /* Fallback before the JS fit runs; the fit effect sets an inline zoom that wins. */
         .paper-fit { zoom: 0.5; }
-        /* No @page margin — the 210×297mm paper maps 1:1 to the A4 sheet and its own
-           ~10mm padding is the margin. (A @page margin here would double up, overflow
-           the printable area, and spill a blank trailing page.) */
-        @page { size: A4; margin: 0; }
+        /* The @page margin is the ONLY print margin. In print the paper drops its fixed
+           210×297mm + inner padding and flows to fill the printable area, so N pages of
+           content == N printed pages (no forced height → no blank trailing page). */
+        @page { size: A4; margin: 10mm; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
           body * { visibility: hidden !important; }
           #invoice-print-area, #invoice-print-area * { visibility: visible !important; }
           #invoice-print-area { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-height: none !important; padding: 0 !important; border: none !important; background: #fff !important; overflow: visible !important; }
-          #invoice-print-area .paper-fit, #invoice-print-area .invoice-paper { zoom: 1 !important; transform: none !important; box-shadow: none !important; }
+          #invoice-print-area .paper-fit { zoom: 1 !important; transform: none !important; }
+          #invoice-print-area .invoice-paper {
+            width: 100% !important; min-height: 0 !important; height: auto !important;
+            padding: 0 !important; margin: 0 !important; box-shadow: none !important;
+          }
         }
       `}</style>
     </div>
