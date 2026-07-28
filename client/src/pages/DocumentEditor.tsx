@@ -1286,9 +1286,13 @@ export default function DocumentEditor({ type, params }: Props) {
           #print-root { display: block !important; }
           #print-root .paper-fit { zoom: 1 !important; transform: none !important; }
           #print-root .invoice-paper {
+            display: block !important;            /* kill the flex-col so flex-1/mt-auto stop reserving height */
             width: 100% !important; min-height: 0 !important; height: auto !important;
             padding: 0 !important; margin: 0 !important; box-shadow: none !important;
           }
+          /* neutralise the fixed-page footer push in print */
+          #print-root .invoice-paper .mt-auto { margin-top: 0 !important; }
+          #print-root .invoice-paper .flex-1 { flex: 0 1 auto !important; }
         }
       `}</style>
     </div>
