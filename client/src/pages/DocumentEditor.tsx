@@ -70,6 +70,7 @@ interface LineItem {
   amount: number;
   originalPrice?: number;
   costPrice?: number; // staff-only, shown on screen, never printed/persisted per line
+  locationStoreId?: number | null; // which store/warehouse this line's stock is pulled FROM
 }
 
 interface Customer {
@@ -117,7 +118,7 @@ function amountInWords(amount: number): string {
 
 function uid(): string { return Math.random().toString(36).slice(2, 10); }
 function makeBlankItem(): LineItem {
-  return { id: uid(), sku: "", description: "", qty: 1, unit: "PCS", price: 0, discountType: "QAR", discountAmount: 0, amount: 0 };
+  return { id: uid(), sku: "", description: "", qty: 1, unit: "PCS", price: 0, discountType: "QAR", discountAmount: 0, amount: 0, locationStoreId: null };
 }
 // Line total. QAR discount is PER-UNIT: qty × (price − perUnitDiscount).
 // % discount is a percentage off the unit price (equivalent per-unit).
@@ -476,7 +477,7 @@ export default function DocumentEditor({ type, params }: Props) {
         const net = existing.discountType === "QAR" ? Math.max(0, existing.price - existing.discountAmount) : existing.price * (1 - existing.discountAmount / 100);
         return base.map((i) => i.id === existing.id ? { ...i, qty: q, amount: Math.max(0, q * net) } : i);
       }
-      const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku, description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0 };
+      const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku, description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0, locationStoreId: p.locationStoreId ?? null };
       return [...base, newItem];
     });
   };
@@ -584,6 +585,7 @@ export default function DocumentEditor({ type, params }: Props) {
         pricingOverridePin: pricingPinRef.current || undefined,
         items: items.filter((i) => i.description.trim()).map((i) => ({
           productId: i.productId ?? null, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit, price: i.price, originalPrice: i.originalPrice ?? i.price, discountType: i.discountType, discountAmount: i.discountAmount, amount: i.amount,
+          locationStoreId: i.locationStoreId ?? storeId ?? user?.storeId ?? null, // pull stock FROM this location
         })),
         createdBy: user?.id ?? null,
       };
@@ -1023,6 +1025,7 @@ export default function DocumentEditor({ type, params }: Props) {
                         <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-28">SKU</th>
                         <th className="border border-slate-200 text-center py-1.5 font-semibold w-16">Qty</th>
                         <th className="border border-slate-200 text-center py-1.5 font-semibold w-20">Unit</th>
+                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-32" title="Which store/warehouse this line's stock comes from">From</th>
                         {!isDeliveryNote && (<>
                           <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-20 text-amber-700" title="Cost price — staff reference only, never printed">Cost*</th>
                           <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-24">Price</th>
@@ -1039,6 +1042,8 @@ export default function DocumentEditor({ type, params }: Props) {
                           item={item}
                           index={idx}
                           isDeliveryNote={isDeliveryNote}
+                          stores={stores}
+                          defaultStoreId={storeId ?? user?.storeId ?? null}
                           onChange={(patch) => updateItem(item.id, patch)}
                           onDelete={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
                           autoFocusName={item.id === focusRowId}
@@ -1052,7 +1057,7 @@ export default function DocumentEditor({ type, params }: Props) {
                 {/* Mobile cards */}
                 <div className="md:hidden space-y-3">
                   {items.map((item, idx) => (
-                    <LineItemCard key={item.id} item={item} index={idx} isDeliveryNote={isDeliveryNote}
+                    <LineItemCard key={item.id} item={item} index={idx} isDeliveryNote={isDeliveryNote} stores={stores} defaultStoreId={storeId ?? user?.storeId ?? null}
                       onChange={(patch) => updateItem(item.id, patch)}
                       onDelete={() => setItems((prev) => prev.filter((i) => i.id !== item.id))} />
                   ))}
@@ -1283,12 +1288,14 @@ interface LineItemRowProps {
   item: LineItem;
   index: number;
   isDeliveryNote: boolean;
+  stores?: Store[];
+  defaultStoreId?: number | null;
   onChange: (patch: Partial<LineItem>) => void;
   onDelete: () => void;
   autoFocusName?: boolean;
   onEnterKey?: () => void;
 }
-function LineItemRow({ item, index, isDeliveryNote, onChange, onDelete, autoFocusName, onEnterKey }: LineItemRowProps) {
+function LineItemRow({ item, index, isDeliveryNote, stores = [], defaultStoreId = null, onChange, onDelete, autoFocusName, onEnterKey }: LineItemRowProps) {
   const priceChanged = item.originalPrice !== undefined && item.price !== item.originalPrice;
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (autoFocusName) nameRef.current?.focus(); }, [autoFocusName]);
@@ -1327,6 +1334,14 @@ function LineItemRow({ item, index, isDeliveryNote, onChange, onDelete, autoFocu
       <td className="border border-slate-200 p-0 w-20">
         <input data-grid="1" data-r={index} data-c={3} list="unit-options" value={item.unit} onChange={(e) => onChange({ unit: e.target.value })} onKeyDown={(e) => onNav(e, 3)} className={cell + " text-center uppercase"} />
       </td>
+      <td className="border border-slate-200 p-0 w-32">
+        <select value={String((item.locationStoreId ?? defaultStoreId) ?? "")} onChange={(e) => onChange({ locationStoreId: e.target.value ? Number(e.target.value) : null })}
+          className={cell + " text-xs cursor-pointer"} title="Stock pulled from this location" tabIndex={-1}>
+          {stores.filter((s) => s.active).map((s) => (
+            <option key={s.id} value={String(s.id)}>{s.nameEn.replace(/ —.*| -.*/, "")}</option>
+          ))}
+        </select>
+      </td>
       {!isDeliveryNote && (<>
         <td className="border border-slate-200 px-2 text-right font-mono text-xs text-amber-700/80 w-20 bg-amber-50/30" title="Cost — staff only, never printed">
           {item.costPrice != null && Number(item.costPrice) > 0 ? Number(item.costPrice).toFixed(2) : "—"}
@@ -1351,7 +1366,7 @@ function LineItemRow({ item, index, isDeliveryNote, onChange, onDelete, autoFocu
 }
 
 // ─── LineItemCard (mobile) ───────────────────────────────────────────────────
-function LineItemCard({ item, index, isDeliveryNote, onChange, onDelete }: LineItemRowProps) {
+function LineItemCard({ item, index, isDeliveryNote, stores = [], defaultStoreId = null, onChange, onDelete }: LineItemRowProps) {
   return (
     <div className="border border-slate-200 rounded-xl p-3 space-y-3 bg-white">
       <div className="flex items-center justify-between">
@@ -1368,6 +1383,13 @@ function LineItemCard({ item, index, isDeliveryNote, onChange, onDelete }: LineI
           <Label className="text-xs text-slate-400">Unit</Label>
           <Input list="unit-options" value={item.unit} onChange={(e) => onChange({ unit: e.target.value })} className="mt-1 uppercase" />
         </div>
+      </div>
+      <div className="mt-2">
+        <Label className="text-xs text-slate-400">From (stock location)</Label>
+        <select value={String((item.locationStoreId ?? defaultStoreId) ?? "")} onChange={(e) => onChange({ locationStoreId: e.target.value ? Number(e.target.value) : null })}
+          className="mt-1 w-full h-9 px-2 rounded-md border border-slate-300 text-sm">
+          {stores.filter((s) => s.active).map((s) => <option key={s.id} value={String(s.id)}>{s.nameEn}</option>)}
+        </select>
       </div>
       {!isDeliveryNote && (
         <>
