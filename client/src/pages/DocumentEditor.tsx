@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -1243,6 +1244,16 @@ export default function DocumentEditor({ type, params }: Props) {
         </div>
       </div>
 
+      {/* Print-only invoice, portalled to <body>. On print we hide the whole app
+          (#root) and show only this, so it flows in normal document order and
+          paginates cleanly — no trailing blank page from the hidden editor's height. */}
+      {settings && createPortal(
+        <div id="print-root" className="hidden">
+          <InvoiceRenderer templateId={previewTemplate} settings={settings as any} invoice={previewInvoice} options={previewOptions} />
+        </div>,
+        document.body,
+      )}
+
       {/* ── Responsive A4 preview fit + print ── */}
       <style>{`
         /* iOS Safari auto-zooms any focused input below 16px — force 16px on mobile */
@@ -1257,13 +1268,16 @@ export default function DocumentEditor({ type, params }: Props) {
            210×297mm + inner padding and flows to fill the printable area, so N pages of
            content == N printed pages (no forced height → no blank trailing page). */
         @page { size: A4; margin: 10mm; }
+        /* Screen: the print-only portal is hidden. */
+        #print-root { display: none; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-          body * { visibility: hidden !important; }
-          #invoice-print-area, #invoice-print-area * { visibility: visible !important; }
-          #invoice-print-area { position: absolute !important; left: 0 !important; top: 0 !important; width: 100% !important; max-height: none !important; padding: 0 !important; border: none !important; background: #fff !important; overflow: visible !important; }
-          #invoice-print-area .paper-fit { zoom: 1 !important; transform: none !important; }
-          #invoice-print-area .invoice-paper {
+          /* Hide the entire app; show ONLY the portalled invoice, in normal flow, so
+             it paginates cleanly with no trailing blank page. */
+          body > *:not(#print-root) { display: none !important; }
+          #print-root { display: block !important; }
+          #print-root .paper-fit { zoom: 1 !important; transform: none !important; }
+          #print-root .invoice-paper {
             width: 100% !important; min-height: 0 !important; height: auto !important;
             padding: 0 !important; margin: 0 !important; box-shadow: none !important;
           }
