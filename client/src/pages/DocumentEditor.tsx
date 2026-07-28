@@ -683,7 +683,7 @@ export default function DocumentEditor({ type, params }: Props) {
   const docTypeLabel: Record<DocType, string> = { INV: "Invoice", QT: "Quotation", DN: "Delivery Note", CN: "Credit Note", RV: "Return Invoice" };
   const isDeliveryNote = docType === "DN";
 
-  const inputCls = "w-full px-3.5 py-2.5 rounded-xl border border-slate-200 bg-slate-50/60 text-sm font-medium outline-none focus:border-slate-400 focus:bg-white transition";
+  const inputCls = "w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium outline-none hover:border-slate-400 focus:border-[#1e2a3a] focus:ring-2 focus:ring-[#1e2a3a]/15 transition";
 
   return (
     <div id="invoice-editor-root" className="min-h-screen bg-slate-50">
@@ -912,10 +912,10 @@ export default function DocumentEditor({ type, params }: Props) {
                             type="button"
                             onClick={() => { setInvoiceMode(val); setInvoiceModeTouched(true); }}
                             className={cn(
-                              "px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all",
+                              "px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all cursor-pointer active:scale-[0.98]",
                               invoiceMode === val
-                                ? (val === "credit" ? "border-amber-500 bg-amber-50 text-amber-800" : "border-green-600 bg-green-50 text-green-800")
-                                : "border-slate-200 bg-slate-50/60 text-slate-500 hover:border-slate-400",
+                                ? (val === "credit" ? "border-amber-500 bg-amber-500 text-white shadow-md" : "border-green-600 bg-green-600 text-white shadow-md")
+                                : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:bg-slate-50",
                             )}
                           >
                             {label}
@@ -930,9 +930,11 @@ export default function DocumentEditor({ type, params }: Props) {
                     </Field>
                   )}
 
-                  <Field label="PO Number">
-                    <input className={inputCls + " font-mono"} placeholder="Customer PO # (optional)" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
-                  </Field>
+                  {(settings as any)?.showPoField !== false && (
+                    <Field label="PO Number">
+                      <input className={inputCls + " font-mono"} placeholder="Customer PO # (optional)" value={poNumber} onChange={(e) => setPoNumber(e.target.value)} />
+                    </Field>
+                  )}
 
                   {docType === "INV" && (
                     <Field label="Delivery Method">

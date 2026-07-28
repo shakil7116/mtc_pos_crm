@@ -80,6 +80,7 @@ type Settings = {
   taxRate?: number;
   returnPolicyText?: string;
   largeOrderThreshold?: number;
+  showPoField?: boolean;
   quietHoursStart?: string;
   quietHoursEnd?: string;
   maxMessagesPerDay?: number;
@@ -1159,12 +1160,14 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
   const [taxRate, setTaxRate] = useState<string>("0");
   const [returnPolicy, setReturnPolicy] = useState("");
   const [largeOrderThreshold, setLargeOrderThreshold] = useState<string>("");
+  const [showPoField, setShowPoField] = useState<boolean>(true);
 
   useEffect(() => {
     if (settings) {
       setTaxRate(String(settings.taxRate ?? 0));
       setReturnPolicy(settings.returnPolicyText ?? "");
       setLargeOrderThreshold(String(settings.largeOrderThreshold ?? ""));
+      setShowPoField(settings.showPoField !== false);
     }
   }, [settings]);
 
@@ -1187,6 +1190,7 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
       taxRate: Number(taxRate),
       returnPolicyText: returnPolicy,
       largeOrderThreshold: Number(largeOrderThreshold),
+      showPoField,
     });
 
   return (
@@ -1257,6 +1261,15 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
                 </div>
               </Field>
             </div>
+
+            {/* PO field toggle — most invoices don't need a PO number */}
+            <label className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 cursor-pointer hover:bg-slate-50">
+              <span>
+                <span className="text-sm font-medium block">Show “PO Number” on the invoice builder</span>
+                <span className="text-xs text-muted-foreground">Turn off if you rarely take a customer PO — the field is hidden on new invoices.</span>
+              </span>
+              <input type="checkbox" checked={showPoField} onChange={(e) => setShowPoField(e.target.checked)} className="w-5 h-5 accent-[#1e2a3a] shrink-0" />
+            </label>
 
             <Field label="Return Policy Text">
               <Textarea
