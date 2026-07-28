@@ -680,7 +680,13 @@ export default function DocumentEditor({ type, params }: Props) {
   const handleSave = () => {
     const err = validate();
     if (err) { toast({ title: "Validation error", description: err, variant: "destructive" }); return; }
-    setInterceptorOpen(true);
+    // Payment/tender selection only makes sense for an INVOICE (a sale). A quotation,
+    // delivery note or credit note is not a payment event — save it straight through.
+    if (docType === "INV") {
+      setInterceptorOpen(true);
+    } else {
+      saveMutation.mutate({ transactionMode: "real", paymentType: null, payments: [], creditOverride: false, dueDate: null } as any);
+    }
   };
 
   const docTypeLabel: Record<DocType, string> = { INV: "Invoice", QT: "Quotation", DN: "Delivery Note", CN: "Credit Note", RV: "Return Invoice" };
@@ -1267,7 +1273,9 @@ export default function DocumentEditor({ type, params }: Props) {
         /* The @page margin is the ONLY print margin. In print the paper drops its fixed
            210×297mm + inner padding and flows to fill the printable area, so N pages of
            content == N printed pages (no forced height → no blank trailing page). */
-        @page { size: A4; margin: 10mm; }
+        /* size:auto → adapts to whatever paper the device/printer selects (A4, Letter…);
+           the invoice fills 100% of it and flows, so it's paper- and device-adaptable. */
+        @page { size: auto; margin: 10mm; }
         /* Screen: the print-only portal is hidden. */
         #print-root { display: none; }
         @media print {

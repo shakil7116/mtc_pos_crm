@@ -103,7 +103,7 @@ const toArabicDigits = (num: string | number) => {
       <div 
         ref={ref} 
         className={clsx(
-          "invoice-paper bg-white text-black w-[210mm] min-h-[297mm] shadow-xl print:shadow-none relative flex flex-col uppercase",
+          "invoice-paper bg-white text-black w-[210mm] max-w-full min-h-[297mm] print:min-h-0 shadow-xl print:shadow-none relative flex flex-col print:block uppercase",
           className
         )}
         style={{ 

@@ -59,7 +59,7 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
   return (
     <div
       className={clsx(
-        "invoice-paper bg-white text-slate-900 w-[210mm] min-h-[297mm] shadow-xl print:shadow-none relative flex flex-col",
+        "invoice-paper bg-white text-slate-900 w-[210mm] max-w-full min-h-[297mm] print:min-h-0 shadow-xl print:shadow-none relative flex flex-col print:block",
         className
       )}
       style={{ boxSizing: "border-box", margin: "0 auto", padding: "12mm" }}
