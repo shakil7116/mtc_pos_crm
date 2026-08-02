@@ -20,6 +20,7 @@ import {
   Truck,
   Wallet,
   Landmark,
+  Gauge,
 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +31,8 @@ import WarehouseDashboard from "@/pages/dashboards/WarehouseDashboard";
 import SalesmanDashboard from "@/pages/dashboards/SalesmanDashboard";
 import TasksPanel from "@/components/TasksPanel";
 import AdminExtras from "@/pages/dashboards/AdminExtras";
+import LocationOverview from "@/pages/reports/LocationOverview";
+import { PerformanceHub, type PerformanceHubData } from "@/pages/dashboards/PerformanceHub";
 
 /* ─────────────────────────────────────────
    Types
@@ -244,11 +247,36 @@ export default function Dashboard() {
   const in7Days = addDays(today, 7);
   const in3Days = addDays(today, 3);
 
+  // Location filter (spec 8). Admin (or a head-manager with no store) = "all";
+  // a store-assigned MANAGER is locked to their own store (per-store manager).
+  const scopedStoreId = user?.role === "manager" && user?.storeId ? user.storeId : null;
+  const [locFilter, setLocFilter] = useState<string>(scopedStoreId ? String(scopedStoreId) : "all");
+
+  // Dashboard view mode — an in-place UI swap on THIS page (no separate route).
+  // Persisted per browser so the choice sticks across reloads. "/" always resolves.
+  const [dashboardMode, setDashboardMode] = useState<"classic" | "hub">(
+    () => (typeof window !== "undefined" && window.localStorage.getItem("dashboard-mode") === "hub" ? "hub" : "classic")
+  );
+  const setMode = (m: "classic" | "hub") => {
+    setDashboardMode(m);
+    if (typeof window !== "undefined") window.localStorage.setItem("dashboard-mode", m);
+  };
+  const { data: allStores = [] } = useQuery<any[]>({
+    queryKey: ["/api/stores"],
+    queryFn: () => fetch("/api/stores").then((r) => r.json()),
+    staleTime: 60_000,
+  });
+  const locationOptions = scopedStoreId
+    ? allStores.filter((s: any) => s.active !== false && (s.id === scopedStoreId || s.ownerStoreId === scopedStoreId))
+    : allStores.filter((s: any) => s.active !== false);
+  const locParam = locFilter !== "all" ? `&storeId=${locFilter}` : "";
+  const locParamFirst = locFilter !== "all" ? `?storeId=${locFilter}` : "";
+
   /* ── Data fetches ─────────────────────────────────────── */
   const { data: dailySales, isLoading: salesLoading } = useQuery<DailySalesData>({
-    queryKey: ["/api/reports/daily-sales", todayStr],
+    queryKey: ["/api/reports/daily-sales", todayStr, locFilter],
     queryFn: () =>
-      fetch(`/api/reports/daily-sales?start=${todayStr}&end=${todayStr}`).then((r) => r.json()),
+      fetch(`/api/reports/daily-sales?start=${todayStr}&end=${todayStr}${locParam}`).then((r) => r.json()),
   });
 
   // Month revenue (this month to date) + last month (for the vs-% comparison).
@@ -256,13 +284,13 @@ export default function Dashboard() {
   const lmStart = format(new Date(today.getFullYear(), today.getMonth() - 1, 1), "yyyy-MM-dd");
   const lmEnd = format(new Date(today.getFullYear(), today.getMonth(), 0), "yyyy-MM-dd");
   const { data: monthSales } = useQuery<any>({
-    queryKey: ["month-rev", monthStart, todayStr],
-    queryFn: () => fetch(`/api/reports/daily-sales?start=${monthStart}&end=${todayStr}`).then((r) => r.json()),
+    queryKey: ["month-rev", monthStart, todayStr, locFilter],
+    queryFn: () => fetch(`/api/reports/daily-sales?start=${monthStart}&end=${todayStr}${locParam}`).then((r) => r.json()),
     enabled: isAdmin,
   });
   const { data: lastMonthSales } = useQuery<any>({
-    queryKey: ["lastmonth-rev", lmStart, lmEnd],
-    queryFn: () => fetch(`/api/reports/daily-sales?start=${lmStart}&end=${lmEnd}`).then((r) => r.json()),
+    queryKey: ["lastmonth-rev", lmStart, lmEnd, locFilter],
+    queryFn: () => fetch(`/api/reports/daily-sales?start=${lmStart}&end=${lmEnd}${locParam}`).then((r) => r.json()),
     enabled: isAdmin,
   });
   const monthRevenue = toNum(monthSales?.totalRevenue);
@@ -284,26 +312,28 @@ export default function Dashboard() {
     queryFn: () => fetch("/api/inventory/low-stock").then((r) => r.json()),
   });
 
-  // Location filter (spec 8). Admin (or a head-manager with no store) = "all";
-  // a store-assigned MANAGER is locked to their own store (per-store manager).
-  const scopedStoreId = user?.role === "manager" && user?.storeId ? user.storeId : null;
-  const [locFilter, setLocFilter] = useState<string>(scopedStoreId ? String(scopedStoreId) : "all");
-  const { data: allStores = [] } = useQuery<any[]>({
-    queryKey: ["/api/stores"],
-    queryFn: () => fetch("/api/stores").then((r) => r.json()),
-    staleTime: 60_000,
-  });
-  // A scoped manager may only view their store + the warehouses it owns.
-  const locationOptions = scopedStoreId
-    ? allStores.filter((s: any) => s.active !== false && (s.id === scopedStoreId || s.ownerStoreId === scopedStoreId))
-    : allStores.filter((s: any) => s.active !== false);
-  const locParam = locFilter !== "all" ? `?storeId=${locFilter}` : "";
-
   // Real-time dashboard metrics (Drizzle-computed), location-scoped when filtered
   const { data: summary, isLoading: summaryLoading } = useQuery<DashboardSummary>({
     queryKey: ["/api/dashboard/summary", locFilter],
-    queryFn: () => fetch(`/api/dashboard/summary${locParam}`).then((r) => r.json()),
+    queryFn: () => fetch(`/api/dashboard/summary${locParamFirst}`).then((r) => r.json()),
     refetchInterval: 60_000,
+  });
+
+  // Team tasks → Performance Hub kanban (Done / In Progress / Review)
+  const { data: tasksData = [] } = useQuery<any[]>({
+    queryKey: ["/api/tasks"],
+    queryFn: () => fetch("/api/tasks", { credentials: "include" }).then((r) => r.json()).catch(() => []),
+    enabled: isAdmin,
+    refetchInterval: 60_000,
+  });
+
+  // Location overview (7-day) → Performance Hub location panel
+  const loStart = format(addDays(today, -6), "yyyy-MM-dd");
+  const { data: locOverview } = useQuery<any>({
+    queryKey: ["/api/reports/location-overview", loStart, todayStr],
+    queryFn: () => fetch(`/api/reports/location-overview?start=${loStart}&end=${todayStr}`).then((r) => r.json()),
+    enabled: isAdmin,
+    staleTime: 60_000,
   });
 
   // Pending approvals count (alerts row)
@@ -330,6 +360,11 @@ export default function Dashboard() {
     refetchInterval: 60_000,
     enabled: isAdmin,
   });
+
+  // When a specific store is selected, narrow cash position to that store only.
+  const filteredCashTotal = locFilter !== "all" && cashPos?.perStore
+    ? (cashPos.perStore as any[]).filter((s: any) => s.storeId === Number(locFilter)).reduce((sum: number, s: any) => sum + toNum(s.net), 0)
+    : toNum(cashPos?.total);
 
   /* ── Derived values ───────────────────────────────────── */
 
@@ -397,6 +432,157 @@ export default function Dashboard() {
     return "bg-yellow-100 text-yellow-700 border-yellow-200";
   }
 
+  /* ── Performance Hub adapter — map existing real data → the Hub contract.
+     No backend change: every value comes from queries already loaded above.
+     Series the base data can't provide (per-metric sparklines, aging-over-time)
+     are omitted → the Hub renders its graceful placeholder for those. ── */
+  const revenueToday = cashToday + creditSalesToday;
+  const targetPct = revenueToday > 0 ? Math.round((profitFromCash / revenueToday) * 100) : 0; // profit-margin proxy (no daily-target field yet)
+  const agingDebtsTotal = paymentReminders
+    .filter((r: any) => toNum(r.maxDaysOverdue) > 0)
+    .reduce((s: number, r: any) => s + toNum(r.outstanding), 0);
+
+  const taskArr = Array.isArray(tasksData) ? tasksData : [];
+  const mapTask = (t: any) => ({
+    title: t.title,
+    date: t.dueDate || t.completedAt || t.createdAt || "",
+    assignee: t.assignedToName || undefined,
+  });
+
+  const locRows: any[] = (locOverview?.locations ?? []).filter((l: any) => l.storeId !== null);
+  const locDaily: any[] = locOverview?.daily ?? [];
+
+  const perfData: PerformanceHubData = {
+    performance_hub: {
+      revenue_today: revenueToday,
+      profit_today: profitFromCash,
+      cash_position: filteredCashTotal,
+      credit_exposure: totalOutstanding,
+      target_percentage: targetPct,
+      captions: {
+        revenue: locFilter === "all" ? "all locations" : (allStores.find((s: any) => String(s.id) === locFilter)?.nameEn ?? "selected store"),
+        profit: `real · w/ credit ${fmt(profitFromCash + profitFromCredit)}`,
+        cash: `hand ${fmt(toNum(cashPos?.cashInHand))} · bank ${fmt(toNum(cashPos?.bank))}`,
+        credit: `${paymentReminders.length} unpaid invoices`,
+      },
+    },
+    urgent_actions: {
+      low_stock_count: lowStockCount,
+      aging_debts_total: agingDebtsTotal,
+      low_stock_caption: "at / below minimum stock",
+      aging_caption: "on-account, not yet collected",
+    },
+    payment_reminders: paymentReminders.slice(0, 8).map((r: any) => ({
+      customer_name: r.customerName ?? `Customer #${r.customerId ?? "—"}`,
+      invoices: toNum(r.invoiceCount),
+      outstanding: toNum(r.outstanding),
+      status_days: toNum(r.maxDaysOverdue) > 0 ? `${toNum(r.maxDaysOverdue)} overdue` : "due",
+      status_severity: toNum(r.maxDaysOverdue) > 30 ? "high" : toNum(r.maxDaysOverdue) > 0 ? "medium" : "low",
+      phone: r.customerPhone ?? undefined,
+    })),
+    inventory_alerts: lowStockArr.slice(0, 8).map((it) => ({
+      sku_name: it.name,
+      current_stock: it.qty,
+      min_stock: it.minStockQty,
+    })),
+    location_overview: locRows.length
+      ? {
+          range_label: "7 days",
+          totals: {
+            revenue: toNum(locOverview?.totals?.revenue),
+            gross: locOverview?.totals?.cogs != null
+              ? toNum(locOverview?.totals?.revenue) - toNum(locOverview?.totals?.cogs)
+              : toNum(locOverview?.totals?.cashCollected),
+            profit: toNum(locOverview?.totals?.profit),
+          },
+          stores: locRows.map((l: any) => ({
+            name: l.storeName,
+            revenue: toNum(l.revenue),
+            cash: toNum(l.cashCollected),
+            profit: toNum(l.profit),
+          })),
+          top_customers: (locOverview?.topCustomers ?? []).map((c: any) => ({
+            name: c.name,
+            revenue: toNum(c.revenue),
+          })),
+          trend: locDaily.map((d: any) => ({
+            label: String(d.date ?? "").slice(5),
+            revenue: Object.entries(d)
+              .filter(([k]) => k !== "date")
+              .reduce((s: number, [, v]) => s + toNum(v as any), 0),
+          })),
+        }
+      : undefined,
+    insights: {
+      best_customer: { name: bestCustomer?.name ?? "—", spend: toNum(bestCustomer?.total), history_count: 0, subtitle: "today's top customer" },
+      best_product: { name: bestProduct?.name ?? "—", units_sold: toNum(bestProduct?.qty) },
+    },
+    tasks: {
+      done: taskArr.filter((t: any) => t.status === "done").map(mapTask),
+      in_progress: taskArr.filter((t: any) => t.status === "in_progress" || t.status === "open").map(mapTask),
+      review: taskArr.filter((t: any) => t.status === "pending_verification").map(mapTask),
+    },
+  };
+
+  // Segmented Classic ↔ Hub switch — shown in the Classic header and carried into
+  // the Hub's own header via `toolbarExtra` so you can always flip back.
+  const modeSwitch = (
+    <div className="inline-flex items-center rounded-full border border-slate-200 bg-white p-0.5 shadow-sm dark:border-slate-700 dark:bg-slate-800/60">
+      <button
+        onClick={() => setMode("classic")}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors",
+          dashboardMode === "classic" ? "bg-[#1e2a3a] text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+        )}
+      >
+        <BarChart2 className="h-3.5 w-3.5" /> Classic
+      </button>
+      <button
+        onClick={() => setMode("hub")}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-colors",
+          dashboardMode === "hub" ? "bg-[#1e2a3a] text-white" : "text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200"
+        )}
+      >
+        <Gauge className="h-3.5 w-3.5" /> Performance Hub
+      </button>
+    </div>
+  );
+
+  // Store selector + user badge for the Hub header. Theme-adaptive (they render
+  // inside the Hub's dark wrapper). The store filter reuses the SAME locFilter
+  // that already re-scopes revenue / profit / cash / reminders / inventory.
+  const hubToolbar = (
+    <>
+      <select
+        value={locFilter}
+        onChange={(e) => setLocFilter(e.target.value)}
+        title="Filter dashboard by location"
+        className="cursor-pointer rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm outline-none dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200"
+      >
+        {!scopedStoreId && <option value="all">🌍 All locations</option>}
+        {locationOptions.map((s: any) => (
+          <option key={s.id} value={String(s.id)}>{s.nameEn}</option>
+        ))}
+      </select>
+      <span className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+        {user?.name} · <span className="capitalize">{user?.role}</span>
+      </span>
+      {modeSwitch}
+    </>
+  );
+
+  // Performance Hub view — full-screen, theme-aware. Store selector + mode switch ride in its header.
+  if (isAdmin && dashboardMode === "hub") {
+    return (
+      <PerformanceHub
+        data={perfData}
+        toolbarExtra={hubToolbar}
+        dateLabel={format(today, "EEEE, d MMMM yyyy")}
+      />
+    );
+  }
+
   /* ── Render ───────────────────────────────────────────── */
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
@@ -410,6 +596,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {isAdmin && modeSwitch}
           {/* Location filter — admin sees all; a store-assigned manager is locked to theirs */}
           <select
             value={locFilter}
@@ -485,10 +672,10 @@ export default function Dashboard() {
             <p className="text-[11px] text-muted-foreground">real (collected) · imaginary incl. credit</p>
           </Link>
           <Link href="/finance?tab=cash-position" className={cn("rounded-2xl p-4 hover:shadow-sm border-2",
-            toNum(cashPos?.total) < 0 ? "border-red-300 bg-red-50/60" : "border-border")}>
+            filteredCashTotal < 0 ? "border-red-300 bg-red-50/60" : "border-border")}>
             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Cash Position</p>
-            <p className={cn("font-mono font-bold text-2xl mt-0.5", toNum(cashPos?.total) < 0 ? "text-red-600" : "text-emerald-700")}>{fmt(toNum(cashPos?.total))}</p>
-            <p className="text-[11px] text-muted-foreground">{toNum(cashPos?.total) < 0 ? "⚠ overdrawn" : `hand ${fmt(toNum(cashPos?.cashInHand))} · bank ${fmt(toNum(cashPos?.bank))}`}</p>
+            <p className={cn("font-mono font-bold text-2xl mt-0.5", filteredCashTotal < 0 ? "text-red-600" : "text-emerald-700")}>{fmt(filteredCashTotal)}</p>
+            <p className="text-[11px] text-muted-foreground">{filteredCashTotal < 0 ? "⚠ overdrawn" : locFilter !== "all" ? allStores.find((s: any) => String(s.id) === locFilter)?.nameEn || "selected store" : `hand ${fmt(toNum(cashPos?.cashInHand))} · bank ${fmt(toNum(cashPos?.bank))}`}</p>
           </Link>
           <Link href="/customers?filter=credit-outstanding" className={cn("rounded-2xl p-4 hover:shadow-sm border-2",
             totalOutstanding > 0 ? "border-red-200 bg-red-50/50" : "border-border")}>
@@ -515,7 +702,7 @@ export default function Dashboard() {
         return (
           <section>
             <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-3">Receivables Aging</h2>
-            <Link href="/credit-exposure">
+            <Link href="/customers?filter=credit-outstanding">
               <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-4 hover:shadow-md transition cursor-pointer">
                 <div className="flex h-3 rounded-full overflow-hidden mb-3">
                   {buckets.map((b) => b.total > 0 && (
@@ -610,36 +797,34 @@ export default function Dashboard() {
                 <thead>
                   <tr className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
                     <th className="text-left px-4 py-2.5 font-semibold">Customer</th>
-                    <th className="text-left px-4 py-2.5 font-semibold">Invoice</th>
+                    <th className="text-center px-4 py-2.5 font-semibold">Invoices</th>
                     <th className="text-right px-4 py-2.5 font-semibold">Outstanding</th>
                     <th className="text-center px-4 py-2.5 font-semibold hidden sm:table-cell">Status</th>
                     <th className="text-right px-4 py-2.5 font-semibold">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/30">
-              {paymentReminders.map((r) => {
-                const overdue = r.daysOverdue > 0;
+              {paymentReminders.map((r: any) => {
+                const overdue = r.maxDaysOverdue > 0;
                 const waNum = (r.customerPhone || "").replace(/\D/g, "");
-                const waMsg = encodeURIComponent(
-                  `Dear ${r.customerName || "Customer"}, this is a reminder that invoice ${r.number} has an outstanding balance of QAR ${toNum(r.remaining).toFixed(2)}${overdue ? ` (${r.daysOverdue} days overdue)` : ""}. Kindly arrange payment. Thank you — Mamun M Trading.`
-                );
+                const waMsg = encodeURIComponent(r.message || "");
                 return (
-                  <tr key={r.id} className="hover:bg-secondary/10 transition-colors">
+                  <tr key={r.customerId || r.customerName} className="hover:bg-secondary/10 transition-colors">
                     <td className="px-4 py-3 font-semibold text-foreground">
                       <p className="truncate max-w-[180px]">{r.customerName ?? `Customer #${r.customerId ?? "—"}`}</p>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{r.number}</td>
-                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">{fmt(r.remaining)}</td>
+                    <td className="px-4 py-3 text-center text-muted-foreground text-xs font-semibold">{r.invoiceCount}</td>
+                    <td className="px-4 py-3 text-right font-mono font-bold text-red-600">{fmt(r.outstanding)}</td>
                     <td className="px-4 py-3 text-center hidden sm:table-cell">
                       <span
                         className={cn(
                           "text-xs font-bold px-2.5 py-1 rounded-full border",
-                          r.daysOverdue > 30 ? "bg-red-100 text-red-700 border-red-200"
-                            : r.daysOverdue > 0 ? "bg-orange-100 text-orange-700 border-orange-200"
+                          r.maxDaysOverdue > 30 ? "bg-red-100 text-red-700 border-red-200"
+                            : r.maxDaysOverdue > 0 ? "bg-orange-100 text-orange-700 border-orange-200"
                             : "bg-yellow-100 text-yellow-700 border-yellow-200"
                         )}
                       >
-                        {overdue ? `${r.daysOverdue}d overdue` : "due"}
+                        {overdue ? `${r.maxDaysOverdue}d overdue` : "due"}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
@@ -649,7 +834,7 @@ export default function Dashboard() {
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
-                        title="Send WhatsApp reminder"
+                        title="Send account statement via WhatsApp"
                       >
                         <MessageCircle className="w-3.5 h-3.5" /> Remind
                       </a>
@@ -678,7 +863,7 @@ export default function Dashboard() {
           <div className="flex items-center gap-3 mb-2">
             <LayoutGrid className="w-5 h-5 text-red-500" />
             <h2 className="font-bold text-sm uppercase tracking-wider text-foreground">Inventory Alerts</h2>
-            <Link href="/inventory" className="ml-auto text-xs font-semibold text-primary hover:underline">View all</Link>
+            <Link href="/inventory?filter=low-stock" className="ml-auto text-xs font-semibold text-primary hover:underline">View all</Link>
           </div>
           {lowStockCount === 0 ? (
             <p className="text-sm text-green-600 font-medium">All products are well stocked.</p>
@@ -702,7 +887,7 @@ export default function Dashboard() {
                   </Link>
                 ))}
                 {lowStockCount > 6 && (
-                  <Link href="/inventory" className="block text-xs text-muted-foreground mt-1 hover:underline">
+                  <Link href="/inventory?filter=low-stock" className="block text-xs text-muted-foreground mt-1 hover:underline">
                     +{lowStockCount - 6} more…
                   </Link>
                 )}
@@ -754,7 +939,15 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ══ 4b. ADMIN EXTRAS (Module 8C: aging, PDC today, cash by location,
+      {/* ══ 4a. LOCATION OVERVIEW (per store/warehouse workflow — graphical,
+             day/week/month; full report lives in Reports → Locations) ══════ */}
+      {isAdmin && (
+        <div className="mt-4">
+          <LocationOverview compact />
+        </div>
+      )}
+
+      {/* ══ 4b. ADMIN EXTRAS (Module 8C: aging, PDC today,
              supplier dues, expenses, returns, delivery board) ═════════════ */}
       {isAdmin && <AdminExtras reminders={paymentReminders} storeFilter={locFilter === "all" ? null : Number(locFilter)} />}
 
@@ -776,7 +969,7 @@ export default function Dashboard() {
             { label: "View Approvals",   href: "/approvals",         icon: <CheckCircle2 className="w-6 h-6" />, color: "text-amber-600 bg-amber-50 hover:bg-amber-100" },
             { label: "Run Report",       href: "/reports",           icon: <BarChart2  className="w-6 h-6" />, color: "text-indigo-600 bg-indigo-50 hover:bg-indigo-100" },
             { label: "Add Expense",      href: "/expenses",          icon: <CircleDollarSign className="w-6 h-6" />, color: "text-rose-600 bg-rose-50 hover:bg-rose-100" },
-            { label: "Low Stock",        href: "/inventory",         icon: <Package    className="w-6 h-6" />, color: "text-red-600    bg-red-50    hover:bg-red-100"    },
+            { label: "Low Stock",        href: "/inventory?filter=low-stock", icon: <Package    className="w-6 h-6" />, color: "text-red-600    bg-red-50    hover:bg-red-100"    },
           ].map(({ label, href, icon, color }) => (
             <Link key={href} href={href}>
               <div
