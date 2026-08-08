@@ -1142,24 +1142,24 @@ export default function Reports() {
         {/* Hero stats */}
         {!topProdLoading && products.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-            <button onClick={() => setActiveTab("daily-sales")} className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 dark:from-blue-600 dark:to-cyan-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
+            <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 dark:from-blue-600 dark:to-cyan-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30">
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-100 mb-1">Total qty sold</p>
               <p className="text-2xl font-bold tabular-nums">{totalQtySold.toLocaleString()}</p>
               <p className="text-xs text-blue-200 mt-1">{products.length} products</p>
-            </button>
+            </div>
             {isAdmin && (
-              <button onClick={() => setActiveTab("daily-sales")} className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
+              <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30">
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-100 mb-1">Total revenue</p>
                 <p className="text-2xl font-bold tabular-nums">{fmtQAR(totalRevenue)}</p>
                 <p className="text-xs text-emerald-200 mt-1">from top sellers</p>
-              </button>
+              </div>
             )}
-            <button onClick={() => nav(`/inventory?search=${encodeURIComponent(products[0]?.name ?? "")}`)} className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
+            <button onClick={() => nav(`/inventory?filter=low-stock&search=${encodeURIComponent(products[0]?.name ?? "")}`)} className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
               <p className="text-xs font-semibold uppercase tracking-wider text-amber-100 mb-1">Best seller</p>
               <p className="text-lg font-bold leading-tight truncate">{products[0]?.name ?? "—"}</p>
               <p className="text-xs text-amber-200 mt-1">{products[0]?.qtySold ?? 0} units</p>
             </button>
-            <button onClick={() => nav("/inventory?filter=low-stock")} className={cn("rounded-2xl p-5 shadow-lg text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer", outOfStock > 0 ? "bg-gradient-to-br from-red-500 to-rose-600 dark:from-red-600 dark:to-rose-700 text-white shadow-red-500/20 dark:shadow-red-900/30" : "bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700 text-white shadow-green-500/20 dark:shadow-green-900/30")}>
+            <button onClick={() => nav("/inventory?filter=out-of-stock")} className={cn("rounded-2xl p-5 shadow-lg text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer", outOfStock > 0 ? "bg-gradient-to-br from-red-500 to-rose-600 dark:from-red-600 dark:to-rose-700 text-white shadow-red-500/20 dark:shadow-red-900/30" : "bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700 text-white shadow-green-500/20 dark:shadow-green-900/30")}>
               <p className={cn("text-xs font-semibold uppercase tracking-wider mb-1", outOfStock > 0 ? "text-red-100" : "text-green-100")}>Out of stock</p>
               <p className="text-2xl font-bold tabular-nums">{outOfStock}</p>
               <p className={cn("text-xs mt-1", outOfStock > 0 ? "text-red-200" : "text-green-200")}>{outOfStock > 0 ? "need reorder" : "all stocked"}</p>

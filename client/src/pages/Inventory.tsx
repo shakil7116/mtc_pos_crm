@@ -1338,11 +1338,14 @@ function LowStockTab({
   stores,
   products,
   suppliers,
+  initialFilter,
 }: {
   stores: StoreItem[];
   products: Product[];
   suppliers: Supplier[];
+  initialFilter?: "out-of-stock";
 }) {
+  const [showOnly, setShowOnly] = useState<"all" | "out-of-stock">(initialFilter ?? "all");
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjPrefill, setAdjPrefill] = useState<{
     productId?: number;
@@ -1484,12 +1487,16 @@ function LowStockTab({
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <AlertTriangle className="w-5 h-5 text-orange-500" />
             <p className="text-sm font-medium text-orange-700">
               {enriched.length} product{enriched.length !== 1 ? "s" : ""} need
               restocking
             </p>
+            <div className="flex gap-1 ml-auto">
+              <Button size="sm" variant={showOnly === "all" ? "default" : "outline"} onClick={() => setShowOnly("all")} className="h-7 text-xs">All</Button>
+              <Button size="sm" variant={showOnly === "out-of-stock" ? "default" : "outline"} onClick={() => setShowOnly("out-of-stock")} className="h-7 text-xs">Out of Stock Only</Button>
+            </div>
           </div>
 
           <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
@@ -1508,7 +1515,7 @@ function LowStockTab({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {enriched.map((row) => (
+                  {enriched.filter((row) => showOnly === "all" || row.qty <= 0).map((row) => (
                     <TableRow
                       key={row.id}
                       className={cn(rowBg(row.qty, row.minStockQty))}
@@ -2322,12 +2329,10 @@ export default function Inventory() {
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
-  // Dashboard "N products low on stock" widget deep-links here with ?filter=low-stock →
-  // open the Low Stock tab (same /api/inventory/low-stock source as the widget count).
-  // Plain sidebar nav has no param → defaults to All Stock.
   const urlSearch = useSearch();
+  const urlFilter = new URLSearchParams(urlSearch).get("filter");
   const [tab, setTab] = useState(
-    () => (new URLSearchParams(urlSearch).get("filter") === "low-stock" ? "low" : "stock"),
+    () => (urlFilter === "low-stock" || urlFilter === "out-of-stock" ? "low" : "stock"),
   );
 
   return (
@@ -2388,6 +2393,7 @@ export default function Inventory() {
             stores={stores}
             products={products}
             suppliers={suppliers}
+            initialFilter={urlFilter === "out-of-stock" ? "out-of-stock" : undefined}
           />
         </TabsContent>
 
