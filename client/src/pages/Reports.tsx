@@ -52,6 +52,7 @@ type DailySalesResponse = {
   returnsTotal: number;
   cogs?: number;
   grossProfit?: number;
+  realProfit?: number;
   marginPct?: number;
 };
 
@@ -87,11 +88,12 @@ type TopCustomer = {
   outstanding: number | string;
 };
 
+type TopProductRaw = Record<string, unknown>;
 type TopProduct = {
   productId: number;
   name: string;
   qtySold: number;
-  revenue?: number | string;
+  revenue: number;
   stockLeft: number;
 };
 
@@ -375,9 +377,17 @@ export default function Reports() {
 
   /* ── 5. Top Products ─── */
   const { data: topProducts, isLoading: topProdLoading } = useQuery<TopProduct[]>({
-    queryKey: ["/api/reports/top-products", start, end],
-    queryFn: () => fetch(`/api/reports/top-products?start=${start}&end=${end}`).then((r) => r.json()),
+    queryKey: ["/api/reports/top-products", start, end, storeParam],
+    queryFn: () => fetch(`/api/reports/top-products?start=${start}&end=${end}${storeParam ? `&storeId=${storeParam}` : ""}`).then((r) => r.json()),
     enabled: activeTab === "top-products",
+    select: (raw: TopProductRaw[]): TopProduct[] =>
+      (Array.isArray(raw) ? raw : []).map((r: any) => ({
+        productId: toNum(r.productId),
+        name: String(r.name || r.description || "Unknown"),
+        qtySold: toNum(r.qtySold ?? r.totalQty),
+        revenue: toNum(r.revenue ?? r.totalAmount),
+        stockLeft: toNum(r.stockLeft),
+      })),
   });
 
   /* ── 6. Inventory ─── */
@@ -605,6 +615,9 @@ export default function Reports() {
                   <div className="rounded-xl border border-border/40 bg-card p-4">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Gross profit</p>
                     <p className="text-lg font-bold text-purple-600 dark:text-purple-400 tabular-nums">{fmtQAR(dailySales?.grossProfit)}</p>
+                    {dailySales?.realProfit !== dailySales?.grossProfit && (
+                      <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">Real (paid): {fmtQAR(dailySales?.realProfit)}</p>
+                    )}
                   </div>
                   <div className="rounded-xl border border-border/40 bg-card p-4">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Margin</p>
@@ -1105,9 +1118,9 @@ export default function Reports() {
   ───────────────────────────────────────────────────────────────────────── */
   const TopProductsTab = () => {
     const products = Array.isArray(topProducts) ? topProducts : [];
-    const totalQtySold = products.reduce((s, p) => s + (Number.isNaN(p.qtySold) || !p.qtySold ? 0 : p.qtySold), 0);
-    const totalRevenue = products.reduce((s, p) => s + toNum(p.revenue), 0);
-    const maxQty = Math.max(...products.map(p => Number.isNaN(p.qtySold) || !p.qtySold ? 0 : p.qtySold), 1);
+    const totalQtySold = products.reduce((s, p) => s + p.qtySold, 0);
+    const totalRevenue = products.reduce((s, p) => s + p.revenue, 0);
+    const maxQty = Math.max(...products.map(p => p.qtySold), 1);
     const outOfStock = products.filter(p => p.stockLeft === 0).length;
 
     function exportCSV() {
@@ -1129,28 +1142,28 @@ export default function Reports() {
         {/* Hero stats */}
         {!topProdLoading && products.length > 0 && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-            <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 dark:from-blue-600 dark:to-cyan-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30">
+            <button onClick={() => setActiveTab("daily-sales")} className="rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-600 dark:from-blue-600 dark:to-cyan-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-100 mb-1">Total qty sold</p>
               <p className="text-2xl font-bold tabular-nums">{totalQtySold.toLocaleString()}</p>
               <p className="text-xs text-blue-200 mt-1">{products.length} products</p>
-            </div>
+            </button>
             {isAdmin && (
-              <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30">
+              <button onClick={() => setActiveTab("daily-sales")} className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-100 mb-1">Total revenue</p>
                 <p className="text-2xl font-bold tabular-nums">{fmtQAR(totalRevenue)}</p>
                 <p className="text-xs text-emerald-200 mt-1">from top sellers</p>
-              </div>
+              </button>
             )}
-            <div className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30">
+            <button onClick={() => nav(`/inventory?search=${encodeURIComponent(products[0]?.name ?? "")}`)} className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
               <p className="text-xs font-semibold uppercase tracking-wider text-amber-100 mb-1">Best seller</p>
               <p className="text-lg font-bold leading-tight truncate">{products[0]?.name ?? "—"}</p>
               <p className="text-xs text-amber-200 mt-1">{products[0]?.qtySold ?? 0} units</p>
-            </div>
-            <div className={cn("rounded-2xl p-5 shadow-lg", outOfStock > 0 ? "bg-gradient-to-br from-red-500 to-rose-600 dark:from-red-600 dark:to-rose-700 text-white shadow-red-500/20 dark:shadow-red-900/30" : "bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700 text-white shadow-green-500/20 dark:shadow-green-900/30")}>
+            </button>
+            <button onClick={() => nav("/inventory?filter=low-stock")} className={cn("rounded-2xl p-5 shadow-lg text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer", outOfStock > 0 ? "bg-gradient-to-br from-red-500 to-rose-600 dark:from-red-600 dark:to-rose-700 text-white shadow-red-500/20 dark:shadow-red-900/30" : "bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700 text-white shadow-green-500/20 dark:shadow-green-900/30")}>
               <p className={cn("text-xs font-semibold uppercase tracking-wider mb-1", outOfStock > 0 ? "text-red-100" : "text-green-100")}>Out of stock</p>
               <p className="text-2xl font-bold tabular-nums">{outOfStock}</p>
               <p className={cn("text-xs mt-1", outOfStock > 0 ? "text-red-200" : "text-green-200")}>{outOfStock > 0 ? "need reorder" : "all stocked"}</p>
-            </div>
+            </button>
           </div>
         )}
 
