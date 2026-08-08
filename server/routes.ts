@@ -17,13 +17,16 @@ import {
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
   resolveDeliveryNote, pickDeliveryNote, authorizeDeliveryNote, markDeliveryNoteDelivered,
+  signWarehouseRelease, reportDeliveryDamage,
   getProductActivity, getReorderSuggestions,
-  createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure, getCustomerOverview,
+  createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure, getCustomerOverview, getLocationOverview,
   createNotification, getNotifications, markNotificationRead, markAllNotificationsRead,
+  getArrangementNote, createArrangementCorrection,
   getMessages, logMessage, getLastMessageDate,
   createSupplierOrder, getSupplierOrders, updateSupplierOrder, receiveSupplierOrder,
   updateSupplierOrderStatus, receiveSupplierOrderItems, createSupplierReturn,
   getSupplierReturns, updateSupplierReturnStatus,
+  createSupplierPayment, getSupplierPayments, getSupplierLedger,
   createExpense, getExpenses, updateExpense, deleteExpense, checkRecurringExpenses,
   createWarehouseIssue, getWarehouseIssues, updateWarehouseIssue,
   setChequeStatus, checkPdcAlerts, getChequeDetail, setChequePhoto,
@@ -40,6 +43,7 @@ import {
   getModuleDefinitions, createModuleDefinition, updateModuleDefinition, deleteModuleDefinition,
   getCustomRecords, createCustomRecord, updateCustomRecord, deleteCustomRecord,
   getDocumentCounters, setNextDocNumber, updateCounterFormat, getNumberingAudit,
+  getStaffPayroll, createStaffPayrollEntry, deleteStaffPayrollEntry, updateUserSalary, getStaffPayrollSummary,
 } from "./storage";
 import { normalizeRole } from "@shared/schema";
 import {
@@ -762,6 +766,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       if (body.creditOverride && !["admin", "manager"].includes(reqRole(req))) {
         body.creditOverride = false;
       }
+      const locked = lockedStoreId(req);
+      if (locked && body.type === "INV") body.storeId = locked;
       const doc = await createDocument(body);
       res.status(201).json(doc);
     } catch (err) {
@@ -791,14 +797,23 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.put("/api/documents/:id", async (req: Request, res: Response) => {
     try {
       const id = Number(req.params.id);
+      const before: any = await getDocument(id);
+      if (!before) return res.status(404).json({ message: "Document not found" });
+
+      // 2-day edit window
+      const created = before.createdAt ? new Date(before.createdAt).getTime() : 0;
+      const ageHours = created ? (Date.now() - created) / 3_600_000 : 0;
+      if (created && ageHours > 48) {
+        return res.status(400).json({ message: "Edit window expired — documents can only be modified within 2 days of creation." });
+      }
+
       const { items, ...docData } = req.body;
-      const before: any = await getDocument(id); // capture old items BEFORE they are replaced
       await updateDocument(id, docData);
       if (items && Array.isArray(items)) {
         await updateDocumentItems(id, items);
         // Reconcile inventory on INV edits so stock never desyncs: reverse the old
         // line quantities and apply the new ones (net delta per product).
-        if (before && before.type === "INV" && before.storeId) {
+        if (before.type === "INV" && before.storeId) {
           const sum = (rows: any[]) => {
             const m: Record<number, number> = {};
             for (const it of rows || []) if (it?.productId) m[it.productId] = (m[it.productId] || 0) + parseFloat(String(it.qty || 0));
@@ -808,8 +823,32 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
           const newQ = sum(items);
           const pids = Array.from(new Set([...Object.keys(oldQ), ...Object.keys(newQ)].map(Number)));
           for (const pid of pids) {
-            const delta = (oldQ[pid] || 0) - (newQ[pid] || 0); // stock was −old; want −new ⇒ adjust by (old−new)
+            const delta = (oldQ[pid] || 0) - (newQ[pid] || 0);
             if (delta !== 0) await adjustStock(pid, before.storeId, delta, "adjustment", "Invoice edit reconcile", id);
+          }
+
+          // Auto-refund when edit reduces the total (e.g. 5 rolls → 4 rolls)
+          const oldTotal = parseFloat(String(before.total || 0));
+          const newTotal = parseFloat(String(docData.total || 0));
+          const refundAmount = oldTotal - newTotal;
+          if (refundAmount > 0.005) {
+            await createPayment({
+              documentId: id,
+              customerId: before.customerId,
+              amount: String(refundAmount),
+              method: "Cash",
+              date: new Date().toISOString().slice(0, 10),
+              isRefund: true,
+              recordedBy: (req as any).user?.id ?? docData.createdBy ?? null,
+              notes: `Auto-refund: invoice edited (total ${oldTotal.toFixed(2)} → ${newTotal.toFixed(2)})`,
+            } as any);
+            await logCashflow({
+              direction: "out", category: "Edit Refund",
+              amount: refundAmount, refType: "document", refId: id,
+              storeId: before.storeId,
+              notes: `Edit refund on ${before.number} (${oldTotal.toFixed(2)} → ${newTotal.toFixed(2)})`,
+              createdBy: (req as any).user?.id ?? docData.createdBy,
+            });
           }
         }
       }
@@ -861,6 +900,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       // Product location paths for the warehouse pick list.
       const prods = await getProducts();
       const storesList = await getStores();
+      const custList = await getCustomers();
+      const custPhone = new Map((custList as any[]).map((c) => [c.id, c.phone || null]));
       const storeName = (id: any) => (storesList as any[]).find((s) => s.id === id)?.nameEn || null;
       const prodMap = new Map((prods as any[]).map((p) => [p.id, p]));
       const locPath = (pid: any) => {
@@ -877,8 +918,19 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
           return {
             id: inv.id, number: inv.number, dnId: dn?.id ?? null, dnNumber: dn?.number ?? null,
             customerName: inv.customerName, customerId: inv.customerId,
+            customerPhone: custPhone.get(inv.customerId) ?? null,
             deliveryAddress: inv.deliveryAddress, deliveryInstructions: inv.deliveryInstructions || null,
+            mapLink: (dn?.mapLink ?? inv.mapLink) ?? null,
             driverId: (dn?.driverId ?? inv.driverId) ?? null, authorizedBy: dn?.authorizedBy ?? null,
+            warehouseSignedBy: dn?.warehouseSignedBy ?? null,
+            signedDnUrl: dn?.signedDnUrl ?? null,
+            damageReported: dn?.damageReported ?? false,
+            damageNotes: dn?.damageNotes ?? null,
+            damagePhoto: dn?.damagePhoto ?? null,
+            damageReportedAt: dn?.damageReportedAt ?? null,
+            damageResolution: dn?.damageResolution ?? null,
+            damageResolutionNotes: dn?.damageResolutionNotes ?? null,
+            damageResolvedAt: dn?.damageResolvedAt ?? null,
             expectedDeliveryDate: dn?.expectedDeliveryDate ?? null,
             storeId: inv.storeId, date: inv.date, deliveryStatus: stage,
             total: normalizeRoleStrict(req) === "driver" ? null : inv.total,
@@ -955,8 +1007,70 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
           createdBy: uid,
         } as any);
       }
-      const updated = await markDeliveryNoteDelivered(dn.id, uid);
+      const updated = await markDeliveryNoteDelivered(dn.id, uid, {
+        receiverName: req.body?.receiverName,
+        receiverPhone: req.body?.receiverPhone,
+        signedDnImage: req.body?.signedDnImage,
+      });
       res.json({ ok: true, deliveryNote: { id: dn.id, number: dn.number, status: updated.deliveryStatus } });
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Warehouse manager signs / releases the load (validates the physical DN at dispatch).
+  app.post("/api/documents/:id/sign-warehouse", async (req: Request, res: Response) => {
+    if (!["warehouse_manager", "warehouse", "admin", "manager"].includes(reqRole(req)))
+      return res.status(403).json({ message: "Only the warehouse manager (or admin/manager) can sign the release." });
+    try {
+      const dn = await resolveDeliveryNote(Number(req.params.id));
+      if (!dn) return res.status(404).json({ message: "No delivery note found for this document." });
+      res.json(await signWarehouseRelease(dn.id, req.user?.id || undefined));
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Driver reports damage found in transit / on delivery → flags the DN + alerts a manager.
+  app.post("/api/documents/:id/report-damage", async (req: Request, res: Response) => {
+    try {
+      const dn = await resolveDeliveryNote(Number(req.params.id));
+      if (!dn) return res.status(404).json({ message: "No delivery note found for this document." });
+      res.json(await reportDeliveryDamage(dn.id, req.user?.id || undefined, {
+        notes: req.body?.notes, photo: req.body?.photo,
+      }));
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Driver/manager: resolve a damage report — return to warehouse, accept with note, or request redelivery.
+  app.post("/api/documents/:id/resolve-damage", async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const { resolution, notes } = req.body || {};
+      if (!["returned_to_warehouse", "customer_accepted", "redelivery_requested"].includes(resolution))
+        return res.status(400).json({ message: "resolution must be returned_to_warehouse, customer_accepted, or redelivery_requested" });
+      const dn = await resolveDeliveryNote(id);
+      if (!dn) return res.status(404).json({ message: "No delivery note found for this document." });
+      if (!dn.damageReported) return res.status(400).json({ message: "No damage reported on this delivery." });
+      const uid = req.user?.id || undefined;
+      await updateDocument(dn.id, {
+        damageResolution: resolution,
+        damageResolutionNotes: (notes || "").trim() || null,
+        damageResolvedAt: new Date(),
+        damageResolvedBy: uid || null,
+      } as any);
+      await logEdit({ documentId: dn.id, userId: uid, field: "damageResolution", oldValue: "unresolved", newValue: resolution, reason: `Damage resolved: ${resolution}${notes ? " — " + notes.trim().slice(0, 100) : ""}` });
+      const labels: Record<string, string> = { returned_to_warehouse: "returned to warehouse", customer_accepted: "accepted by customer", redelivery_requested: "redelivery requested" };
+      await createNotification({
+        targetRole: "manager", type: "damage_resolved", title: `Damage resolved — ${labels[resolution]}`,
+        message: `${dn.number}: ${labels[resolution]}${notes ? ". " + notes.trim().slice(0, 120) : ""}`,
+        link: `/documents/${dn.linkedDocId || dn.id}`, entityType: "document", entityId: dn.id, createdBy: uid,
+      });
+      if (resolution === "redelivery_requested" && dn.linkedDocId) {
+        await updateDocument(dn.linkedDocId, { deliveryStatus: "pending_pick" } as any);
+        await createNotification({
+          targetRole: "warehouse", type: "redelivery_pick", title: "Redelivery needed",
+          message: `${dn.number} damaged — new pick required for redelivery.`,
+          link: `/documents/${dn.linkedDocId}`, entityType: "document", entityId: dn.linkedDocId, createdBy: uid,
+        });
+      }
+      res.json({ ok: true, resolution, dn: await getDocument(dn.id) });
     } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
 
@@ -999,6 +1113,25 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       }
 
       res.status(201).json(payment);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // Recalculate payment status for a single invoice from its actual payment rows.
+  // Fixes invoices stuck at "partial"/"unpaid" due to the old status bug.
+  app.post("/api/documents/:id/recalculate-status", async (req: Request, res: Response) => {
+    try {
+      const doc = await getDocument(Number(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+      if (doc.type !== "INV") return res.status(400).json({ message: "Only invoices have payment status" });
+      if (doc.status === "void" || doc.status === "returned") return res.json({ status: doc.status, message: "Terminal status, not recalculated" });
+      const allPays = await getPayments(doc.id);
+      const totalPaid = allPays.reduce((s, p) => s + ((p as any).isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+      const total = parseFloat(doc.total || "0");
+      const status = total > 0 && totalPaid >= total - 0.005 ? "paid" : totalPaid > 0.005 ? "partial" : "unpaid";
+      await updateDocument(doc.id, { status });
+      res.json({ status, totalPaid, total });
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
@@ -1171,7 +1304,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try {
       const locked = lockedStoreId(req);
       const storeId = locked ?? (req.query.storeId ? Number(req.query.storeId) : undefined);
-      const rows = await getInventory(storeId);
+      const includeWarehouses = req.query.includeWarehouses === "true";
+      const rows = await getInventory(storeId, includeWarehouses);
       res.json(rows);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -1211,6 +1345,33 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.get("/api/inventory/reorder-suggestions", async (req: Request, res: Response) => {
     try {
       res.json(await getReorderSuggestions());
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // ARRANGEMENT NOTES (auto-split pick notes per invoice)
+  // ══════════════════════════════════════════════════════════════
+
+  app.get("/api/documents/:id/arrangement-note", async (req: Request, res: Response) => {
+    try {
+      const result = await getArrangementNote(Number(req.params.id));
+      if (!result) return res.status(404).json({ message: "No arrangement note for this document" });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  app.post("/api/arrangement-notes/:noteId/corrections", async (req: Request, res: Response) => {
+    try {
+      const corr = await createArrangementCorrection({
+        noteId: Number(req.params.noteId),
+        ...req.body,
+        correctedBy: req.user?.id,
+      });
+      res.status(201).json(corr);
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
@@ -1567,11 +1728,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/supplier-returns", async (req: Request, res: Response) => {
     try {
       const uid = (req.user?.id || undefined);
-      const { poId, supplierId, storeId, returnType, items, notes, refundAmount } = req.body || {};
+      const { poId, supplierId, storeId, returnType, refundMode, refundMethod, items, notes, refundAmount } = req.body || {};
       if (!["initiated", "rejected_delivery"].includes(returnType))
         return res.status(400).json({ message: "returnType must be 'initiated' or 'rejected_delivery'" });
       res.status(201).json(await createSupplierReturn({
-        poId, supplierId, storeId, returnType, items: items || [], notes, refundAmount, createdBy: uid,
+        poId, supplierId, storeId, returnType, refundMode, refundMethod, items: items || [], notes, refundAmount, createdBy: uid,
       }));
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
@@ -1581,9 +1742,104 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/supplier-returns/:id/status", async (req: Request, res: Response) => {
     try {
       const uid = (req.user?.id || undefined);
-      res.json(await updateSupplierReturnStatus(Number(req.params.id), String(req.body?.status || ""), uid));
+      res.json(await updateSupplierReturnStatus(Number(req.params.id), String(req.body?.status || ""), uid, req.body?.refundMethod));
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ── Supplier Payments ──────────────────────────────────────────
+  app.get("/api/supplier-payments", async (req: Request, res: Response) => {
+    try {
+      res.json(await getSupplierPayments({
+        supplierId: req.query.supplierId ? Number(req.query.supplierId) : undefined,
+      }));
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.post("/api/supplier-payments", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(normalizeRoleStrict(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try {
+      const uid = req.user?.id || undefined;
+      const { supplierId, poId, amount, method, date, reference, supplierInvoiceNumber, supplierInvoiceUrl, receiptUrl, chequeId, bankName, notes, override, overrideReason } = req.body || {};
+      if (!supplierId || !(Number(amount) > 0) || !date)
+        return res.status(400).json({ message: "Supplier, amount, and date are required." });
+      const row = await createSupplierPayment({
+        supplierId, poId, amount: Number(amount), method: method || "Cash", date,
+        reference, supplierInvoiceNumber, supplierInvoiceUrl, receiptUrl, chequeId, bankName, notes,
+        createdBy: uid, override, overrideReason,
+      });
+      res.status(201).json(row);
+    } catch (err) {
+      if (sendFundsError(res, err)) return;
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get("/api/suppliers/:id/ledger", async (req: Request, res: Response) => {
+    try {
+      res.json(await getSupplierLedger(Number(req.params.id)));
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  // AI supplier invoice scanner — upload invoice photo, extracts supplier name + items + amounts
+  app.post("/api/ai/scan-supplier-invoice", upload.single("file"), async (req: Request, res: Response) => {
+    try {
+      const file = req.file;
+      if (!file) return res.status(400).json({ message: "No file uploaded" });
+      if (!process.env.GROQ_API_KEY) return res.status(503).json({ message: "AI scanning unavailable (no GROQ_API_KEY)" });
+
+      const imageBuffer = fs.readFileSync(file.path);
+      const base64 = imageBuffer.toString("base64");
+      const ext = (file.originalname || "").split(".").pop()?.toLowerCase() || "png";
+      const mimeType = ext === "jpg" ? "image/jpeg" : `image/${ext}`;
+
+      const visionRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "meta-llama/llama-4-scout-17b-16e-instruct",
+          messages: [{
+            role: "user",
+            content: [
+              { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } },
+              { type: "text", text: `This is a SUPPLIER INVOICE. Extract the following from this invoice image:
+1. supplierName: the company/person who issued this invoice
+2. invoiceNumber: the invoice number/reference
+3. invoiceDate: date on the invoice (YYYY-MM-DD format)
+4. totalAmount: total amount on the invoice
+5. items: array of line items with {description, qty, unit, unitPrice, amount}
+
+Return ONLY valid JSON in this format:
+{"supplierName":"","invoiceNumber":"","invoiceDate":"","totalAmount":0,"items":[{"description":"","qty":1,"unit":"PCS","unitPrice":0,"amount":0}]}
+ALL item descriptions in UPPERCASE. No explanation.` }
+            ]
+          }],
+          max_tokens: 3000,
+        }),
+      });
+
+      const visionData = await visionRes.json();
+      const content = visionData.choices?.[0]?.message?.content || "{}";
+      const cleaned = content.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
+      if (file.path && fs.existsSync(file.path)) fs.unlinkSync(file.path);
+
+      if (parsed.items) {
+        parsed.items = parsed.items.map((item: any) => ({
+          description: String(item.description || "ITEM").toUpperCase(),
+          qty: Number(item.qty || item.quantity || 1),
+          unit: String(item.unit || "PCS").toUpperCase(),
+          unitPrice: Number(item.unitPrice || item.price || 0),
+          amount: Number(item.amount || 0),
+        }));
+      }
+      res.json(parsed);
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -1741,9 +1997,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     } catch (err) { res.status(400).json({ message: String(err) }); }
   });
 
-  app.get("/api/cashflow/position", async (_req: Request, res: Response) => {
-    try { res.json(await getCashPosition()); }
-    catch (err) { res.status(500).json({ message: String(err) }); }
+  app.get("/api/cashflow/position", async (req: Request, res: Response) => {
+    try {
+      const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
+      res.json(await getCashPosition(storeId));
+    } catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
   // ══════════════════════════════════════════════════════════════
@@ -1915,7 +2173,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       }
       if (!recommendedActions.length) recommendedActions.push("No urgent actions — receivables, stock and collection risk all look healthy.");
 
-      const pos = await getCashPosition();
+      const pos = await getCashPosition(storeId);
       const summary = {
         period: { start, end }, storeId,
         totalSales: cashSales + creditSales + pdcSales,
@@ -2219,6 +2477,17 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
+  // Location Overview — per store/warehouse workflow (revenue, cash, credit,
+  // expenses, returns, profit) + daily revenue series, over a date range.
+  app.get("/api/reports/location-overview", async (req: Request, res: Response) => {
+    if (!reportGate(req, res)) return;
+    try {
+      const start = (req.query.start as string) || new Date().toISOString().slice(0, 10);
+      const end = (req.query.end as string) || start;
+      res.json(await getLocationOverview(start, end));
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
   // Customer overview — money-behaviour per customer (due/paid/PDC + rating) for the
   // Customers page segments + CSV export. Anyone who can open Customers may read it.
   app.get("/api/reports/customer-overview", async (req: Request, res: Response) => {
@@ -2487,14 +2756,14 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         amount: pendingCheques.reduce((s, c) => s + parseFloat(c.amount || "0"), 0),
       };
 
-      // Customer payment reminders — unpaid invoices, oldest first, with phone
+      // Customer payment reminders — grouped by customer (1 row per customer,
+      // with all their unpaid invoices rolled up into an account statement).
       const unpaidRows = await db.select().from(documents)
         .where(and(eq(documents.type, "INV"), ne(documents.status, "paid"), ne(documents.status, "void"), ne(documents.status, "returned")));
       const custList = await db.select().from(customersTable);
       const custMap: Record<number, any> = {};
       for (const c of custList as any[]) custMap[c.id] = c;
 
-      // Batch payments for ALL unpaid invoices in one query (no N+1 on the hot summary path).
       const unpaidReal = (unpaidRows as any[]).filter((d) => isReal(d) && inStore(d));
       const upIds = unpaidReal.map((d) => d.id);
       const upPayRows = upIds.length ? await db.select().from(paymentsTable).where(inArray(paymentsTable.documentId, upIds)) : [];
@@ -2503,7 +2772,16 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         const amt = parseFloat(p.amount || "0") * (p.isRefund ? -1 : 1);
         paidByDoc[p.documentId] = (paidByDoc[p.documentId] || 0) + amt;
       }
-      const reminders: any[] = [];
+
+      const bizName = s?.storeNameEn || "MAMUN M TRADING AND CONTRACTING W.L.L";
+      const bizPhone = s?.phone || "+974 30703722";
+      const fmtQar2 = (n: number) =>
+        `QAR ${Number(n || 0).toLocaleString("en-QA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+      // Group invoices by customer — only real customer accounts (customerId != null).
+      // Walk-in / cash / orphan invoices (no customerId) still count toward totalOutstanding
+      // but are excluded from reminders since there is nobody to contact.
+      const byCustomer = new Map<number, { customerId: number; customerName: string; customerPhone: string | null; invoices: any[]; outstanding: number; maxDaysOverdue: number }>();
       let totalOutstanding = 0;
       for (const d of unpaidReal) {
         const paid = paidByDoc[d.id] || 0;
@@ -2511,13 +2789,63 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         if (remaining <= 0.005) continue;
         const daysOverdue = Math.floor((Date.parse(today) - Date.parse(d.date)) / 86400000);
         totalOutstanding += remaining;
-        const cust = d.customerId ? custMap[d.customerId] : null;
+
+        if (!d.customerId) continue;
+        const key = d.customerId;
+        let g = byCustomer.get(key);
+        if (!g) {
+          const cust = custMap[d.customerId];
+          g = { customerId: d.customerId, customerName: cust?.name || d.customerName || "Customer", customerPhone: cust?.phone ?? cust?.whatsapp ?? null, invoices: [], outstanding: 0, maxDaysOverdue: 0 };
+          byCustomer.set(key, g);
+        }
+        g.invoices.push({ id: d.id, number: d.number, date: d.date, remaining, daysOverdue });
+        g.outstanding += remaining;
+        g.maxDaysOverdue = Math.max(g.maxDaysOverdue, daysOverdue);
+      }
+
+      const reminders: any[] = [];
+      for (const g of Array.from(byCustomer.values())) {
+        g.invoices.sort((a: any, b: any) => (a.date || "").localeCompare(b.date || ""));
+        const count = g.invoices.length;
+        const totalStr = fmtQar2(g.outstanding);
+        const lines = g.invoices
+          .map((inv: any) => {
+            const od = inv.daysOverdue > 0 ? ` · ${inv.daysOverdue}d overdue` : "";
+            return `• ${inv.number} (${inv.date}) — ${fmtQar2(inv.remaining)}${od}`;
+          })
+          .join("\n");
+
+        let tone = "This is a gentle reminder regarding your account balance.";
+        if (g.maxDaysOverdue > 90) tone = "Our records show an overdue balance that needs your immediate attention.";
+        else if (g.maxDaysOverdue > 30) tone = "This is a friendly reminder regarding your pending account balance.";
+
+        const message =
+`Dear ${g.customerName},
+
+${tone}
+
+ACCOUNT STATEMENT — ${bizName}
+As of ${today}
+Outstanding balance: ${totalStr} across ${count} invoice${count !== 1 ? "s" : ""}.
+
+Pending invoice${count !== 1 ? "s" : ""}:
+${lines}
+
+TOTAL DUE: ${totalStr}
+
+Kindly arrange payment at your earliest convenience. For any queries, contact us at ${bizPhone}.
+
+Thank you for your business.
+${bizName}`;
+
         reminders.push({
-          id: d.id, number: d.number, customerId: d.customerId, customerName: d.customerName,
-          customerPhone: cust?.phone ?? null, remaining, daysOverdue,
+          customerId: g.customerId, customerName: g.customerName,
+          customerPhone: g.customerPhone, invoiceCount: count,
+          invoices: g.invoices, outstanding: g.outstanding,
+          maxDaysOverdue: g.maxDaysOverdue, message,
         });
       }
-      reminders.sort((a, b) => b.daysOverdue - a.daysOverdue);
+      reminders.sort((a, b) => b.maxDaysOverdue - a.maxDaysOverdue);
 
       res.json({
         cashSalesToday, creditSalesToday,
@@ -2536,38 +2864,75 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try {
       const start = req.query.start as string | undefined;
       const end = req.query.end as string | undefined;
+      const storeId = req.query.storeId as string | undefined;
 
       const { db } = await import("./db");
-      const { documents, customers: customersTable } = await import("@shared/schema");
-      const { eq, and, gte, lte, desc } = await import("drizzle-orm");
-      const { sql } = await import("drizzle-orm");
+      const { documents, customers: customersTable, payments } = await import("@shared/schema");
+      const { eq, and, gte, lte, isNotNull, ne } = await import("drizzle-orm");
 
-      const conditions: any[] = [eq(documents.type, "INV")];
+      const conditions: any[] = [eq(documents.type, "INV"), isNotNull(documents.customerId)];
       if (start) conditions.push(gte(documents.date, start));
       if (end) conditions.push(lte(documents.date, end));
+      if (storeId) conditions.push(eq(documents.storeId, Number(storeId)));
 
       const docs = await db.select({
         customerId: documents.customerId,
         customerName: documents.customerName,
         total: documents.total,
+        status: documents.status,
       }).from(documents).where(and(...conditions));
 
-      const totals: Record<string, { customerId: number; customerName: string; total: number; invoiceCount: number }> = {};
+      const custIds = [...new Set(docs.map(d => d.customerId!).filter(Boolean))];
+
+      const custRows = custIds.length > 0
+        ? await db.select({ id: customersTable.id, name: customersTable.name })
+            .from(customersTable)
+        : [];
+      const custMap = new Map(custRows.map(c => [c.id, c.name]));
+
+      const payRows = custIds.length > 0
+        ? await db.select({ customerId: payments.customerId, amount: payments.amount, isRefund: payments.isRefund })
+            .from(payments)
+        : [];
+      const paidByCustomer = new Map<number, number>();
+      for (const p of payRows) {
+        if (!p.customerId) continue;
+        const prev = paidByCustomer.get(p.customerId) || 0;
+        const amt = parseFloat(p.amount || "0");
+        paidByCustomer.set(p.customerId, prev + (p.isRefund ? -amt : amt));
+      }
+
+      const totals: Record<number, { customerId: number; name: string; totalPurchases: number; invoiceCount: number; totalInvoiced: number }> = {};
       for (const doc of docs) {
-        const key = String(doc.customerId || doc.customerName);
+        if (!doc.customerId) continue;
+        if (doc.status === "void" || doc.status === "returned") continue;
+        const key = doc.customerId;
         if (!totals[key]) {
           totals[key] = {
-            customerId: doc.customerId || 0,
-            customerName: doc.customerName || "Unknown",
-            total: 0,
+            customerId: key,
+            name: custMap.get(key) || doc.customerName || "Unknown",
+            totalPurchases: 0,
             invoiceCount: 0,
+            totalInvoiced: 0,
           };
         }
-        totals[key].total += parseFloat(doc.total || "0");
+        const amt = parseFloat(doc.total || "0");
+        totals[key].totalPurchases += amt;
+        totals[key].totalInvoiced += amt;
         totals[key].invoiceCount += 1;
       }
 
-      const sorted = Object.values(totals).sort((a, b) => b.total - a.total).slice(0, 20);
+      const sorted = Object.values(totals)
+        .map(t => ({
+          customerId: t.customerId,
+          name: t.name,
+          totalPurchases: t.totalPurchases,
+          invoiceCount: t.invoiceCount,
+          outstanding: Math.max(0, t.totalInvoiced - (paidByCustomer.get(t.customerId) || 0)),
+        }))
+        .sort((a, b) => b.totalPurchases - a.totalPurchases)
+        .slice(0, 20);
+
       res.json(sorted);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -2599,24 +2964,38 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         .innerJoin(documents, eq(documentItemsTable.documentId, documents.id))
         .where(and(...conditions));
 
-      const totals: Record<string, { productId: number | null; description: string; sku: string | null; totalQty: number; totalAmount: number; unit: string }> = {};
+      const safeFloat = (v: any) => {
+        const n = parseFloat(String(v || "0"));
+        return isNaN(n) ? 0 : n;
+      };
+
+      const totals: Record<string, { productId: number | null; name: string; sku: string | null; qtySold: number; revenue: number; unit: string }> = {};
       for (const row of rows) {
         const key = String(row.productId || row.description);
         if (!totals[key]) {
           totals[key] = {
             productId: row.productId || null,
-            description: row.description || "",
+            name: row.description || "",
             sku: row.sku || null,
-            totalQty: 0,
-            totalAmount: 0,
+            qtySold: 0,
+            revenue: 0,
             unit: row.unit || "PCS",
           };
         }
-        totals[key].totalQty += parseFloat(row.qty || "0");
-        totals[key].totalAmount += parseFloat(row.amount || "0");
+        totals[key].qtySold += safeFloat(row.qty);
+        totals[key].revenue += safeFloat(row.amount);
       }
 
-      const sorted = Object.values(totals).sort((a, b) => b.totalQty - a.totalQty).slice(0, 20);
+      const inventoryRows = await getInventory();
+      const stockMap: Record<number, number> = {};
+      for (const inv of inventoryRows) {
+        if (inv.productId) stockMap[inv.productId] = (stockMap[inv.productId] || 0) + safeFloat(inv.qty);
+      }
+
+      const sorted = Object.values(totals)
+        .map(t => ({ ...t, stockLeft: t.productId ? (stockMap[t.productId] || 0) : 0 }))
+        .sort((a, b) => b.qtySold - a.qtySold)
+        .slice(0, 20);
       res.json(sorted);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -2735,51 +3114,108 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const maxPerDay = settings?.maxMessagesPerDay || 1;
       const todayStr = new Date().toISOString().split("T")[0];
 
+      // Business identity for the message signature (admin-editable, no hardcoding).
+      const bizName = settings?.storeNameEn || "MAMUN M TRADING AND CONTRACTING W.L.L";
+      const bizPhone = settings?.phone || "+974 30703722";
+      const fmtQar = (n: number) =>
+        `QAR ${Number(n || 0).toLocaleString("en-QA", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
       // Get all unpaid invoices older than 3 days
       const unpaid = await getUnpaidInvoices();
       const overdue = unpaid.filter((inv: any) => inv.daysOld > 3);
 
-      const queue: any[] = [];
-
+      // Group overdue invoices BY CUSTOMER → one statement-style reminder each, so a
+      // customer with several open invoices gets a single consolidated message (their
+      // full account picture) instead of one spammy message per invoice.
+      const byCustomer = new Map<number, { customerId: number; invoices: any[]; outstanding: number; maxDaysOld: number }>();
       for (const inv of overdue) {
         if (!inv.customerId) continue;
+        let g = byCustomer.get(inv.customerId);
+        if (!g) { g = { customerId: inv.customerId, invoices: [], outstanding: 0, maxDaysOld: 0 }; byCustomer.set(inv.customerId, g); }
+        g.invoices.push(inv);
+        g.outstanding += parseFloat(String(inv.remaining || "0"));
+        g.maxDaysOld = Math.max(g.maxDaysOld, inv.daysOld || 0);
+      }
 
-        const customer = await getCustomer(inv.customerId);
+      const queue: any[] = [];
+
+      for (const g of Array.from(byCustomer.values())) {
+        const customer = await getCustomer(g.customerId);
         if (!customer) continue;
 
-        // Anti-spam: check if messaged today
-        const lastMsg = await getLastMessageDate(inv.customerId);
+        // Anti-spam: skip if this customer was already messaged today
+        const lastMsg = await getLastMessageDate(g.customerId);
         if (lastMsg) {
           const lastDate = lastMsg.toISOString().split("T")[0];
-          if (lastDate >= todayStr) continue; // already messaged today
+          if (lastDate >= todayStr) continue;
         }
 
-        // Determine urgency
+        // Chronological statement (oldest first); most-overdue invoice represents the group.
+        g.invoices.sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+        const rep = g.invoices.reduce((m, i) => ((i.daysOld || 0) > (m.daysOld || 0) ? i : m), g.invoices[0]);
+
+        // Urgency from the oldest debt in the account
         let urgency: "low" | "medium" | "high" = "low";
-        if (inv.daysOld > 90) urgency = "high";
-        else if (inv.daysOld > 30) urgency = "medium";
+        if (g.maxDaysOld > 90) urgency = "high";
+        else if (g.maxDaysOld > 30) urgency = "medium";
+        const template = urgency === "high" ? "urgent" : urgency === "medium" ? "firm" : "gentle";
 
-        // Build message template
-        const remaining = parseFloat(String(inv.remaining || "0")).toFixed(2);
-        let template = "";
-        if (urgency === "high") {
-          template = `Dear ${customer.name}, your account with MTC has an overdue balance of QAR ${remaining} (Invoice ${inv.number}, ${inv.daysOld} days overdue). Please settle immediately or contact us at +974 30703722.`;
-        } else if (urgency === "medium") {
-          template = `Dear ${customer.name}, friendly reminder: Invoice ${inv.number} for QAR ${remaining} is now ${inv.daysOld} days past due. Please arrange payment at your earliest. MTC - +974 30703722.`;
-        } else {
-          template = `Dear ${customer.name}, this is a payment reminder for Invoice ${inv.number} dated ${inv.date} for QAR ${remaining}. Thank you for your business. MTC.`;
-        }
+        const count = g.invoices.length;
+        const totalStr = fmtQar(g.outstanding);
+        const lines = g.invoices
+          .map((inv) => {
+            const od = (inv.daysOld || 0) > 0 ? ` · ${inv.daysOld}d overdue` : "";
+            return `• ${inv.number} (${inv.date}) — ${fmtQar(inv.remaining || 0)}${od}`;
+          })
+          .join("\n");
+
+        const tone =
+          urgency === "high"
+            ? "Our records show an overdue balance that needs your immediate attention."
+            : urgency === "medium"
+            ? "This is a friendly reminder regarding your pending account balance."
+            : "This is a gentle reminder regarding your account balance.";
+
+        // Statement-style message: itemized due invoices + total outstanding, so the
+        // customer sees exactly what is owed and against which invoices.
+        const message =
+`Dear ${customer.name},
+
+${tone}
+
+ACCOUNT STATEMENT — ${bizName}
+As of ${todayStr}
+Outstanding balance: ${totalStr} across ${count} invoice${count !== 1 ? "s" : ""}.
+
+Pending invoice${count !== 1 ? "s" : ""}:
+${lines}
+
+TOTAL DUE: ${totalStr}
+
+Kindly arrange payment at your earliest convenience. For any queries, contact us at ${bizPhone}.
+
+Thank you for your business.
+${bizName}`;
 
         queue.push({
           customer,
-          invoice: inv,
+          invoice: rep, // backward-compat single-invoice display
+          invoices: g.invoices.map((i) => ({
+            id: i.id, number: i.number, date: i.date,
+            remaining: Number(Number(i.remaining || 0).toFixed(2)), daysOverdue: i.daysOld || 0,
+          })),
+          totalOutstanding: Number(g.outstanding.toFixed(2)),
           template,
-          message: template,
+          message,
           urgency,
+          daysOverdue: g.maxDaysOld,
         });
 
         if (queue.length >= maxPerDay * 10) break; // reasonable cap
       }
+
+      // Most urgent (oldest debt) first
+      queue.sort((a, b) => (b.daysOverdue || 0) - (a.daysOverdue || 0));
 
       res.json(queue);
     } catch (err) {
@@ -2793,7 +3229,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.post("/api/invoices", async (req: Request, res: Response) => {
     try {
-      const invoice = await createDocument(req.body);
+      const body = { ...req.body };
+      const locked = lockedStoreId(req);
+      if (locked) body.storeId = locked;
+      const invoice = await createDocument(body);
       res.status(201).json(invoice);
     } catch (err) {
       console.error("Invoice creation error:", err);
@@ -3578,6 +4017,64 @@ CRITICAL: Extract quantity from NUMBER BEFORE UNIT, not from product name!`
       console.error("WhatsApp send error:", err);
       res.status(500).json({ message: "Failed to send WhatsApp message", error: String(err) });
     }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // STAFF PAYROLL
+  // ══════════════════════════════════════════════════════════════
+
+  app.get("/api/staff-payroll", async (req: Request, res: Response) => {
+    try {
+      const role = normalizeRoleStrict(req);
+      if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+      const { userId, month } = req.query as any;
+      const entries = await getStaffPayroll({
+        userId: userId ? Number(userId) : undefined,
+        month: month || undefined,
+      });
+      res.json(entries);
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.get("/api/staff-payroll/summary", async (req: Request, res: Response) => {
+    try {
+      const role = normalizeRoleStrict(req);
+      if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+      const month = (req.query.month as string) || new Date().toISOString().slice(0, 7);
+      const summary = await getStaffPayrollSummary(month);
+      res.json(summary);
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.post("/api/staff-payroll", async (req: Request, res: Response) => {
+    try {
+      const role = normalizeRoleStrict(req);
+      if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+      const entry = await createStaffPayrollEntry({
+        ...req.body,
+        createdBy: req.user?.id,
+      });
+      res.json(entry);
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.delete("/api/staff-payroll/:id", async (req: Request, res: Response) => {
+    try {
+      const role = normalizeRoleStrict(req);
+      if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+      await deleteStaffPayrollEntry(Number(req.params.id));
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.put("/api/users/:id/salary", async (req: Request, res: Response) => {
+    try {
+      const role = normalizeRoleStrict(req);
+      if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+      const { salary, dayRate } = req.body;
+      const user = await updateUserSalary(Number(req.params.id), String(salary || "0"), String(dayRate || "0"));
+      res.json(user);
+    } catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
   // ══════════════════════════════════════════════════════════════

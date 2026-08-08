@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
@@ -72,6 +73,13 @@ import {
   Building2,
   CheckSquare,
   Truck,
+  MapPin,
+  Upload,
+  X,
+  ClipboardList,
+  Warehouse,
+  Store,
+  ArrowRightLeft,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format, differenceInDays } from "date-fns";
@@ -261,6 +269,7 @@ function RecordPaymentModal({ open, onClose, documentId, customerId, remaining }
       qc.invalidateQueries({ queryKey: [`/api/documents/${documentId}/payments`] });
       qc.invalidateQueries({ queryKey: [`/api/documents/${documentId}`] });
       qc.invalidateQueries({ queryKey: ["/api/documents"] });
+      if (customerId) qc.invalidateQueries({ queryKey: [`/api/customers/${customerId}/balance`] });
       toast({ title: "Payment recorded" });
       onClose();
     },
@@ -452,6 +461,41 @@ export default function DocumentDetail() {
     enabled: !!doc?.customerId,
   });
 
+  // ── Fetch arrangement note (INV only) ──────────────────────
+  const { data: arrangementData } = useQuery<any>({
+    queryKey: [`/api/documents/${id}/arrangement-note`],
+    queryFn: () => fetch(`/api/documents/${id}/arrangement-note`).then((r) => {
+      if (r.status === 404) return null;
+      return r.json();
+    }),
+    enabled: !!id && doc?.type === "INV",
+  });
+
+  const [correctionOpen, setCorrectionOpen] = useState(false);
+  const [correctionItem, setCorrectionItem] = useState<any>(null);
+  const [correctionReason, setCorrectionReason] = useState("");
+  const [correctionQtyReturned, setCorrectionQtyReturned] = useState("");
+  const [correctionQtyCorrect, setCorrectionQtyCorrect] = useState("");
+
+  const correctionMut = useMutation({
+    mutationFn: (data: any) =>
+      fetch(`/api/arrangement-notes/${data.noteId}/corrections`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      }).then((r) => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [`/api/documents/${id}/arrangement-note`] });
+      toast({ title: "Correction applied", description: "Stock adjusted." });
+      setCorrectionOpen(false);
+      setCorrectionItem(null);
+      setCorrectionReason("");
+      setCorrectionQtyReturned("");
+      setCorrectionQtyCorrect("");
+    },
+    onError: () => toast({ title: "Correction failed", variant: "destructive" }),
+  });
+
   // ── Fetch settings (for print) ─────────────────────────────
   const { data: settings } = useSettings();
 
@@ -538,7 +582,65 @@ export default function DocumentDetail() {
   });
   const pickMut = mkDnMut("pick", "Marked picked — sent for authorisation");
   const authorizeMut = mkDnMut("authorize", "Delivery authorised — driver notified");
-  const deliverMut = mkDnMut("delivered", "Delivery confirmed — invoice completed");
+  const signWarehouseMut = mkDnMut("sign-warehouse", "Warehouse release signed");
+
+  // ── Delivery proof + damage (receiver name/phone + signed-DN photo) ────
+  const [proofOpen, setProofOpen] = useState(false);
+  const [rName, setRName] = useState("");
+  const [rPhone, setRPhone] = useState("");
+  const [signImg, setSignImg] = useState("");
+  const [dmgOpen, setDmgOpen] = useState(false);
+  const [dmgNotes, setDmgNotes] = useState("");
+  const [dmgPhoto, setDmgPhoto] = useState("");
+  const [proofBusy, setProofBusy] = useState(false);
+  const fileToDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("read failed"));
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const max = 1000, scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+          const c = document.createElement("canvas"); c.width = w; c.height = h;
+          const ctx = c.getContext("2d"); if (!ctx) return resolve(String(reader.result));
+          ctx.drawImage(img, 0, 0, w, h); resolve(c.toDataURL("image/jpeg", 0.7));
+        };
+        img.onerror = () => reject(new Error("image failed"));
+        img.src = String(reader.result);
+      };
+      reader.readAsDataURL(file);
+    });
+  function resetProof() {
+    setProofOpen(false); setRName(""); setRPhone(""); setSignImg("");
+    setDmgOpen(false); setDmgNotes(""); setDmgPhoto(""); setProofBusy(false);
+  }
+  async function submitDelivery() {
+    if (!rName.trim()) { toast({ title: "Receiver name required", variant: "destructive" }); return; }
+    if (!signImg) { toast({ title: "Upload the signed delivery note", variant: "destructive" }); return; }
+    setProofBusy(true);
+    try {
+      if (dmgOpen && dmgNotes.trim()) {
+        const dr = await fetch(`/api/documents/${id}/report-damage`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ notes: dmgNotes.trim(), photo: dmgPhoto || undefined }),
+        });
+        if (!dr.ok) throw new Error((await dr.json().catch(() => ({}))).message || "Damage report failed");
+      }
+      const r = await fetch(`/api/documents/${id}/delivered`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ receiverName: rName.trim(), receiverPhone: rPhone.trim(), signedDnImage: signImg }),
+      });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Failed");
+      qc.invalidateQueries({ queryKey: [`/api/documents/${id}`] });
+      qc.invalidateQueries({ queryKey: ["/api/deliveries"] });
+      resetProof();
+      toast({ title: "Delivery confirmed — invoice completed" });
+    } catch (e: any) {
+      setProofBusy(false);
+      toast({ title: "Cannot complete", description: String(e?.message || ""), variant: "destructive" });
+    }
+  }
 
   // ── Computed ───────────────────────────────────────────────
   const totalPaid = payments
@@ -679,6 +781,10 @@ export default function DocumentDetail() {
         const canPick = stage === "pending_pick" && ["warehouse", "admin", "manager"].includes(role || "");
         const canAuthorize = stage === "picked" && ["admin", "manager"].includes(role || "");
         const canDeliver = stage === "authorized" && ["driver", "admin", "manager"].includes(role || "");
+        const d: any = doc;
+        const canWarehouseSign = !d.warehouseSignedBy && stage !== "delivered" && ["warehouse_manager", "warehouse", "admin", "manager"].includes(role || "");
+        const canDamage = stage !== "delivered" && ["driver", "warehouse_manager", "warehouse", "admin", "manager"].includes(role || "");
+        const navUrl = d.mapLink || (d.deliveryAddress ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(d.deliveryAddress + ", Doha, Qatar")}` : null);
         return (
           <div className="no-print rounded-2xl border border-purple-200 bg-purple-50/50 p-4 space-y-3">
             <div className="flex items-center justify-between flex-wrap gap-2">
@@ -707,12 +813,35 @@ export default function DocumentDetail() {
                 </div>
               ))}
             </div>
-            <div className="flex flex-wrap gap-3 text-xs text-purple-900/80">
+            <div className="flex flex-wrap gap-3 text-xs text-purple-900/80 items-center">
               {doc.deliveryAddress && <span>📍 {doc.deliveryAddress}</span>}
+              {navUrl && (
+                <a href={navUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-semibold text-blue-700 hover:underline">
+                  <MapPin className="w-3.5 h-3.5" /> Navigate (Google Maps)
+                </a>
+              )}
+              {customer?.phone && (
+                <a href={`tel:${customer.phone}`} className="inline-flex items-center gap-1 font-semibold text-green-700 hover:underline">📞 {customer.phone}</a>
+              )}
               {doc.expectedDeliveryDate && <span>🗓 Expected {format(new Date(doc.expectedDeliveryDate), "dd MMM yyyy")}</span>}
               {doc.deliveryInstructions && <span>📝 {doc.deliveryInstructions}</span>}
+              {d.warehouseSignedBy && <span className="inline-flex items-center gap-1 text-emerald-700 font-semibold">✓ Warehouse released</span>}
             </div>
+
+            {/* Damage flag */}
+            {d.damageReported && (
+              <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800">
+                <span className="font-bold">⚠ Damage reported:</span> {d.damageNotes}
+                {d.damagePhoto && <img src={d.damagePhoto} alt="damage" className="mt-1.5 w-28 h-20 object-cover rounded border" />}
+              </div>
+            )}
+
             <div className="flex flex-wrap gap-2">
+              {canWarehouseSign && (
+                <Button size="sm" variant="outline" className="border-emerald-300 text-emerald-700 gap-1.5" disabled={signWarehouseMut.isPending} onClick={() => signWarehouseMut.mutate()}>
+                  {signWarehouseMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Sign &amp; Release (Warehouse)
+                </Button>
+              )}
               {canPick && (
                 <Button size="sm" className="bg-purple-600 hover:bg-purple-700 text-white gap-1.5" disabled={pickMut.isPending} onClick={() => pickMut.mutate()}>
                   {pickMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Mark Picked
@@ -724,8 +853,13 @@ export default function DocumentDetail() {
                 </Button>
               )}
               {canDeliver && (
-                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1.5" disabled={deliverMut.isPending} onClick={() => deliverMut.mutate()}>
-                  {deliverMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Confirm Delivery
+                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white gap-1.5" onClick={() => { resetProof(); setProofOpen(true); }}>
+                  Confirm Delivery
+                </Button>
+              )}
+              {canDamage && !d.damageReported && (
+                <Button size="sm" variant="outline" className="border-amber-300 text-amber-700 gap-1.5" onClick={() => { resetProof(); setDmgOpen(true); setProofOpen(true); }}>
+                  <AlertTriangle className="w-3.5 h-3.5" /> Report Damage
                 </Button>
               )}
               {stage === "delivered" && (
@@ -736,6 +870,19 @@ export default function DocumentDetail() {
               {stage === "picked" && !canAuthorize && <span className="text-xs text-muted-foreground self-center">Awaiting manager authorisation…</span>}
               {stage === "authorized" && !canDeliver && <span className="text-xs text-muted-foreground self-center">Authorised — awaiting driver dispatch…</span>}
             </div>
+
+            {/* Proof of receipt (shown once delivered) */}
+            {stage === "delivered" && (d.receiverName || d.signedDnUrl) && (
+              <div className="rounded-lg border border-green-200 bg-green-50/60 p-3 text-xs text-green-900 space-y-1.5">
+                <p className="font-bold uppercase tracking-wide text-[10px] text-green-700">Proof of delivery</p>
+                {d.receiverName && <p>Received by <span className="font-semibold">{d.receiverName}</span>{d.receiverPhone ? ` · ${d.receiverPhone}` : ""}</p>}
+                {d.signedDnUrl && (
+                  <a href={d.signedDnUrl} target="_blank" rel="noreferrer">
+                    <img src={d.signedDnUrl} alt="signed DN" className="w-40 h-28 object-cover rounded border" />
+                  </a>
+                )}
+              </div>
+            )}
             {/* Pick list grouped by physical location (staff-only, never printed). */}
             {Array.isArray((doc as any).items) && (doc as any).items.length > 0 && (() => {
               const groups: Record<number, any[]> = {};
@@ -764,14 +911,22 @@ export default function DocumentDetail() {
 
       {/* ── Action buttons row ── */}
       <div className="flex flex-wrap gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          onClick={() => nav(`/documents/${id}/edit`)}
-        >
-          <Pencil className="w-3.5 h-3.5" /> Edit
-        </Button>
+        {(() => {
+          const ageMs = doc?.createdAt ? Date.now() - new Date(doc.createdAt).getTime() : 0;
+          const expired = ageMs > 48 * 3_600_000;
+          return (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              disabled={expired}
+              title={expired ? "Edit window expired (2 days)" : undefined}
+              onClick={() => nav(`/documents/${id}/edit`)}
+            >
+              <Pencil className="w-3.5 h-3.5" /> Edit
+            </Button>
+          );
+        })()}
         <Button variant="outline" size="sm" className="gap-1.5" onClick={handlePrint}>
           <Printer className="w-3.5 h-3.5" /> Print
         </Button>
@@ -784,8 +939,8 @@ export default function DocumentDetail() {
           <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
         </Button>
 
-        {/* INV only: Record Payment */}
-        {doc.type === "INV" && doc.status !== "paid" && doc.status !== "void" && (
+        {/* INV only: Record Payment — hide when fully paid (status or actual balance) */}
+        {doc.type === "INV" && doc.status !== "paid" && doc.status !== "void" && remaining > 0.005 && (
           <Button
             size="sm"
             className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"
@@ -884,6 +1039,170 @@ export default function DocumentDetail() {
           </AlertDialog>
         )}
       </div>
+
+      {/* ── Arrangement Note (auto-split pick note) ── */}
+      {doc.type === "INV" && arrangementData?.note && (() => {
+        const { note, items: noteItems, corrections: corrs } = arrangementData;
+        const pickupStore = stores.find((s: any) => s.id === note.pickupLocationId);
+        // Group items by staff group.
+        const warehouseItems = noteItems.filter((i: any) => i.staffGroup === "warehouse");
+        const storeItems = noteItems.filter((i: any) => i.staffGroup === "store");
+
+        const renderGroup = (label: string, icon: React.ReactNode, groupItems: any[], color: string) => {
+          if (groupItems.length === 0) return null;
+          return (
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                {icon}
+                <span className={`font-semibold text-sm ${color}`}>{label}</span>
+              </div>
+              <div className="space-y-1.5">
+                {groupItems.map((item: any, idx: number) => (
+                  <div key={idx} className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 flex-1 min-w-0">
+                      <span className="font-medium truncate">{item.description}</span>
+                      <span className="text-muted-foreground whitespace-nowrap">
+                        {parseFloat(item.splitQty)} {item.unit}
+                      </span>
+                      <Badge variant="outline" className="text-xs shrink-0">
+                        {item.store?.nameEn || `Location ${item.sourceStoreId}`}
+                      </Badge>
+                      {item.bringTo && item.bringTo !== item.sourceStoreId && (
+                        <span className="flex items-center gap-1 text-xs text-amber-600 shrink-0">
+                          <ArrowRightLeft className="w-3 h-3" />
+                          bring to {stores.find((s: any) => s.id === item.bringTo)?.nameEn || `Loc ${item.bringTo}`}
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost" size="sm"
+                      className="text-xs text-red-500 hover:text-red-700 shrink-0 h-7"
+                      onClick={() => {
+                        setCorrectionItem(item);
+                        setCorrectionOpen(true);
+                      }}
+                    >
+                      Correction
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        };
+
+        return (
+          <div className="no-print rounded-xl border border-blue-200 bg-blue-50/60 overflow-hidden">
+            <div className="px-4 py-2.5 border-b border-blue-200 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ClipboardList className="w-4 h-4 text-blue-600" />
+                <h2 className="font-semibold text-sm text-blue-800">Arrangement Note</h2>
+                <Badge variant="outline" className={cn("text-xs", {
+                  "border-amber-300 text-amber-700": note.status === "pending",
+                  "border-green-300 text-green-700": note.status === "arranged",
+                  "border-red-300 text-red-700": note.status === "corrected",
+                })}>
+                  {note.status}
+                </Badge>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-blue-700">
+                {note.deliveryMethod === "delivery" ? (
+                  <><Truck className="w-3.5 h-3.5" /> Delivery from {pickupStore?.nameEn}</>
+                ) : (
+                  <><MapPin className="w-3.5 h-3.5" /> Pickup: {pickupStore?.nameEn}</>
+                )}
+              </div>
+            </div>
+            <div className="divide-y divide-blue-100">
+              {renderGroup(
+                "Warehouse staff — arrange these",
+                <Warehouse className="w-4 h-4 text-indigo-600" />,
+                warehouseItems,
+                "text-indigo-700"
+              )}
+              {renderGroup(
+                "Store staff — arrange these",
+                <Store className="w-4 h-4 text-teal-600" />,
+                storeItems,
+                "text-teal-700"
+              )}
+            </div>
+            {corrs.length > 0 && (
+              <div className="px-4 py-2 border-t border-blue-200 bg-red-50/50">
+                <p className="text-xs font-semibold text-red-700 mb-1">Corrections</p>
+                {corrs.map((c: any) => (
+                  <div key={c.id} className="text-xs text-red-600">
+                    {c.reason} — returned {c.qtyReturned}, re-deducted {c.qtyCorrect} ({new Date(c.createdAt).toLocaleString()})
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Correction Dialog ── */}
+      <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Arrangement Correction</DialogTitle>
+          </DialogHeader>
+          {correctionItem && (
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium">{correctionItem.description}</p>
+                <p className="text-xs text-muted-foreground">
+                  {parseFloat(correctionItem.splitQty)} {correctionItem.unit} from {correctionItem.store?.nameEn}
+                </p>
+              </div>
+              <div>
+                <Label>Reason</Label>
+                <Select value={correctionReason} onValueChange={setCorrectionReason}>
+                  <SelectTrigger><SelectValue placeholder="Select reason" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="wrong_product">Wrong product pulled</SelectItem>
+                    <SelectItem value="wrong_qty">Wrong quantity</SelectItem>
+                    <SelectItem value="damaged">Damaged during arrangement</SelectItem>
+                    <SelectItem value="wrong_location">Wrong location</SelectItem>
+                    <SelectItem value="customer_changed">Customer changed mind</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Qty returned to stock</Label>
+                  <Input type="number" value={correctionQtyReturned} onChange={(e) => setCorrectionQtyReturned(e.target.value)} placeholder="0" />
+                </div>
+                <div>
+                  <Label>Correct qty to deduct</Label>
+                  <Input type="number" value={correctionQtyCorrect} onChange={(e) => setCorrectionQtyCorrect(e.target.value)} placeholder="0" />
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCorrectionOpen(false)}>Cancel</Button>
+            <Button
+              disabled={!correctionReason || correctionMut.isPending}
+              onClick={() => {
+                if (!correctionItem || !correctionReason) return;
+                correctionMut.mutate({
+                  noteId: arrangementData.note.id,
+                  noteItemId: correctionItem.id,
+                  reason: correctionReason,
+                  productId: correctionItem.productId,
+                  storeId: correctionItem.sourceStoreId,
+                  qtyReturned: parseFloat(correctionQtyReturned) || 0,
+                  qtyCorrect: parseFloat(correctionQtyCorrect) || 0,
+                });
+              }}
+            >
+              {correctionMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
+              Apply Correction
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Linked Return Vouchers (audit — read-only) ── */}
       {doc.type === "INV" && Array.isArray(linkedReturns) && linkedReturns.length > 0 && (
@@ -1260,7 +1579,102 @@ export default function DocumentDetail() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Preview fit (zoom shrinks the layout box so the A4 paper fits any width) ── */}
+      {/* Proof-of-delivery modal (Confirm Delivery / Report Damage) */}
+      {proofOpen && (
+        <div className="no-print fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+          <div className="bg-white w-full max-w-md rounded-2xl max-h-[92vh] overflow-y-auto">
+            <div className="sticky top-0 bg-white flex items-center justify-between px-4 py-3 border-b">
+              <h3 className="font-bold text-[#1e2a3a]">{dmgOpen && !rName && !signImg ? "Report damage" : "Confirm delivery"} · {doc.number}</h3>
+              <button onClick={resetProof} className="p-1 text-muted-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-4 space-y-4">
+              {/* Damage-only mode still lets you complete delivery; both share this modal */}
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Received by (name) *</label>
+                <input value={rName} onChange={(e) => setRName(e.target.value)} placeholder="Receiver's full name"
+                  className="mt-1 w-full h-11 px-3 rounded-xl border border-slate-300 text-sm outline-none focus:border-[#1e2a3a]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Receiver phone</label>
+                <input value={rPhone} onChange={(e) => setRPhone(e.target.value)} placeholder="Contact number" inputMode="tel"
+                  className="mt-1 w-full h-11 px-3 rounded-xl border border-slate-300 text-sm outline-none focus:border-[#1e2a3a]" />
+              </div>
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground">Signed delivery note (photo) *</label>
+                {signImg ? (
+                  <div className="mt-1 relative">
+                    <img src={signImg} alt="signed DN" className="w-full h-40 object-cover rounded-xl border" />
+                    <button onClick={() => setSignImg("")} className="absolute top-1.5 right-1.5 bg-black/60 text-white rounded-full p-1"><X className="w-4 h-4" /></button>
+                  </div>
+                ) : (
+                  <label className="mt-1 flex flex-col items-center justify-center gap-1.5 h-28 rounded-xl border-2 border-dashed border-slate-300 text-muted-foreground hover:bg-slate-50 cursor-pointer">
+                    <Upload className="w-6 h-6" />
+                    <span className="text-xs font-semibold">Upload the all-party-signed DN</span>
+                    <input type="file" accept="image/*" className="hidden"
+                      onChange={async (e) => { const f = e.target.files?.[0]; if (f) setSignImg(await fileToDataUrl(f)); }} />
+                  </label>
+                )}
+              </div>
+              {!dmgOpen ? (
+                <button onClick={() => setDmgOpen(true)}
+                  className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-amber-300 text-amber-700 text-sm font-semibold hover:bg-amber-50">
+                  <AlertTriangle className="w-4 h-4" /> Report damage / issue
+                </button>
+              ) : (
+                <div className="rounded-xl border border-amber-300 bg-amber-50/50 p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-amber-800 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> Damage / issue</span>
+                    <button onClick={() => { setDmgOpen(false); setDmgNotes(""); setDmgPhoto(""); }} className="text-amber-700"><X className="w-4 h-4" /></button>
+                  </div>
+                  <textarea value={dmgNotes} onChange={(e) => setDmgNotes(e.target.value)} rows={2} placeholder="What is damaged / wrong?"
+                    className="w-full px-3 py-2 rounded-lg border border-amber-300 text-sm outline-none" />
+                  {dmgPhoto ? (
+                    <div className="relative">
+                      <img src={dmgPhoto} alt="damage" className="w-full h-28 object-cover rounded-lg border" />
+                      <button onClick={() => setDmgPhoto("")} className="absolute top-1.5 right-1.5 bg-black/60 text-white rounded-full p-1"><X className="w-4 h-4" /></button>
+                    </div>
+                  ) : (
+                    <label className="flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-amber-300 text-amber-700 text-xs font-semibold hover:bg-amber-100 cursor-pointer">
+                      <Upload className="w-4 h-4" /> Add damage photo
+                      <input type="file" accept="image/*" className="hidden"
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (f) setDmgPhoto(await fileToDataUrl(f)); }} />
+                    </label>
+                  )}
+                </div>
+              )}
+              <button disabled={proofBusy} onClick={submitDelivery}
+                className="w-full py-4 rounded-2xl bg-green-600 hover:bg-green-700 text-white font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-60">
+                {proofBusy ? <Loader2 className="w-6 h-6 animate-spin" /> : <CheckSquare className="w-6 h-6" />}
+                Confirm delivered
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Print-only invoice, portalled to <body>. Printing hides the whole app
+          (#root) and shows ONLY this copy, so it flows in normal document order and
+          paginates cleanly. The old `visibility:hidden` hack left the rest of the page
+          (items table, timeline, meta) occupying full layout height — invisible but
+          present — which printed as blank trailing pages. Portal isolation removes it
+          from print flow entirely, so N pages of content == N printed pages. ── */}
+      {settings && createPortal(
+        <div id="print-root" className="hidden">
+          <InvoiceRenderer
+            templateId={templateId}
+            settings={settings as any}
+            invoice={normalizeInvoice(doc, customer?.phone)}
+            options={{
+              showSignature: invoiceCfg.showSignature,
+              showReturnPolicy: invoiceCfg.showReturnPolicy,
+              showAmountInWords: invoiceCfg.showAmountInWords,
+            }}
+          />
+        </div>,
+        document.body,
+      )}
+
+      {/* ── On-screen preview fit (zoom shrinks the A4 paper to fit any width) ── */}
       <style>{`
         .paper-fit { zoom: 0.4; }
         @media (min-width: 420px) { .paper-fit { zoom: 0.48; } }
@@ -1268,36 +1682,27 @@ export default function DocumentDetail() {
         @media (min-width: 640px) { .paper-fit { zoom: 0.74; } }
         @media (min-width: 768px) { .paper-fit { zoom: 0.9; } }
         @media (min-width: 1024px) { .paper-fit { zoom: 1; } }
-        @media print { .paper-fit { zoom: 1 !important; } }
       `}</style>
+      {/* ── Print isolation: portal-only, content-height paper → no blank pages ── */}
       <style>{`
-        /* Strict A4 print canvas */
-        @page { size: A4; margin: 15mm; }
+        /* @page margin is the ONLY print margin; size:auto adapts to the printer's
+           paper (A4/Letter). The paper drops its fixed 210×297mm + padding and flows,
+           so N pages of content == N printed pages (no forced height, no blank tail). */
+        @page { size: auto; margin: 10mm; }
+        #print-root { display: none; }
         @media print {
-          html, body {
-            margin: 0 !important; padding: 0 !important; background: #fff !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
+          html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+          /* Hide the entire app; show ONLY the portalled invoice in normal flow. */
+          body > *:not(#print-root) { display: none !important; }
+          #print-root { display: block !important; }
+          #print-root .paper-fit { zoom: 1 !important; transform: none !important; }
+          #print-root .invoice-paper {
+            display: block !important;            /* kill flex-col so flex-1/mt-auto stop reserving height */
+            width: 100% !important; min-height: 0 !important; height: auto !important;
+            padding: 0 !important; margin: 0 !important; box-shadow: none !important;
           }
-          body * { visibility: hidden !important; }
-          #invoice-print-area, #invoice-print-area * { visibility: visible !important; }
-          #invoice-print-area {
-            position: absolute !important; left: 0 !important; top: 0 !important;
-            width: 100% !important; margin: 0 !important; padding: 0 !important;
-            border: none !important; background: #fff !important; overflow: visible !important;
-          }
-          /* The @page 15mm provides the margin — neutralize the paper's own box so it fills A4 */
-          #invoice-print-area .invoice-paper,
-          #invoice-print-area > div {
-            transform: none !important; box-shadow: none !important;
-            width: 100% !important; min-height: auto !important;
-            margin: 0 !important; padding: 0 !important;
-            -webkit-print-color-adjust: exact !important;
-            print-color-adjust: exact !important;
-          }
-          /* preserve table borders / header fills on paper */
-          #invoice-print-area table, #invoice-print-area th, #invoice-print-area td { border-color: #1e2a3a30 !important; }
-          .no-print { display: none !important; }
+          #print-root .invoice-paper .mt-auto { margin-top: 0 !important; }
+          #print-root .invoice-paper .flex-1 { flex: 0 1 auto !important; }
         }
       `}</style>
     </div>

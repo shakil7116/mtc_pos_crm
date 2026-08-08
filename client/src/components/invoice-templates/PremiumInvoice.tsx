@@ -287,26 +287,21 @@ export function PremiumInvoice({ settings, invoice, options, className }: any) {
           ) : null}
         </div>
 
-        {/* RIGHT — Subtotal (gross) / Gross Discount / Net Total. */}
+        {/* RIGHT — Subtotal (gross) / Discount / Net Total. */}
         {showPrices && (
           <div className="w-[40%] flex flex-col">
-            {/* Gross Discount is INTERNAL: breakdown on the staff screen; the printed
-                customer copy shows only a clean net Subtotal + Total. */}
             <div className="flex justify-between items-center px-3 py-1.5 border-b border-slate-200">
               <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Subtotal</span>
               <span className="font-mono tabular-nums text-[13px] font-bold text-slate-900">
-                <span className="print:hidden">{money(Number(invoice.subtotal || 0))}</span>
-                <span className="hidden print:inline">{money(Number(invoice.total || 0))}</span>
+                {money(Number(invoice.subtotal || 0))}
               </span>
             </div>
-            {Number(invoice.discountAmount || 0) > 0 ? (
-              <div className="flex justify-between items-center px-3 py-1.5 border-b border-slate-200 print:hidden">
-                <span className="text-[10px] font-bold uppercase tracking-wide text-amber-600">Gross Discount <span className="text-[8px] normal-case">(internal)</span></span>
-                <span className="font-mono tabular-nums text-[13px] font-bold text-amber-700">
-                  − {money(Number(invoice.discountAmount || 0))}
-                </span>
-              </div>
-            ) : null}
+            <div className="flex justify-between items-center px-3 py-1.5 border-b border-slate-200">
+              <span className={`text-[10px] font-bold uppercase tracking-wide ${Number(invoice.discountAmount || 0) > 0 ? "text-amber-600" : "text-slate-500"}`}>Discount / الخصم</span>
+              <span className={`font-mono tabular-nums text-[13px] font-bold ${Number(invoice.discountAmount || 0) > 0 ? "text-amber-700" : "text-slate-400"}`}>
+                {Number(invoice.discountAmount || 0) > 0 ? `− ${money(Number(invoice.discountAmount || 0))}` : money(0)}
+              </span>
+            </div>
             {Number(invoice.taxAmount || 0) > 0 ? (
               <div className="flex justify-between items-center px-3 py-1.5 border-b border-slate-200">
                 <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">

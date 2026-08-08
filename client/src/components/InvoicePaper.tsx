@@ -3,6 +3,7 @@ import { forwardRef } from "react";
 import type { Settings, InvoiceWithItems } from "@shared/schema";
 import { format } from "date-fns";
 import { clsx } from "clsx";
+import { QRCodeSVG } from "qrcode.react";
 import logoImg from "@assets/generated_images/minimalist_professional_mtc_text_logo.png";
 import { TermsFooter } from "@/components/invoice-templates/TermsFooter";
 
@@ -235,7 +236,8 @@ const toArabicDigits = (num: string | number) => {
 
         {/* Totals Section - Tightened Footer */}
         <div className="flex flex-row justify-between items-start gap-2 relative z-10 print:break-inside-avoid mt-auto pb-4 px-2">
-          <div className="w-[60%] flex flex-col justify-between h-full">
+          {/* DN has no totals column → let its left column (delivery block + signatures) run full-width. */}
+          <div className={clsx("flex flex-col justify-between h-full", isDeliveryNote ? "w-full" : "w-[60%]")}>
              {!isDeliveryNote && (
              <div className="bg-gray-50 p-2 rounded border border-gray-100 shadow-sm mb-4">
                 <p className={clsx("text-[9px] tracking-widest font-bold mb-0.5 opacity-60", textColor)} style={{ fontWeight: 700 }}>AMOUNT IN WORDS / المبلغ بالحروف</p>
@@ -245,6 +247,27 @@ const toArabicDigits = (num: string | number) => {
              {!isDeliveryNote && !isQuotation && (
                <div className="px-4 mt-4"><TermsFooter terms={(invoice as any).terms} /></div>
              )}
+             {/* Delivery details (DN only): site address, customer contact + a scannable
+                 Google-Maps QR so the driver navigates from the paper note. Never on the invoice. */}
+             {isDeliveryNote && (invoice.deliveryAddress || invoice.mapLink || invoice.customerPhone) && (() => {
+               const navUrl = invoice.mapLink || (invoice.deliveryAddress ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(invoice.deliveryAddress + ", Doha, Qatar")}` : null);
+               return (
+                 <div className="bg-gray-50 p-3 rounded border border-gray-100 shadow-sm mb-4 flex items-start justify-between gap-3 print:break-inside-avoid">
+                   <div className="flex-1 min-w-0">
+                     <p className="text-[9px] tracking-widest font-bold mb-1 opacity-60 uppercase">Delivery Details / تفاصيل التسليم</p>
+                     {invoice.deliveryAddress && <p className="text-[11px] font-bold leading-snug uppercase">📍 {invoice.deliveryAddress}</p>}
+                     {invoice.customerPhone && <p className="text-[10px] font-semibold mt-0.5" dir="ltr">📞 {invoice.customerPhone}</p>}
+                     {invoice.deliveryInstructions && <p className="text-[9px] opacity-70 mt-0.5">📝 {invoice.deliveryInstructions}</p>}
+                   </div>
+                   {navUrl && (
+                     <div className="text-center shrink-0">
+                       <QRCodeSVG value={navUrl} size={62} level="M" />
+                       <p className="text-[7px] opacity-60 mt-0.5 font-bold uppercase tracking-wide">Scan to navigate</p>
+                     </div>
+                   )}
+                 </div>
+               );
+             })()}
              <div className="flex justify-between px-4 mt-8">
   {/* Invoice: Salesman + Receiver */}
   {!isDeliveryNote && !isQuotation && (
@@ -259,7 +282,7 @@ const toArabicDigits = (num: string | number) => {
         <p className="font-bold text-sm uppercase mb-1 min-h-[20px]">{invoice.receiverSignature || ""}</p>
         <div className="border-t border-gray-400 mb-2 w-full"></div>
         <p className="font-bold text-[9px] text-gray-500 uppercase leading-none">RECEIVER'S SIGNATURE</p>
-        <p className="text-[14px] font-arabic font-bold opacity-70 mt-1">توقيع المستلم</p>
+        <p className="text-[10px] font-arabic font-bold opacity-70 mt-1">توقيع المستلم</p>
       </div>
     </>
   )}
@@ -271,15 +294,20 @@ const toArabicDigits = (num: string | number) => {
       <p className="text-[10px] font-arabic font-bold opacity-70 mt-1">التوقيع المعتمد</p>
     </div>
   )}
-  {/* Delivery Note: Delivered By + Received By */}
+  {/* Delivery Note: Warehouse Manager + Delivered By + Received By */}
   {isDeliveryNote && (
     <>
-      <div className="text-center w-32">
+      <div className="text-center w-28">
+        <div className="border-t border-gray-400 mb-2 w-full"></div>
+        <p className="font-bold text-[9px] text-gray-500 uppercase leading-none">WAREHOUSE MANAGER</p>
+        <p className="text-[10px] font-arabic font-bold opacity-70 mt-1">مدير المخزن</p>
+      </div>
+      <div className="text-center w-28">
         <div className="border-t border-gray-400 mb-2 w-full"></div>
         <p className="font-bold text-[9px] text-gray-500 uppercase leading-none">DELIVERED BY</p>
         <p className="text-[10px] font-arabic font-bold opacity-70 mt-1">سلّمه</p>
       </div>
-      <div className="text-center w-32">
+      <div className="text-center w-28">
         <div className="border-t border-gray-400 mb-2 w-full"></div>
         <p className="font-bold text-[9px] text-gray-500 uppercase leading-none">RECEIVED BY</p>
         <p className="text-[10px] font-arabic font-bold opacity-70 mt-1">استلمه</p>
@@ -290,25 +318,22 @@ const toArabicDigits = (num: string | number) => {
           </div>
 
           {!isDeliveryNote && <div className="w-[35%] flex flex-col gap-2">
-             {/* Gross Discount is INTERNAL: the breakdown shows on the staff screen but
-                 the customer's printed/PDF copy shows only a clean net Subtotal + Total. */}
              <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100">
                <span className="text-[10px] font-bold tracking-widest text-gray-500" style={{ fontWeight: 700 }}>SUBTOTAL / المجموع</span>
                <span className="font-mono font-bold text-sm text-gray-900" style={{ fontWeight: 700 }}>
-                 <span className="print:hidden">{money2(_n((invoice as any).subtotalAmount) || grandTotalCalc)}</span>
-                 <span className="hidden print:inline">{money2(grandTotalCalc)}</span>
+                 {money2(_n((invoice as any).subtotalAmount) || grandTotalCalc)}
                </span>
              </div>
-             {_n((invoice as any).discountAmount) > 0 && (
-               <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100 print:hidden">
-                 <span className="text-[10px] font-bold tracking-widest text-amber-600" style={{ fontWeight: 700 }}>GROSS DISCOUNT / الخصم <span className="text-[8px] normal-case">(internal)</span></span>
-                 <span className="font-mono font-bold text-sm text-amber-700" style={{ fontWeight: 700 }}>− {money2(_n((invoice as any).discountAmount))}</span>
-               </div>
-             )}
+             <div className="flex justify-between items-center px-2 py-1 border-b border-gray-100">
+               <span className={clsx("text-[10px] font-bold tracking-widest", _n((invoice as any).discountAmount) > 0 ? "text-amber-600" : "text-gray-500")} style={{ fontWeight: 700 }}>DISCOUNT / الخصم</span>
+               <span className={clsx("font-mono font-bold text-sm", _n((invoice as any).discountAmount) > 0 ? "text-amber-700" : "text-gray-400")} style={{ fontWeight: 700 }}>
+                 {_n((invoice as any).discountAmount) > 0 ? `− ${money2(_n((invoice as any).discountAmount))}` : money2(0)}
+               </span>
+             </div>
              <div className={clsx("p-3 rounded shadow-sm flex flex-col items-end gap-1 text-white", primaryColor)}>
                <div className="flex justify-between w-full items-center">
                  <span className="text-sm font-bold tracking-[0.2em]" style={{ fontWeight: 700 }}>TOTAL</span>
-                 <span className="text-2xl font-mono font-bold" style={{ fontWeight: 700 }}>{invoice.totalAmount}</span>
+                 <span className="text-2xl font-mono font-bold" style={{ fontWeight: 700 }}>{money2(grandTotalCalc)}</span>
                </div>
                <div className="flex items-center gap-2">
                  <span className="text-[10px] font-bold opacity-90 font-arabic">المجموع الكلي</span>

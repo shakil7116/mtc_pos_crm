@@ -35,7 +35,9 @@ export default function WarehouseDashboard() {
   const deliveries = deliveriesAll.filter((d) => !myStoreId || d.storeId === myStoreId);
   const today = todayStr();
   const incomingToday = deliveries.filter((d) => d.date === today && d.deliveryStatus !== "delivered");
-  const pendingConfirm = deliveries.filter((d) => d.deliveryStatus !== "delivered");
+  // Warehouse's job is PICKING — only show deliveries still awaiting a pick. Once picked
+  // it moves to the manager (authorise) then the driver (deliver); no longer warehouse's.
+  const toPick = deliveries.filter((d) => (d.deliveryStatus || "pending_pick") === "pending_pick");
 
   const { data: issues = [] } = useQuery<any[]>({
     queryKey: ["/api/warehouse-issues"],
@@ -52,9 +54,9 @@ export default function WarehouseDashboard() {
   });
   const incomingPos = pos.filter((p) => (!myStoreId || p.storeId === myStoreId) && ["sent", "partial"].includes(p.status));
 
-  const deliverMut = useMutation({
-    mutationFn: (id: number) => fetch(`/api/documents/${id}/delivered`, { method: "POST" }).then((r) => { if (!r.ok) throw new Error("failed"); return r.json(); }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/deliveries"] }); toast({ title: "Marked delivered" }); },
+  const pickMut = useMutation({
+    mutationFn: (id: number) => fetch(`/api/documents/${id}/pick`, { method: "POST" }).then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "failed"); return r.json(); }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["/api/deliveries"] }); toast({ title: "Items picked", description: "Manager notified to authorise." }); },
     onError: () => toast({ title: "Could not update", variant: "destructive" }),
   });
 
@@ -139,11 +141,11 @@ export default function WarehouseDashboard() {
       {/* Pending deliveries to confirm + items to pick */}
       <section className="rounded-xl border p-4">
         <h2 className="text-xs font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5 mb-2">
-          <PackageOpen className="w-3.5 h-3.5" /> Pending deliveries — items to pick ({pendingConfirm.length})
+          <PackageOpen className="w-3.5 h-3.5" /> Deliveries — items to pick ({toPick.length})
         </h2>
-        {pendingConfirm.length === 0 && <p className="text-sm text-muted-foreground">Nothing to pick.</p>}
+        {toPick.length === 0 && <p className="text-sm text-muted-foreground">Nothing to pick.</p>}
         <div className="space-y-2">
-          {pendingConfirm.map((d) => (
+          {toPick.map((d) => (
             <div key={d.id} className="rounded-lg border p-3 space-y-2">
               <div className="flex justify-between text-sm">
                 <span className="font-medium">{d.customerName}</span>
@@ -155,10 +157,10 @@ export default function WarehouseDashboard() {
                 ))}
               </ul>
               <button
-                onClick={() => { if (window.confirm(`Confirm ${d.number} delivered?`)) deliverMut.mutate(d.id); }}
-                className="w-full py-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-semibold flex items-center justify-center gap-1.5"
+                onClick={() => { if (window.confirm(`Confirm all items for ${d.number} are picked and ready?`)) pickMut.mutate(d.id); }}
+                className="w-full py-2 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-semibold flex items-center justify-center gap-1.5"
               >
-                <CheckCircle2 className="w-4 h-4" /> Mark as Delivered
+                <CheckCircle2 className="w-4 h-4" /> Mark Picked
               </button>
             </div>
           ))}

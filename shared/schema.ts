@@ -93,6 +93,21 @@ export const users = pgTable("users", {
   lockedUntil: timestamp("locked_until"),        // 10-min lock after too many failures
   storeId: integer("store_id").references(() => stores.id),
   active: boolean("active").notNull().default(true),
+  salary: numeric("salary").default("0"),
+  dayRate: numeric("day_rate").default("0"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Staff Payroll (advances, days off, salary payments) ────────────────────
+export const staffPayroll = pgTable("staff_payroll", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => users.id),
+  type: text("type").notNull(),       // advance | day_off | salary_payment | deduction | bonus
+  amount: numeric("amount").notNull().default("0"),
+  date: date("date").notNull(),
+  month: text("month").notNull(),     // YYYY-MM — payroll period this belongs to
+  note: text("note"),
+  createdBy: integer("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -130,6 +145,7 @@ export const customers = pgTable("customers", {
   address: text("address"),
   notes: text("notes"),
   paymentTerms: text("payment_terms"),
+  logoUrl: text("logo_url"),
   customData: jsonb("custom_data").default({}), // admin-defined custom fields (dynamic schema)
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -146,6 +162,8 @@ export const suppliers = pgTable("suppliers", {
   address: text("address"),
   notes: text("notes"),
   paymentTerms: text("payment_terms"),
+  creditDays: integer("credit_days").default(0),  // 0=cash supplier, 30/60/90=credit
+  paymentMode: text("payment_mode").default("credit"), // cash | credit
   customData: jsonb("custom_data").default({}), // admin-defined custom fields (dynamic schema)
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
@@ -217,6 +235,21 @@ export const documents = pgTable("documents", {
   authorizedAt: timestamp("authorized_at"),
   driverId: integer("driver_id").references(() => users.id), // assigned driver for site deliveries
   deliveryInstructions: text("delivery_instructions"),
+  // ── Site-delivery proof + navigation (DN-level; NEVER printed on the invoice) ──
+  mapLink: text("map_link"),                        // pasted Google Maps pin URL → navigate to site
+  receiverName: text("receiver_name"),              // who received the goods on site
+  receiverPhone: text("receiver_phone"),            // receiver contact number at delivery
+  warehouseSignedBy: integer("warehouse_signed_by").references(() => users.id), // WH manager who released the load
+  warehouseSignedAt: timestamp("warehouse_signed_at"),
+  signedDnUrl: text("signed_dn_url"),               // uploaded photo (base64 data URL) of the all-party-signed paper DN
+  damageReported: boolean("damage_reported").default(false),
+  damageNotes: text("damage_notes"),
+  damagePhoto: text("damage_photo"),                // base64 data URL of the damage photo
+  damageReportedAt: timestamp("damage_reported_at"),
+  damageResolution: text("damage_resolution"),         // returned_to_warehouse | customer_accepted | redelivery_requested
+  damageResolutionNotes: text("damage_resolution_notes"),
+  damageResolvedAt: timestamp("damage_resolved_at"),
+  damageResolvedBy: integer("damage_resolved_by").references(() => users.id),
   footerDiscountBy: integer("footer_discount_by").references(() => users.id), // admin/manager who applied grand-total discount
   discountType: text("discount_type").default("QAR"),
   discountAmount: numeric("discount_amount").default("0"),
@@ -386,6 +419,9 @@ export const supplierOrders = pgTable("supplier_orders", {
   paymentTermsDays: integer("payment_terms_days").default(0), // 30/60/90 — activated on full receipt
   receiptDate: date("receipt_date"),        // date fully received (terms clock start)
   paymentDueDate: date("payment_due_date"),  // receiptDate + terms
+  supplierInvoiceNumber: text("supplier_invoice_number"), // supplier's own invoice #
+  supplierInvoiceUrl: text("supplier_invoice_url"),       // uploaded photo/scan of supplier invoice
+  supplierInvoiceAmount: numeric("supplier_invoice_amount"), // amount on supplier invoice (for 3-way match)
   sentAt: timestamp("sent_at").defaultNow(),
   receivedAt: timestamp("received_at"),
 });
@@ -397,11 +433,34 @@ export const supplierReturns = pgTable("supplier_returns", {
   supplierId: integer("supplier_id").references(() => suppliers.id),
   storeId: integer("store_id").references(() => stores.id),
   returnType: text("return_type").notNull(),   // initiated | rejected_delivery
+  refundMode: text("refund_mode").notNull().default("credit_note"), // credit_note | cash_refund
   status: text("status").notNull().default("pending_confirmation"), // pending_confirmation | confirmed | refund_received
   items: jsonb("items").notNull().default([]), // [{productId,name,qty,unit,amount}]
   total: numeric("total").default("0"),
   refundAmount: numeric("refund_amount"),
   refundReceivedAt: timestamp("refund_received_at"),
+  refundMethod: text("refund_method"),         // cash | bank_transfer (only for cash_refund mode)
+  notes: text("notes"),
+  createdBy: integer("created_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Supplier Payments (outgoing payments TO suppliers) ──────────────────────
+// Tracks every cash/cheque/PDC/bank payment made to a supplier. Running balance:
+// goods received (supplierOrders) = credit (we owe), payment = debit (we paid).
+export const supplierPayments = pgTable("supplier_payments", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull().references(() => suppliers.id),
+  poId: integer("po_id").references(() => supplierOrders.id), // optional link to specific PO
+  amount: numeric("amount").notNull(),
+  method: text("method").notNull().default("Cash"), // Cash | Cheque | PDC | Bank Transfer
+  date: date("date").notNull(),
+  reference: text("reference"),              // cheque # / transfer ref / receipt #
+  supplierInvoiceNumber: text("supplier_invoice_number"), // which supplier invoice this pays
+  supplierInvoiceUrl: text("supplier_invoice_url"),       // uploaded supplier invoice photo
+  receiptUrl: text("receipt_url"),           // uploaded cash receipt from supplier
+  chequeId: integer("cheque_id").references(() => cheques.id), // link to PDC cheque if applicable
+  bankName: text("bank_name"),
   notes: text("notes"),
   createdBy: integer("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
@@ -608,6 +667,7 @@ export const productsRelations = relations(products, ({ many, one }) => ({
 export const suppliersRelations = relations(suppliers, ({ many }) => ({
   products: many(products),
   orders: many(supplierOrders),
+  payments: many(supplierPayments),
 }));
 
 export const paymentsRelations = relations(payments, ({ one }) => ({
@@ -627,6 +687,48 @@ export const tasks = pgTable("tasks", {
   dueDate: date("due_date"),
   status: text("status").notNull().default("open"), // open | in_progress | done
   completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Arrangement Notes (auto-split pick notes per invoice) ───────────────────
+// Generated on INV save when items span multiple locations. One note per invoice,
+// items grouped by source location → staff see who picks what from where.
+export const arrangementNotes = pgTable("arrangement_notes", {
+  id: serial("id").primaryKey(),
+  documentId: integer("document_id").notNull().references(() => documents.id),
+  pickupLocationId: integer("pickup_location_id").references(() => stores.id),
+  deliveryMethod: text("delivery_method"), // pickup | delivery
+  status: text("status").notNull().default("pending"), // pending | arranged | corrected
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const arrangementNoteItems = pgTable("arrangement_note_items", {
+  id: serial("id").primaryKey(),
+  noteId: integer("note_id").notNull().references(() => arrangementNotes.id),
+  documentItemId: integer("document_item_id").references(() => documentItems.id),
+  productId: integer("product_id").notNull().references(() => products.id),
+  description: text("description").notNull(),
+  unit: text("unit").notNull().default("PCS"),
+  totalQty: numeric("total_qty").notNull(),
+  sourceStoreId: integer("source_store_id").notNull().references(() => stores.id),
+  splitQty: numeric("split_qty").notNull(),
+  bringTo: integer("bring_to").references(() => stores.id),
+  staffGroup: text("staff_group").notNull(), // "store" | "warehouse" — who arranges this
+  arranged: boolean("arranged").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Arrangement Corrections ─────────────────────────────────────────────────
+export const arrangementCorrections = pgTable("arrangement_corrections", {
+  id: serial("id").primaryKey(),
+  noteId: integer("note_id").notNull().references(() => arrangementNotes.id),
+  noteItemId: integer("note_item_id").references(() => arrangementNoteItems.id),
+  reason: text("reason").notNull(), // wrong_product | wrong_qty | damaged | wrong_location | customer_changed
+  productId: integer("product_id").references(() => products.id),
+  storeId: integer("store_id").references(() => stores.id),
+  qtyReturned: numeric("qty_returned"),
+  qtyCorrect: numeric("qty_correct"),
+  correctedBy: integer("corrected_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -655,11 +757,16 @@ export const insertCustomRecordSchema = createInsertSchema(customRecords).omit({
 export const insertManagedListSchema = createInsertSchema(managedLists).omit({ id: true, createdAt: true });
 export const insertNumberingAuditSchema = createInsertSchema(numberingAudit).omit({ id: true, createdAt: true });
 export const insertSupplierReturnSchema = createInsertSchema(supplierReturns).omit({ id: true, createdAt: true });
+export const insertSupplierPaymentSchema = createInsertSchema(supplierPayments).omit({ id: true, createdAt: true });
 export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, createdAt: true });
 export const insertCashflowSchema = createInsertSchema(cashflow).omit({ id: true, createdAt: true });
 export const insertExpenseSchema = createInsertSchema(expenses).omit({ id: true, createdAt: true });
+export const insertStaffPayrollSchema = createInsertSchema(staffPayroll).omit({ id: true, createdAt: true });
 export const insertCorrectionSchema = createInsertSchema(corrections).omit({ id: true, createdAt: true });
 export const insertWarehouseIssueSchema = createInsertSchema(warehouseIssues).omit({ id: true, createdAt: true });
+export const insertArrangementNoteSchema = createInsertSchema(arrangementNotes).omit({ id: true, createdAt: true });
+export const insertArrangementNoteItemSchema = createInsertSchema(arrangementNoteItems).omit({ id: true, createdAt: true });
+export const insertArrangementCorrectionSchema = createInsertSchema(arrangementCorrections).omit({ id: true, createdAt: true });
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 export type Settings = typeof settings.$inferSelect;
@@ -694,16 +801,26 @@ export type StockAdjustment = typeof stockAdjustments.$inferSelect;
 export type SupplierOrder = typeof supplierOrders.$inferSelect;
 export type SupplierReturn = typeof supplierReturns.$inferSelect;
 export type InsertSupplierReturn = z.infer<typeof insertSupplierReturnSchema>;
+export type SupplierPayment = typeof supplierPayments.$inferSelect;
+export type InsertSupplierPayment = z.infer<typeof insertSupplierPaymentSchema>;
 export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Cashflow = typeof cashflow.$inferSelect;
 export type InsertCashflow = z.infer<typeof insertCashflowSchema>;
 export type Expense = typeof expenses.$inferSelect;
 export type InsertExpense = z.infer<typeof insertExpenseSchema>;
+export type StaffPayroll = typeof staffPayroll.$inferSelect;
+export type InsertStaffPayroll = z.infer<typeof insertStaffPayrollSchema>;
 export type Correction = typeof corrections.$inferSelect;
 export type InsertCorrection = z.infer<typeof insertCorrectionSchema>;
 export type WarehouseIssue = typeof warehouseIssues.$inferSelect;
 export type InsertWarehouseIssue = z.infer<typeof insertWarehouseIssueSchema>;
+export type ArrangementNote = typeof arrangementNotes.$inferSelect;
+export type InsertArrangementNote = z.infer<typeof insertArrangementNoteSchema>;
+export type ArrangementNoteItem = typeof arrangementNoteItems.$inferSelect;
+export type InsertArrangementNoteItem = z.infer<typeof insertArrangementNoteItemSchema>;
+export type ArrangementCorrection = typeof arrangementCorrections.$inferSelect;
+export type InsertArrangementCorrection = z.infer<typeof insertArrangementCorrectionSchema>;
 export type DamageClaim = typeof damageClaims.$inferSelect;
 export type FieldDefinition = typeof fieldDefinitions.$inferSelect;
 export type InsertFieldDefinition = z.infer<typeof insertFieldDefinitionSchema>;

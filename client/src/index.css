@@ -48,6 +48,41 @@
   --radius: 0.5rem;
 }
 
+.dark {
+  --background: 222 47% 7%;         /* Deep charcoal navy */
+  --foreground: 210 40% 96%;
+
+  --card: 222 44% 10%;
+  --card-foreground: 210 40% 96%;
+
+  --popover: 222 44% 10%;
+  --popover-foreground: 210 40% 96%;
+
+  --primary: 41 78% 52%;            /* Gold accent brighter in dark */
+  --primary-foreground: 222 47% 7%;
+
+  --secondary: 217 33% 15%;
+  --secondary-foreground: 210 40% 96%;
+
+  --muted: 217 33% 14%;
+  --muted-foreground: 215 19% 58%;
+
+  --accent: 217 33% 15%;
+  --accent-foreground: 210 40% 96%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 217 30% 18%;
+  --input: 217 30% 18%;
+  --ring: 41 78% 52%;
+
+  --navy: 217 43% 16%;
+  --navy-foreground: 210 40% 98%;
+  --gold: 41 78% 52%;
+  --gold-foreground: 222 47% 7%;
+}
+
 @layer base {
   * {
     @apply border-border;
@@ -171,6 +206,32 @@ body::before {
 /* Gentle entrance for each routed page — accent only, structure untouched */
 main {
   animation: fade-in 0.3s ease-out both;
+}
+
+/* ── Mobile-compact: shrink text, spacing, and padding on small screens ── */
+@media (max-width: 767px) {
+  html { font-size: 13px; }
+
+  /* Tighter page padding */
+  main { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+
+  /* Smaller headings */
+  h1 { font-size: 1.25rem !important; }
+  h2 { font-size: 1.1rem !important; }
+  h3 { font-size: 1rem !important; }
+
+  /* Compact cards and sections */
+  .rounded-2xl { border-radius: 0.75rem; }
+
+  /* Prevent iOS zoom on input focus */
+  input, select, textarea { font-size: 16px !important; }
+
+  /* Compact tables */
+  table { font-size: 0.8rem; }
+  th, td { padding: 0.35rem 0.5rem !important; }
+
+  /* Smaller buttons */
+  button { font-size: 0.8rem; }
 }
 
 /* Print Styles */

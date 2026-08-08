@@ -19,6 +19,8 @@ import {
   Send,
   Clock,
   X,
+  Camera,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -80,6 +82,7 @@ type Customer = {
   address: string | null;
   notes: string | null;
   paymentTerms: string | null;
+  logoUrl: string | null;
   active: boolean | null;
   createdAt: string;
 };
@@ -1264,6 +1267,41 @@ export default function CustomerDetail() {
   const [messageOpen, setMessageOpen] = useState(false);
   const [statementOpen, setStatementOpen] = useState(false);
 
+  const qc = useQueryClient();
+  const { toast } = useToast();
+
+  const logoMut = useMutation({
+    mutationFn: (logoUrl: string | null) =>
+      fetch(`/api/customers/${customerId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logoUrl }),
+      }).then((r) => {
+        if (!r.ok) throw new Error("Failed to upload");
+        return r.json();
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: [`/api/customers/${customerId}`] });
+      toast({ title: "Logo updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update logo", variant: "destructive" });
+    },
+  });
+
+  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      toast({ title: "Image must be under 2 MB", variant: "destructive" });
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => logoMut.mutate(reader.result as string);
+    reader.readAsDataURL(file);
+    e.target.value = "";
+  }
+
   /* Fetch customer */
   const { data: customer, isLoading: customerLoading } = useQuery<Customer>({
     queryKey: [`/api/customers/${customerId}`],
@@ -1360,11 +1398,35 @@ export default function CustomerDetail() {
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           {/* Left: name + info */}
           <div className="flex items-start gap-4">
-            <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-              <span className="text-primary font-black text-xl">
-                {customer.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
+            <label className="relative w-14 h-14 rounded-full shrink-0 cursor-pointer group">
+              {customer.logoUrl ? (
+                <img
+                  src={customer.logoUrl}
+                  alt={customer.name}
+                  className="w-14 h-14 rounded-full object-cover border border-border/40"
+                />
+              ) : (
+                <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center">
+                  <span className="text-primary font-black text-xl">
+                    {customer.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+              )}
+              <div className="absolute inset-0 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                {logoMut.isPending ? (
+                  <Loader2 className="w-5 h-5 text-white animate-spin" />
+                ) : (
+                  <Camera className="w-5 h-5 text-white" />
+                )}
+              </div>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleLogoUpload}
+                disabled={logoMut.isPending}
+              />
+            </label>
             <div>
               <h1 className="text-2xl font-bold tracking-tight text-foreground">
                 {customer.name}

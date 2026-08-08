@@ -1,4 +1,5 @@
-import { useState, useMemo, useEffect, Fragment } from "react";
+import { useState, useMemo, useEffect, useRef, Fragment } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Building2,
@@ -17,6 +18,13 @@ import {
   AlertTriangle,
   MessageSquare,
   X,
+  Wallet,
+  Camera,
+  Upload,
+  ScanLine,
+  Loader2,
+  DollarSign,
+  RotateCcw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +72,8 @@ type Supplier = {
   address: string | null;
   notes: string | null;
   paymentTerms: string | null;
+  creditDays: number | null;
+  paymentMode: string | null;
   active: boolean | null;
 };
 
@@ -98,11 +108,21 @@ type SupplierOrder = {
   items: Array<{
     productId?: number;
     name: string;
+    description?: string;
     qty: number;
     unit: string;
+    cost?: number;
+    price?: number;
+    receivedQty?: number;
   }> | null;
   sentAt: string | null;
   receivedAt: string | null;
+  paymentTermsDays: number | null;
+  paymentDueDate: string | null;
+  receiptDate: string | null;
+  supplierInvoiceNumber: string | null;
+  supplierInvoiceUrl: string | null;
+  supplierInvoiceAmount: string | null;
 };
 
 type SupplierForm = {
@@ -114,6 +134,8 @@ type SupplierForm = {
   address: string;
   notes: string;
   paymentTerms: string;
+  creditDays: string;
+  paymentMode: string;
 };
 
 type OrderItem = {
@@ -137,6 +159,8 @@ const BLANK_SUPPLIER: SupplierForm = {
   address: "",
   notes: "",
   paymentTerms: "",
+  creditDays: "60",
+  paymentMode: "credit",
 };
 
 const COMPANY_NAME = "Mamun M Trading +974 30703722";
@@ -203,6 +227,8 @@ function SupplierDialog({
           address: existing.address ?? "",
           notes: existing.notes ?? "",
           paymentTerms: existing.paymentTerms ?? "",
+          creditDays: String((existing as any).creditDays ?? "60"),
+          paymentMode: (existing as any).paymentMode ?? "credit",
         }
       : BLANK_SUPPLIER
   );
@@ -221,7 +247,7 @@ function SupplierDialog({
       return fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, customData }),
+        body: JSON.stringify({ ...body, creditDays: Number(body.creditDays) || 0, customData }),
       }).then((r) => {
         if (!r.ok) throw new Error("Request failed");
         return r.json();
@@ -362,9 +388,32 @@ function SupplierDialog({
             />
           </div>
 
-          {/* Payment Terms */}
+          {/* Payment Mode & Credit Days */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Payment Mode</Label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={form.paymentMode} onChange={(e) => set("paymentMode", e.target.value)}>
+                <option value="credit">Credit</option>
+                <option value="cash">Cash</option>
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Credit Days</Label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={form.creditDays} onChange={(e) => set("creditDays", e.target.value)}
+                disabled={form.paymentMode === "cash"}>
+                <option value="0">0 (Cash)</option>
+                <option value="30">30 days</option>
+                <option value="60">60 days</option>
+                <option value="90">90 days</option>
+              </select>
+            </div>
+          </div>
+
+          {/* Payment Terms (free text) */}
           <div className="space-y-1.5">
-            <Label htmlFor="s-terms">Payment Terms</Label>
+            <Label htmlFor="s-terms">Payment Terms Notes</Label>
             <Input
               id="s-terms"
               value={form.paymentTerms}
@@ -950,6 +999,7 @@ function SupplierRow({
   onToggle,
   onEdit,
   onNewOrder,
+  onLedger,
 }: {
   supplier: Supplier;
   products: Product[];
@@ -958,6 +1008,7 @@ function SupplierRow({
   onToggle: () => void;
   onEdit: () => void;
   onNewOrder: () => void;
+  onLedger: () => void;
 }) {
   const productCount = products.filter(
     (p) => p.supplierId === supplier.id && p.active !== false
@@ -1033,6 +1084,14 @@ function SupplierRow({
             >
               <ShoppingCart className="w-3 h-3" /> New Order
             </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={onLedger}
+              className="h-7 px-2 gap-1 text-xs"
+            >
+              <Wallet className="w-3 h-3" /> Ledger
+            </Button>
           </div>
         </TableCell>
 
@@ -1072,7 +1131,7 @@ function OrderItemsRow({ order }: { order: SupplierOrder }) {
   if (items.length === 0) return null;
   return (
     <TableRow>
-      <TableCell colSpan={6} className="p-0">
+      <TableCell colSpan={8} className="p-0">
         <div className="bg-secondary/10 border-t border-border/40 px-6 py-3">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
             Order Items
@@ -1081,12 +1140,25 @@ function OrderItemsRow({ order }: { order: SupplierOrder }) {
             {items.map((item, i) => (
               <div key={i} className="flex items-center gap-3 text-sm">
                 <span className="w-5 text-xs text-muted-foreground text-right">{i + 1}.</span>
-                <span className="flex-1 font-medium text-foreground">{item.name}</span>
+                <span className="flex-1 font-medium text-foreground">{item.name || (item as any).description}</span>
                 <span className="font-mono text-foreground">{item.qty}</span>
                 <span className="text-muted-foreground w-10">{item.unit}</span>
+                {(item as any).receivedQty != null && (
+                  <span className="text-xs text-green-600">rcvd: {(item as any).receivedQty}</span>
+                )}
+                {(item as any).cost != null && (
+                  <span className="font-mono text-xs text-muted-foreground">@ {Number((item as any).cost).toFixed(2)}</span>
+                )}
               </div>
             ))}
           </div>
+          {order.supplierInvoiceNumber && (
+            <div className="mt-2 pt-2 border-t border-border/30 flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="font-semibold">Supplier Invoice:</span>
+              <span>#{order.supplierInvoiceNumber}</span>
+              {order.supplierInvoiceAmount && <span className="font-mono">QAR {Number(order.supplierInvoiceAmount).toFixed(2)}</span>}
+            </div>
+          )}
         </div>
       </TableCell>
     </TableRow>
@@ -1121,33 +1193,380 @@ function useMarkReceived() {
   });
 }
 
-// Destination-store picker + Receive button (PO receipt adds stock to that location).
+// GRN receive flow — store picker + supplier invoice entry + AI scan
 function ReceiveCell({ order, markReceived }: { order: any; markReceived: any }) {
   const { data: stores = [] } = useQuery<any[]>({
     queryKey: ["/api/stores"],
     queryFn: () => fetch("/api/stores").then((r) => r.json()),
   });
+  const { toast } = useToast();
+  const qc = useQueryClient();
   const list = (Array.isArray(stores) ? stores : []).filter((s: any) => s.active);
   const [storeId, setStoreId] = useState<number | "">("");
+  const [grnOpen, setGrnOpen] = useState(false);
+  const [invNumber, setInvNumber] = useState("");
+  const [invAmount, setInvAmount] = useState("");
+  const [invUrl, setInvUrl] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [scannedItems, setScannedItems] = useState<any[]>([]);
+  const fileRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => { if (storeId === "" && list[0]) setStoreId(list[0].id); }, [list.length]); // eslint-disable-line
+
+  const handleInvoiceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setInvUrl(reader.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleAiScan = async () => {
+    if (!fileRef.current?.files?.[0]) {
+      toast({ title: "Upload invoice image first", variant: "destructive" });
+      return;
+    }
+    setScanning(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", fileRef.current.files[0]);
+      const res = await fetch("/api/ai/scan-supplier-invoice", { method: "POST", body: formData });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Scan failed");
+      const data = await res.json();
+      if (data.invoiceNumber) setInvNumber(data.invoiceNumber);
+      if (data.totalAmount) setInvAmount(String(data.totalAmount));
+      if (Array.isArray(data.items) && data.items.length > 0) setScannedItems(data.items);
+      toast({ title: "Invoice scanned", description: `Found ${data.items?.length || 0} items, total: ${data.totalAmount || "N/A"}` });
+    } catch (err: any) {
+      toast({ title: "AI scan failed", description: err.message, variant: "destructive" });
+    } finally { setScanning(false); }
+  };
+
+  const handleReceive = async () => {
+    if (!storeId) return;
+    // Save invoice details on the PO first
+    if (invNumber || invUrl || invAmount) {
+      await fetch(`/api/supplier-orders/${order.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          supplierInvoiceNumber: invNumber || null,
+          supplierInvoiceUrl: invUrl || null,
+          supplierInvoiceAmount: invAmount || null,
+        }),
+      });
+    }
+    markReceived.mutate({ orderId: order.id, storeId: Number(storeId) });
+    setGrnOpen(false);
+  };
+
   return (
-    <div className="flex items-center gap-1">
-      <select
-        value={storeId}
-        onChange={(e) => setStoreId(Number(e.target.value))}
-        className="h-7 text-xs border border-border rounded px-1 bg-white max-w-[130px]"
-        title="Destination location"
-      >
-        {list.map((s: any) => <option key={s.id} value={s.id}>{s.nameEn}</option>)}
-      </select>
-      <Button
-        size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
-        disabled={markReceived.isPending || !storeId}
-        onClick={() => storeId && markReceived.mutate({ orderId: order.id, storeId: Number(storeId) })}
-      >
-        <CheckCircle2 className="w-3 h-3" /> Receive
-      </Button>
-    </div>
+    <>
+      <div className="flex items-center gap-1">
+        <select
+          value={storeId}
+          onChange={(e) => setStoreId(Number(e.target.value))}
+          className="h-7 text-xs border border-border rounded px-1 bg-white dark:bg-gray-800 max-w-[130px]"
+          title="Destination location"
+        >
+          {list.map((s: any) => <option key={s.id} value={s.id}>{s.nameEn}</option>)}
+        </select>
+        <Button
+          size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
+          disabled={markReceived.isPending || !storeId}
+          onClick={() => setGrnOpen(true)}
+        >
+          <CheckCircle2 className="w-3 h-3" /> Receive
+        </Button>
+      </div>
+
+      {/* GRN Dialog — invoice entry + AI scan */}
+      <Dialog open={grnOpen} onOpenChange={setGrnOpen}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="w-5 h-5 text-[#d4a017]" /> Goods Receipt — {order.poNumber || `PO-${order.id}`}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Receiving all items to <strong>{list.find((s: any) => s.id === storeId)?.nameEn || "store"}</strong>.
+              Optionally attach supplier invoice details.
+            </p>
+
+            <Separator />
+
+            {/* Manual invoice entry */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                <Edit2 className="w-3.5 h-3.5" /> Manual Entry
+              </h4>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label className="text-xs">Supplier Invoice #</Label>
+                  <Input value={invNumber} onChange={e => setInvNumber(e.target.value)}
+                    placeholder="INV-12345" className="h-8 text-sm" />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Invoice Amount</Label>
+                  <Input type="number" value={invAmount} onChange={e => setInvAmount(e.target.value)}
+                    placeholder="0.00" className="h-8 text-sm font-mono" />
+                </div>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* AI scan / upload */}
+            <div className="space-y-3">
+              <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                <Camera className="w-3.5 h-3.5" /> Scan Invoice (AI)
+              </h4>
+              <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden"
+                onChange={handleInvoiceUpload} />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" className="flex-1"
+                  onClick={() => fileRef.current?.click()}>
+                  <Upload className="w-3.5 h-3.5 mr-1.5" />
+                  {invUrl ? "Replace Photo" : "Upload Invoice"}
+                </Button>
+                <Button variant="outline" size="sm" className="flex-1"
+                  disabled={!invUrl || scanning}
+                  onClick={handleAiScan}>
+                  {scanning ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ScanLine className="w-3.5 h-3.5 mr-1.5" />}
+                  {scanning ? "Scanning…" : "AI Scan"}
+                </Button>
+              </div>
+              {invUrl && (
+                <img src={invUrl} className="w-full h-32 object-cover rounded border" alt="Invoice" />
+              )}
+            </div>
+
+            {scannedItems.length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold">Extracted Items ({scannedItems.length})</h4>
+                  <div className="max-h-48 overflow-y-auto border rounded">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr>
+                          <th className="text-left p-1.5 font-medium">Description</th>
+                          <th className="text-right p-1.5 font-medium w-12">Qty</th>
+                          <th className="text-center p-1.5 font-medium w-12">Unit</th>
+                          <th className="text-right p-1.5 font-medium w-16">Price</th>
+                          <th className="text-right p-1.5 font-medium w-16">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scannedItems.map((it, i) => (
+                          <tr key={i} className="border-t">
+                            <td className="p-1.5 truncate max-w-[140px]" title={it.description}>{it.description}</td>
+                            <td className="p-1.5 text-right font-mono">{it.qty}</td>
+                            <td className="p-1.5 text-center">{it.unit}</td>
+                            <td className="p-1.5 text-right font-mono">{Number(it.unitPrice || 0).toFixed(2)}</td>
+                            <td className="p-1.5 text-right font-mono">{Number(it.amount || 0).toFixed(2)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-50 border-t font-semibold">
+                        <tr>
+                          <td colSpan={4} className="p-1.5 text-right">Total</td>
+                          <td className="p-1.5 text-right font-mono">{scannedItems.reduce((s, it) => s + Number(it.amount || 0), 0).toFixed(2)}</td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setGrnOpen(false)}>Cancel</Button>
+            <Button className="bg-[#1e2a3a] text-white"
+              disabled={markReceived.isPending || !storeId}
+              onClick={handleReceive}>
+              {markReceived.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
+              Confirm Receipt
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Supplier Return Dialog
+───────────────────────────────────────── */
+function SupplierReturnDialog({
+  order, supplier, open, onClose,
+}: {
+  order: SupplierOrder; supplier?: Supplier; open: boolean; onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const { toast } = useToast();
+  const items = Array.isArray(order.items) ? (order.items as any[]) : [];
+  const [returnType, setReturnType] = useState<"initiated" | "rejected_delivery">("initiated");
+  const [refundMode, setRefundMode] = useState<"credit_note" | "cash_refund">(
+    supplier?.paymentMode === "cash" ? "cash_refund" : "credit_note"
+  );
+  const [refundMethod, setRefundMethod] = useState<"cash" | "bank_transfer">("cash");
+  const [returnItems, setReturnItems] = useState(
+    items.map((it: any) => ({ ...it, returnQty: 0, amount: 0, selected: false }))
+  );
+  const [notes, setNotes] = useState("");
+  const { data: stores = [] } = useQuery<any[]>({
+    queryKey: ["/api/stores"],
+    queryFn: () => fetch("/api/stores").then(r => r.json()),
+  });
+  const storeList = (Array.isArray(stores) ? stores : []).filter((s: any) => s.active);
+  const [storeId, setStoreId] = useState<number | "">("");
+  useEffect(() => { if (storeId === "" && storeList[0]) setStoreId(storeList[0].id); }, [storeList.length]); // eslint-disable-line
+
+  const total = returnItems.filter(i => i.selected).reduce((s, i) =>
+    s + (Number(i.returnQty) * Number(i.cost || i.price || 0)), 0);
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const selected = returnItems.filter(i => i.selected && Number(i.returnQty) > 0);
+      if (!selected.length) throw new Error("Select items to return");
+      const res = await fetch("/api/supplier-returns", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          poId: order.id,
+          supplierId: order.supplierId,
+          storeId: storeId || undefined,
+          returnType,
+          refundMode,
+          refundMethod: refundMode === "cash_refund" ? refundMethod : undefined,
+          items: selected.map(i => ({
+            productId: i.productId || null,
+            name: i.name || i.description,
+            qty: Number(i.returnQty),
+            unit: i.unit || "PCS",
+            amount: Number(i.returnQty) * Number(i.cost || i.price || 0),
+          })),
+          notes,
+          refundAmount: total,
+        }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/supplier-orders"] });
+      qc.invalidateQueries({ queryKey: ["/api/supplier-returns"] });
+      qc.invalidateQueries({ queryKey: ["/api/inventory"] });
+      toast({ title: "Supplier return created" });
+      onClose();
+    },
+    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <RotateCcw className="w-5 h-5 text-amber-500" /> Return to {supplier?.name || "Supplier"}
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Return Type</Label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={returnType} onChange={e => setReturnType(e.target.value as any)}>
+                <option value="initiated">Initiated (goods leave our store)</option>
+                <option value="rejected_delivery">Rejected on Delivery</option>
+              </select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">From Store</Label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={storeId} onChange={e => setStoreId(Number(e.target.value))}>
+                {storeList.map((s: any) => <option key={s.id} value={s.id}>{s.nameEn}</option>)}
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Refund Mode</Label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                value={refundMode} onChange={e => setRefundMode(e.target.value as any)}>
+                <option value="credit_note">Credit Note (deduct from balance)</option>
+                <option value="cash_refund">Cash Refund (supplier pays back)</option>
+              </select>
+            </div>
+            {refundMode === "cash_refund" && (
+              <div className="space-y-1">
+                <Label className="text-xs">Refund Method</Label>
+                <select className="w-full h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={refundMethod} onChange={e => setRefundMethod(e.target.value as any)}>
+                  <option value="cash">Cash</option>
+                  <option value="bank_transfer">Bank Transfer</option>
+                </select>
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <Label className="text-xs font-semibold">Select Items to Return</Label>
+            {returnItems.map((it, idx) => (
+              <div key={idx} className="flex items-center gap-2 p-2 rounded border bg-muted/20">
+                <input type="checkbox" checked={it.selected}
+                  onChange={e => {
+                    const arr = [...returnItems];
+                    arr[idx] = { ...arr[idx], selected: e.target.checked };
+                    setReturnItems(arr);
+                  }}
+                  className="w-4 h-4 rounded" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{it.name || it.description}</p>
+                  <p className="text-[11px] text-muted-foreground">
+                    Ordered: {it.qty} {it.unit} · Received: {it.receivedQty || 0}
+                    · Cost: {Number(it.cost || it.price || 0).toFixed(2)}
+                  </p>
+                </div>
+                <Input type="number" min={0} max={Number(it.receivedQty || it.qty)}
+                  value={it.returnQty || ""} disabled={!it.selected}
+                  onChange={e => {
+                    const arr = [...returnItems];
+                    arr[idx] = { ...arr[idx], returnQty: Number(e.target.value) || 0 };
+                    setReturnItems(arr);
+                  }}
+                  className="w-20 h-8 text-sm text-center" placeholder="Qty" />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-between items-baseline">
+            <span className="text-sm font-medium">Return Total</span>
+            <span className="font-mono font-bold">QAR {total.toFixed(2)}</span>
+          </div>
+
+          <div className="space-y-1">
+            <Label className="text-xs">Notes</Label>
+            <Textarea value={notes} onChange={e => setNotes(e.target.value)}
+              placeholder="Reason for return…" rows={2} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button className="bg-amber-600 hover:bg-amber-700 text-white"
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending || !returnItems.some(i => i.selected && Number(i.returnQty) > 0)}>
+            {mut.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <RotateCcw className="w-4 h-4 mr-1.5" />}
+            Submit Return
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1155,12 +1574,14 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
    Main Page
 ───────────────────────────────────────── */
 export default function Suppliers() {
+  const [, nav] = useLocation();
   const [search, setSearch] = useState("");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [orderSupplier, setOrderSupplier] = useState<Supplier | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
+  const [returnOrder, setReturnOrder] = useState<SupplierOrder | null>(null);
 
   const markReceived = useMarkReceived();
 
@@ -1322,6 +1743,7 @@ export default function Suppliers() {
                       onToggle={() => toggleRow(supplier.id)}
                       onEdit={() => setEditSupplier(supplier)}
                       onNewOrder={() => setOrderSupplier(supplier)}
+                      onLedger={() => nav(`/suppliers/${supplier.id}/ledger`)}
                     />
                   ))}
                 </TableBody>
@@ -1368,6 +1790,7 @@ export default function Suppliers() {
                     <TableHead>Supplier</TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Items</TableHead>
+                    <TableHead>Due</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Actions</TableHead>
                     <TableHead className="w-8" />
@@ -1411,6 +1834,23 @@ export default function Suppliers() {
                             <span className="text-sm">{itemCount}</span>
                           </TableCell>
                           <TableCell>
+                            {order.paymentDueDate ? (
+                              <div className="text-xs">
+                                <span className={new Date(order.paymentDueDate) < new Date() && order.status === "received" ? "text-red-600 font-semibold" : "text-muted-foreground"}>
+                                  {fmtDate(order.paymentDueDate)}
+                                </span>
+                                {new Date(order.paymentDueDate) < new Date() && order.status === "received" && (
+                                  <Badge variant="destructive" className="ml-1 text-[9px] px-1 py-0">OVERDUE</Badge>
+                                )}
+                                {order.paymentTermsDays ? (
+                                  <p className="text-[10px] text-muted-foreground">{order.paymentTermsDays}d terms</p>
+                                ) : null}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
                             <Badge
                               className={cn(
                                 "text-[10px] font-semibold px-1.5 py-0 rounded-full border-0",
@@ -1421,15 +1861,33 @@ export default function Suppliers() {
                             </Badge>
                           </TableCell>
                           <TableCell onClick={(e) => e.stopPropagation()}>
-                            {canMarkReceived && (
-                              <ReceiveCell order={order} markReceived={markReceived} />
-                            )}
-                            {order.status === "received" && (
-                              <span className="text-xs text-green-600 flex items-center gap-1">
-                                <CheckCircle2 className="w-3 h-3" />
-                                {fmtDate(order.receivedAt)}
-                              </span>
-                            )}
+                            <div className="flex flex-wrap items-center gap-1">
+                              {canMarkReceived && (
+                                <ReceiveCell order={order} markReceived={markReceived} />
+                              )}
+                              {order.status === "received" && (
+                                <>
+                                  <span className="text-xs text-green-600 flex items-center gap-1 mr-1">
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    {fmtDate(order.receivedAt)}
+                                  </span>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
+                                    onClick={() => nav(`/suppliers/${order.supplierId}/ledger`)}>
+                                    <DollarSign className="w-3 h-3" /> Pay
+                                  </Button>
+                                  <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-amber-600 hover:text-amber-700"
+                                    onClick={() => setReturnOrder(order)}>
+                                    <RotateCcw className="w-3 h-3" /> Return
+                                  </Button>
+                                </>
+                              )}
+                              {sup && (
+                                <Button size="sm" variant="ghost" className="h-7 px-2 gap-1 text-xs"
+                                  onClick={() => nav(`/suppliers/${order.supplierId}/ledger`)}>
+                                  <Wallet className="w-3 h-3" /> Ledger
+                                </Button>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="w-8">
                             {isExpanded ? (
@@ -1475,6 +1933,16 @@ export default function Suppliers() {
           supplier={orderSupplier}
           open={Boolean(orderSupplier)}
           onClose={() => setOrderSupplier(null)}
+        />
+      )}
+
+      {/* Supplier Return */}
+      {returnOrder && (
+        <SupplierReturnDialog
+          order={returnOrder}
+          supplier={supplierMap[returnOrder.supplierId]}
+          open={Boolean(returnOrder)}
+          onClose={() => setReturnOrder(null)}
         />
       )}
     </div>

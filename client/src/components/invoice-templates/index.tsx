@@ -54,10 +54,16 @@ export function normalizeInvoice(doc: any, customerPhone?: string | null): Templ
     date: doc.date,
     poNumber: doc.poNumber ?? null,
     paymentType: doc.paymentType ?? null,
-    invoiceType: doc.invoiceType ?? null,
+    invoiceType: doc.invoiceType
+      ?? (doc.type === "INV" && doc.paymentType
+        ? (doc.paymentType === "Cash" ? "Cash Invoice" : "Credit Invoice")
+        : null),
     terms: doc.terms ?? null,
     customerName: doc.customerName ?? null,
     customerPhone: customerPhone ?? null,
+    deliveryAddress: doc.deliveryAddress ?? null,
+    mapLink: doc.mapLink ?? null,
+    deliveryInstructions: doc.deliveryInstructions ?? null,
     items: (doc.items ?? []).map((it: any) => ({
       description: it.description,
       sku: it.sku ?? null,
@@ -122,6 +128,11 @@ export const InvoiceRenderer = forwardRef<HTMLDivElement, RendererProps>(
       receiverSignature: "",
       invoiceTypeLabel: invoice.invoiceType ?? null,
       terms: invoice.terms ?? null,
+      // Site-delivery fields for the DN paper (address + contact + map QR). DN only.
+      customerPhone: invoice.customerPhone ?? null,
+      deliveryAddress: invoice.deliveryAddress ?? null,
+      mapLink: invoice.mapLink ?? null,
+      deliveryInstructions: invoice.deliveryInstructions ?? null,
     };
     const docType =
       invoice.type === "QT" ? "quotation"

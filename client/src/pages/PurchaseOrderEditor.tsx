@@ -23,7 +23,17 @@ interface Supplier { id: number; name: string; phone?: string; whatsapp?: string
 interface Product { id: number; sku: string; name: string; category: string; unit: string; costPrice: number; active: boolean; }
 interface POItem { id: string; productId?: number; sku: string; description: string; qty: number; unit: string; cost: number; amount: number; }
 
-const UNITS = ["PCS", "BAG", "MTR", "PAIR", "BOX", "ROLL", "SET", "KG", "LTR", "GALLON"];
+const UNITS = [
+  "PCS", "NOS", "SET", "PAIR", "DOZEN",
+  "BOX", "BAG", "PKT", "PACK", "BUNDLE", "CTN", "CASE", "CARTON", "PALLET",
+  "KG", "GM", "TON", "LB",
+  "LTR", "ML", "GLN", "DRUM", "BUCKET", "BARREL",
+  "MTR", "CM", "MM", "FT", "IN", "YD",
+  "SQFT", "SQM",
+  "ROLL", "SHEET", "SPOOL", "COIL", "REAM",
+  "TUBE", "BOTTLE", "CAN", "JAR",
+  "LENGTH", "LOT", "LOAD", "TRIP",
+];
 const uid = () => Math.random().toString(36).slice(2, 10);
 const blank = (): POItem => ({ id: uid(), sku: "", description: "", qty: 1, unit: "PCS", cost: 0, amount: 0 });
 

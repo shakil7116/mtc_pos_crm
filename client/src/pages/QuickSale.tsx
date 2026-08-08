@@ -6,7 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { Search, Plus, Minus, Trash2, Banknote, Loader2, Zap, Printer, RotateCcw, Package, User, WifiOff } from "lucide-react";
+import { Search, Plus, Minus, Trash2, Banknote, Loader2, Zap, Printer, RotateCcw, Package, User, WifiOff, FileText } from "lucide-react";
 import { isOnline, cacheSet, cacheGet, enqueueSale, useOffline } from "@/lib/offline";
 import InlineAddCustomerDialog, { type QuickCustomer } from "@/components/InlineAddCustomerDialog";
 import SaveInterceptorModal from "@/components/SaveInterceptorModal";
@@ -36,7 +36,7 @@ export default function QuickSale() {
 
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<Line[]>([]);
-  const [receipt, setReceipt] = useState<{ number: string; total: number; id: number } | null>(null);
+  const [receipt, setReceipt] = useState<{ number: string; total: number; id: number; type: "INV" | "QT" } | null>(null);
   const [docType, setDocType] = useState<"INV" | "QT">("INV");          // Task 3 — Invoice | Quotation
   const [invoiceMode, setInvoiceMode] = useState<"cash" | "credit">("cash"); // Task 2 — Cash | Credit
   const [invoiceModeTouched, setInvoiceModeTouched] = useState(false);
@@ -104,14 +104,35 @@ export default function QuickSale() {
     initialData: () => cacheGet<any[]>("inventory") ?? undefined,
     staleTime: 30_000,
   });
-  // Locations holding stock (>0) for a product, most-stock first.
+  // Locations holding stock (>0) for a product within user's store group, most-stock first.
   const locsForProduct = (productId: number) =>
     (inventory as any[])
-      .filter((r) => r.productId === productId && Number(r.qty) > 0)
+      .filter((r) => r.productId === productId && Number(r.qty) > 0 && relevantStoreIds.has(r.storeId))
       .map((r) => ({ storeId: r.storeId, name: r.store?.nameEn || r.store?.name || `#${r.storeId}`, qty: Number(r.qty) }))
       .sort((a, b) => b.qty - a.qty);
   // Sell from the user's own store, else the first active store location.
   const storeId = user?.storeId ?? stores.find((s: any) => s.type === "store" && s.active !== false)?.id ?? stores[0]?.id ?? null;
+
+  // Store IDs relevant to Quick Sale: user's store + its owned warehouses.
+  const relevantStoreIds = useMemo(() => {
+    if (!storeId) return new Set<number>();
+    const ids = new Set<number>([storeId]);
+    (stores as any[]).forEach((s) => {
+      if (s.type === "warehouse" && (s.ownerStoreId === storeId || s.ownerStoreId == null)) ids.add(s.id);
+    });
+    return ids;
+  }, [storeId, stores]);
+
+  // Products with stock > 0 at the user's store group.
+  const productsWithStock = useMemo(() => {
+    const stockByProduct = new Map<number, number>();
+    (inventory as any[]).forEach((r) => {
+      if (!relevantStoreIds.has(r.storeId)) return;
+      const qty = Number(r.qty) || 0;
+      if (qty > 0) stockByProduct.set(r.productId, (stockByProduct.get(r.productId) || 0) + qty);
+    });
+    return stockByProduct;
+  }, [inventory, relevantStoreIds]);
 
   useEffect(() => { searchRef.current?.focus(); }, []);
 
@@ -124,16 +145,15 @@ export default function QuickSale() {
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const list = (products as Product[]).filter((p) => p.active !== false);
+    const list = (products as Product[]).filter((p) => p.active !== false && productsWithStock.has(p.id));
     if (!q) return list.slice(0, 40);
     return list.filter((p) => p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q)).slice(0, 40);
-  }, [products, search]);
+  }, [products, search, productsWithStock]);
 
   const total = cart.reduce((s, l) => s + l.price * l.qty, 0);
   // Block charge until every multi-location line has a location picked.
   const locationPending = docType !== "QT" && cart.some((l) => l.locationStoreId == null && l.locOptions.length > 1);
-  // Every invoice (cash + credit) needs a customer. Quotations may stay anonymous.
-  const customerRequired = docType === "INV" && !customer;
+  const customerRequired = !customer;
 
   function addProduct(p: Product) {
     const price = Number(p.salePrice) || 0;
@@ -199,7 +219,7 @@ export default function QuickSale() {
       qc.invalidateQueries({ queryKey: ["/api/documents"] });
       qc.invalidateQueries({ queryKey: ["/api/inventory"] });
       setInterceptorOpen(false);
-      setReceipt(doc.queued ? { number: "QUEUED (offline)", total, id: 0 } : { number: doc.number, total, id: doc.id });
+      setReceipt(doc.queued ? { number: "QUEUED (offline)", total, id: 0, type: docType } : { number: doc.number, total, id: doc.id, type: docType });
       setCart([]);
     },
     onError: (e: any) => toast({ title: "Sale failed", description: String(e?.message || ""), variant: "destructive" }),
@@ -343,7 +363,7 @@ export default function QuickSale() {
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="col-span-full text-center text-sm text-muted-foreground py-8">No products match “{search}”.</p>
+              <p className="col-span-full text-center text-sm text-muted-foreground py-8">No products match "{search}".</p>
             )}
           </div>
         </div>
@@ -419,7 +439,7 @@ export default function QuickSale() {
               </Button>
               {!storeId && <p className="text-xs text-red-500 text-center">No store location set — add one in Settings.</p>}
               {locationPending && <p className="text-xs text-amber-600 text-center">Pick a location for the highlighted line(s) first.</p>}
-              {customerRequired && <p className="text-xs text-amber-600 text-center">Attach a customer — every invoice needs one. Search or “+ Add new”.</p>}
+              {customerRequired && <p className="text-xs text-amber-600 text-center">Attach a customer first — search above or tap + Add new.</p>}
             </div>
           </div>
         </div>
@@ -446,21 +466,25 @@ export default function QuickSale() {
       {receipt && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={newSale}>
           <div className="bg-white rounded-2xl p-6 max-w-sm w-full text-center" onClick={(e) => e.stopPropagation()}>
-            <div className="w-14 h-14 rounded-full bg-green-100 flex items-center justify-center mx-auto mb-3">
-              <Banknote className="w-7 h-7 text-green-600" />
+            <div className={cn("w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3", receipt.type === "QT" ? "bg-amber-100" : "bg-green-100")}>
+              {receipt.type === "QT" ? <FileText className="w-7 h-7 text-amber-600" /> : <Banknote className="w-7 h-7 text-green-600" />}
             </div>
-            <h3 className="text-xl font-bold">{receipt.id === 0 ? "Sale queued" : "Sale complete"}</h3>
+            <h3 className="text-xl font-bold">
+              {receipt.id === 0 ? "Queued offline" : receipt.type === "QT" ? "Quotation saved" : "Sale complete"}
+            </h3>
             <p className="text-sm text-muted-foreground mt-1">{receipt.number}</p>
             <p className="font-mono font-bold text-2xl text-amber-600 mt-2">{money(receipt.total)}</p>
-            <p className="text-xs text-muted-foreground">{receipt.id === 0 ? "saved offline — syncs automatically when back online" : "paid in cash"}</p>
+            <p className="text-xs text-muted-foreground">
+              {receipt.id === 0 ? "saved offline — syncs automatically when back online" : receipt.type === "QT" ? "no payment collected — this is a price quote" : "paid in cash"}
+            </p>
             <div className="flex gap-2 mt-5">
               {receipt.id !== 0 && (
                 <Button variant="outline" className="flex-1 gap-1.5" onClick={() => nav(`/documents/${receipt.id}`)}>
-                  <Printer className="w-4 h-4" /> Receipt
+                  <Printer className="w-4 h-4" /> {receipt.type === "QT" ? "View" : "Receipt"}
                 </Button>
               )}
               <Button className="flex-1 gap-1.5 bg-amber-500 hover:bg-amber-600 text-white" onClick={newSale}>
-                <RotateCcw className="w-4 h-4" /> New Sale
+                <RotateCcw className="w-4 h-4" /> {receipt.type === "QT" ? "New Quote" : "New Sale"}
               </Button>
             </div>
           </div>

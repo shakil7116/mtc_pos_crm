@@ -36,7 +36,9 @@ import {
   Moon,
   ChevronRight,
 } from "lucide-react";
+import { Link } from "wouter";
 import { cn } from "@/lib/utils";
+import TasksPanel from "@/components/TasksPanel";
 
 /* ────────────────────────────────────────────────────────────
    Performance Hub — dynamic CEO dashboard, matched to the design.
@@ -82,15 +84,18 @@ export type PerformanceHubData = {
   }>;
   payment_reminders: Array<{
     customer_name: string;
+    customer_id?: number;
     invoices: number;
     outstanding: number;
     status_days: string;
     status_severity: Severity;
     phone?: string;
+    /** pre-built WhatsApp statement text (extension) */
+    message?: string;
     /** mini bar-spark of recent balances (extension) */
     trend?: number[];
   }>;
-  inventory_alerts: Array<{ sku_name: string; current_stock: number; min_stock: number; thumbnail_url?: string }>;
+  inventory_alerts: Array<{ sku_name: string; product_id?: number; current_stock: number; min_stock: number; thumbnail_url?: string }>;
   location_overview?: {
     range_label?: string;
     totals?: { revenue?: number; gross?: number; profit?: number };
@@ -99,8 +104,8 @@ export type PerformanceHubData = {
     top_customers?: Array<{ name: string; revenue: number; photo_url?: string }>;
   };
   insights: {
-    best_customer: { name: string; spend: number; history_count: number; photo_url?: string; subtitle?: string };
-    best_product: { name: string; units_sold: number; trend?: number[]; tags?: string[]; margin?: number };
+    best_customer: { name: string; id?: number; spend: number; history_count: number; photo_url?: string; subtitle?: string };
+    best_product: { name: string; id?: number; units_sold: number; trend?: number[]; tags?: string[]; margin?: number };
   };
   tasks: { done: PerfTask[]; in_progress: PerfTask[]; review: PerfTask[] };
 };
@@ -225,6 +230,7 @@ const HubMetric = memo(function HubMetric({
   accent,
   icon,
   trend,
+  href,
 }: {
   id: string;
   label: string;
@@ -233,11 +239,12 @@ const HubMetric = memo(function HubMetric({
   accent: string;
   icon: React.ReactNode;
   trend?: number[];
+  href?: string;
 }) {
   const data = toSeries(trend);
   const gid = `spark-${slug(id)}`;
-  return (
-    <div className="px-3 py-1 lg:first:pl-0">
+  const body = (
+    <>
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
         <span style={{ color: accent }} className="shrink-0">
           {icon}
@@ -265,7 +272,15 @@ const HubMetric = memo(function HubMetric({
           </div>
         )}
       </div>
-    </div>
+    </>
+  );
+  const cls = "block px-3 py-1 lg:first:pl-0";
+  return href ? (
+    <Link href={href} className={cn(cls, "rounded-lg transition-colors hover:bg-slate-100/70 dark:hover:bg-slate-800/40")}>
+      {body}
+    </Link>
+  ) : (
+    <div className={cls}>{body}</div>
   );
 });
 
@@ -296,7 +311,7 @@ const TargetGauge = memo(function TargetGauge({ pct, night }: { pct: number; nig
 
 const UrgentBanner = memo(function UrgentBanner({ count }: { count: number }) {
   return (
-    <button className="flex w-full items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-left transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:hover:bg-red-500/15">
+    <Link href="/inventory?filter=low-stock" className="flex w-full items-center gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-left transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:hover:bg-red-500/15">
       <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-red-100 text-red-600 dark:bg-red-500/20 dark:text-red-400">
         <Radio className="h-4 w-4" />
       </span>
@@ -309,7 +324,7 @@ const UrgentBanner = memo(function UrgentBanner({ count }: { count: number }) {
         </p>
       </div>
       <ChevronRight className="h-5 w-5 shrink-0 text-red-400" />
-    </button>
+    </Link>
   );
 });
 
@@ -319,15 +334,17 @@ const UrgentAction = memo(function UrgentAction({
   value,
   caption,
   tone,
+  href,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   caption?: string;
   tone: "red" | "amber";
+  href?: string;
 }) {
-  return (
-    <div className={cn(CARD, "p-4")}>
+  const inner = (
+    <div className={cn(CARD, "p-4", href && "hover:border-slate-300 dark:hover:border-slate-700")}>
       <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400">
         <span className={tone === "red" ? "text-red-500 dark:text-red-400" : "text-amber-500 dark:text-amber-400"}>{icon}</span>
         {label}
@@ -338,6 +355,7 @@ const UrgentAction = memo(function UrgentAction({
       {caption && <p className={cn(CAP, "mt-0.5")}>{caption}</p>}
     </div>
   );
+  return href ? <Link href={href} className="block">{inner}</Link> : inner;
 });
 
 const ReceivablesAging = memo(function ReceivablesAging({
@@ -350,7 +368,7 @@ const ReceivablesAging = memo(function ReceivablesAging({
   const has = Array.isArray(data) && data.length > 0;
   const ct = chartTheme(night);
   return (
-    <div className={cn(CARD, "p-5")}>
+    <Link href="/customers?filter=credit-outstanding" className={cn(CARD, "block p-5")}>
       <div className="mb-3 flex items-center justify-between">
         <h3 className={SECTION_TITLE}>Receivables Aging</h3>
         {has && (
@@ -390,7 +408,7 @@ const ReceivablesAging = memo(function ReceivablesAging({
       ) : (
         <EmptyChart hint="Provide receivables_aging[] to render the aging trend." />
       )}
-    </div>
+    </Link>
   );
 });
 
@@ -399,7 +417,7 @@ const PaymentReminders = memo(function PaymentReminders({ rows }: { rows: Perfor
     <div className={cn(CARD, "overflow-hidden")}>
       <div className="flex items-center justify-between px-5 py-3">
         <h3 className={SECTION_TITLE}>Customer Payment Reminders</h3>
-        <span className="text-xs font-semibold text-sky-600 dark:text-sky-400">Open Messages</span>
+        <Link href="/messages" className="text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400">Open Messages</Link>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -425,7 +443,13 @@ const PaymentReminders = memo(function PaymentReminders({ rows }: { rows: Perfor
                   <td className="px-5 py-3">
                     <div className="flex items-center gap-2.5">
                       <Avatar name={r.customer_name} />
-                      <span className="max-w-[180px] truncate font-semibold text-slate-900 dark:text-slate-100">{r.customer_name}</span>
+                      {r.customer_id ? (
+                        <Link href={`/customers/${r.customer_id}`} className="max-w-[180px] truncate font-semibold text-slate-900 hover:underline dark:text-slate-100">
+                          {r.customer_name}
+                        </Link>
+                      ) : (
+                        <span className="max-w-[180px] truncate font-semibold text-slate-900 dark:text-slate-100">{r.customer_name}</span>
+                      )}
                     </div>
                   </td>
                   <td className="px-4 py-3 text-center font-semibold text-slate-500 dark:text-slate-400">{r.invoices}</td>
@@ -442,12 +466,26 @@ const PaymentReminders = memo(function PaymentReminders({ rows }: { rows: Perfor
                   </td>
                   <td className="px-5 py-3">
                     <div className="flex justify-end gap-2">
-                      <button className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-700">
-                        <MessageCircle className="h-3.5 w-3.5" /> Remind
-                      </button>
-                      <button className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20">
+                      {r.phone ? (
+                        <a
+                          href={`https://wa.me/${r.phone.replace(/\D/g, "")}${r.message ? `?text=${encodeURIComponent(r.message)}` : ""}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-700"
+                        >
+                          <MessageCircle className="h-3.5 w-3.5" /> Remind
+                        </a>
+                      ) : (
+                        <Link href="/messages" className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-200 dark:hover:bg-slate-700">
+                          <MessageCircle className="h-3.5 w-3.5" /> Remind
+                        </Link>
+                      )}
+                      <Link
+                        href={r.customer_id ? `/customers/${r.customer_id}` : "/customers?filter=credit-outstanding"}
+                        className="inline-flex items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-600 transition-colors hover:bg-red-100 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-400 dark:hover:bg-red-500/20"
+                      >
                         <ArrowUpRight className="h-3.5 w-3.5" /> Escalate
-                      </button>
+                      </Link>
                     </div>
                   </td>
                 </tr>
@@ -472,13 +510,17 @@ const InventoryAlerts = memo(function InventoryAlerts({
       <div className="mb-3 flex items-center gap-2">
         <Package className="h-4 w-4 text-red-500 dark:text-red-400" />
         <h3 className={SECTION_TITLE}>Inventory Alerts</h3>
-        <span className="ml-auto text-xs font-semibold text-sky-600 dark:text-sky-400">View all</span>
+        <Link href="/inventory?filter=low-stock" className="ml-auto text-xs font-semibold text-sky-600 hover:underline dark:text-sky-400">View all</Link>
       </div>
       <p className="font-mono text-2xl font-bold text-red-600 dark:text-red-400">{fmtInt(lowStockCount)}</p>
       <p className="mb-3 text-xs text-slate-400 dark:text-slate-500">products at or below minimum stock</p>
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {items.map((it, i) => (
-          <div key={`${it.sku_name}-${i}`} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-800/30">
+          <Link
+            key={`${it.sku_name}-${i}`}
+            href={it.product_id ? `/inventory/${it.product_id}` : "/inventory?filter=low-stock"}
+            className="flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 p-2 transition-colors hover:border-sky-300 dark:border-slate-800 dark:bg-slate-800/30 dark:hover:border-sky-500/40"
+          >
             {it.thumbnail_url ? (
               <img src={it.thumbnail_url} alt="" className="h-10 w-10 shrink-0 rounded-lg object-cover" />
             ) : (
@@ -494,10 +536,10 @@ const InventoryAlerts = memo(function InventoryAlerts({
                 {fmtInt(it.min_stock)} min
               </p>
             </div>
-            <button className="shrink-0 rounded-lg bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 transition-colors hover:bg-sky-200 dark:bg-sky-500/15 dark:text-sky-400 dark:hover:bg-sky-500/25">
+            <span className="shrink-0 rounded-lg bg-sky-100 px-2.5 py-1 text-xs font-semibold text-sky-700 dark:bg-sky-500/15 dark:text-sky-400">
               Restock
-            </button>
-          </div>
+            </span>
+          </Link>
         ))}
       </div>
     </div>
@@ -516,7 +558,7 @@ const Insights = memo(function Insights({ insights, night }: { insights: Perform
       </div>
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         {/* Best customer */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/30">
+        <Link href={bc.id ? `/customers/${bc.id}` : "/customers"} className="block rounded-xl border border-slate-200 bg-slate-50 p-4 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/30 dark:hover:border-slate-700">
           <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Best Customer</p>
           <div className="flex items-center gap-3">
             <Avatar name={bc.name} url={bc.photo_url} size={12} />
@@ -529,9 +571,9 @@ const Insights = memo(function Insights({ insights, night }: { insights: Perform
             <Row label="Purchase history" value={`${fmtInt(bc.history_count)}`} />
             <Row label="Total spend" value={fmtQAR(bc.spend)} valueClass="text-emerald-600 dark:text-emerald-400" />
           </div>
-        </div>
+        </Link>
         {/* Best product */}
-        <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-800/30">
+        <Link href={bp.id ? `/inventory/${bp.id}` : "/inventory"} className="block rounded-xl border border-slate-200 bg-slate-50 p-4 transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-slate-800/30 dark:hover:border-slate-700">
           <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">Best Product</p>
           <div className="flex items-center gap-3">
             <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br from-amber-500/30 to-orange-500/30 text-amber-600 dark:text-amber-200">
@@ -565,7 +607,7 @@ const Insights = memo(function Insights({ insights, night }: { insights: Perform
             <Row label="Units sold" value={`${fmtInt(bp.units_sold)}`} valueClass="text-sky-600 dark:text-sky-400" />
             {bp.margin != null && <Row label="Margin" value={fmtQAR(bp.margin)} />}
           </div>
-        </div>
+        </Link>
       </div>
     </div>
   );
@@ -684,9 +726,9 @@ const LocationOverviewPanel = memo(function LocationOverviewPanel({
           </div>
 
           <div className="mt-3">
-            <span className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 dark:text-indigo-400">
+            <Link href="/reports?tab=locations" className="inline-flex items-center gap-1 text-xs font-semibold text-indigo-600 hover:underline dark:text-indigo-400">
               Full location report <ChevronRight className="h-3.5 w-3.5" />
-            </span>
+            </Link>
           </div>
         </>
       ) : (
@@ -846,10 +888,10 @@ export function PerformanceHub({
               <RangeToggle value={hubRange} onChange={setHubRange} options={[{ k: "7d", label: "7 days" }, { k: "30d", label: "30 days" }]} />
             </div>
             <div className="grid grid-cols-2 gap-y-3 lg:grid-cols-5 lg:divide-x lg:divide-slate-200 lg:dark:divide-slate-800">
-              <HubMetric id="revenue" label="Today's Revenue" value={fmtQAR(ph.revenue_today)} caption={cap.revenue} accent="#38bdf8" icon={<TrendingUp className="h-3.5 w-3.5" />} trend={ph.trends?.revenue} />
-              <HubMetric id="profit" label="Profit Today" value={fmtQAR(ph.profit_today)} caption={cap.profit} accent="#22c55e" icon={<DollarSign className="h-3.5 w-3.5" />} trend={ph.trends?.profit} />
-              <HubMetric id="cash" label="Cash Position" value={fmtQAR(ph.cash_position)} caption={cap.cash} accent="#2dd4bf" icon={<Wallet className="h-3.5 w-3.5" />} trend={ph.trends?.cash} />
-              <HubMetric id="credit" label="Credit Exposure" value={fmtQAR(ph.credit_exposure)} caption={cap.credit} accent="#f87171" icon={<CreditCard className="h-3.5 w-3.5" />} trend={ph.trends?.credit} />
+              <HubMetric id="revenue" label="Today's Revenue" value={fmtQAR(ph.revenue_today)} caption={cap.revenue} accent="#38bdf8" icon={<TrendingUp className="h-3.5 w-3.5" />} trend={ph.trends?.revenue} href="/documents?type=INV&date=today" />
+              <HubMetric id="profit" label="Profit Today" value={fmtQAR(ph.profit_today)} caption={cap.profit} accent="#22c55e" icon={<DollarSign className="h-3.5 w-3.5" />} trend={ph.trends?.profit} href="/finance?tab=profit&period=today" />
+              <HubMetric id="cash" label="Cash Position" value={fmtQAR(ph.cash_position)} caption={cap.cash} accent="#2dd4bf" icon={<Wallet className="h-3.5 w-3.5" />} trend={ph.trends?.cash} href="/finance?tab=cash-position" />
+              <HubMetric id="credit" label="Credit Exposure" value={fmtQAR(ph.credit_exposure)} caption={cap.credit} accent="#f87171" icon={<CreditCard className="h-3.5 w-3.5" />} trend={ph.trends?.credit} href="/customers?filter=credit-outstanding" />
               <TargetGauge pct={ph.target_percentage} night={night} />
             </div>
           </div>
@@ -861,8 +903,8 @@ export function PerformanceHub({
           <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
             <div className="space-y-4">
               <h2 className={SECTION_TITLE}>Urgent Actions and Insights</h2>
-              <UrgentAction icon={<PackageX className="h-3.5 w-3.5" />} label="Critical Low Stock" value={fmtInt(ua.low_stock_count)} caption={ua.low_stock_caption} tone="red" />
-              <UrgentAction icon={<AlertTriangle className="h-3.5 w-3.5" />} label="Aging Debts" value={fmtQAR(ua.aging_debts_total)} caption={ua.aging_caption} tone="amber" />
+              <UrgentAction icon={<PackageX className="h-3.5 w-3.5" />} label="Critical Low Stock" value={fmtInt(ua.low_stock_count)} caption={ua.low_stock_caption} tone="red" href="/inventory?filter=low-stock" />
+              <UrgentAction icon={<AlertTriangle className="h-3.5 w-3.5" />} label="Aging Debts" value={fmtQAR(ua.aging_debts_total)} caption={ua.aging_caption} tone="amber" href="/customers?filter=credit-outstanding" />
             </div>
             <div className="lg:col-span-2">
               <ReceivablesAging data={data.receivables_aging} night={night} />
@@ -881,8 +923,8 @@ export function PerformanceHub({
           {/* ── Location overview ── */}
           <LocationOverviewPanel data={data.location_overview} night={night} />
 
-          {/* ── Task board ── */}
-          <TaskBoard tasks={data.tasks} />
+          {/* ── Task board (interactive) ── */}
+          <TasksPanel />
 
           <div className="h-4" />
         </div>

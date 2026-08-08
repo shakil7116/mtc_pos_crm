@@ -5,9 +5,10 @@ import {
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, editLog, messagesLog, stockAdjustments, supplierOrders,
   documentCounters, damageClaims,
-  supplierReturns, notifications, cashflow, expenses, warehouseIssues, corrections,
+  supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
-  ownerLoans, tasks,
+  ownerLoans, tasks, staffPayroll,
+  arrangementNotes, arrangementNoteItems, arrangementCorrections,
   type Settings, type InsertSettings,
   type Store, type InsertStore,
   type User, type InsertUser,
@@ -23,10 +24,12 @@ import {
   type EditLog,
   type MessagesLog,
   type StockAdjustment,
-  type SupplierOrder, type SupplierReturn, type Notification,
+  type SupplierOrder, type SupplierReturn, type SupplierPayment, type Notification,
   type Cashflow, type Expense, type InsertExpense,
   type WarehouseIssue, type InsertWarehouseIssue,
   type Correction,
+  type StaffPayroll, type InsertStaffPayroll,
+  type ArrangementNote, type ArrangementNoteItem, type ArrangementCorrection,
 } from "@shared/schema";
 import { eq, desc, asc, and, or, gte, lte, lt, ne, isNull, sql, inArray } from "drizzle-orm";
 
@@ -142,7 +145,7 @@ export async function changeOwnPin(userId: number, newPin: string): Promise<void
 }
 
 // ─── Tasks (manager → staff workflow) ────────────────────────────────────────
-const TASK_STATUS = ["open", "in_progress", "done"];
+const TASK_STATUS = ["open", "in_progress", "pending_verification", "done"];
 export async function createTask(data: {
   title: string; note?: string | null; assignedTo: number; assignedBy?: number | null;
   storeId?: number | null; dueDate?: string | null;
@@ -203,7 +206,7 @@ export async function updateTask(
   if (data.status !== undefined) {
     if (!TASK_STATUS.includes(data.status)) throw new Error("Invalid task status.");
     patch.status = data.status;
-    patch.completedAt = data.status === "done" ? new Date() : null;
+    patch.completedAt = data.status === "done" ? new Date() : (data.status === "pending_verification" ? existing.completedAt : null);
   }
   const [row] = await db.update(tasks).set(patch).where(eq(tasks.id, id)).returning();
   return row;
@@ -478,7 +481,18 @@ export async function updateProduct(id: number, data: Partial<InsertProduct>): P
 }
 
 // ─── Inventory ───────────────────────────────────────────────────────────────
-export async function getInventory(storeId?: number): Promise<(Inventory & { product: Product; store: Store })[]> {
+export async function getInventory(storeId?: number, includeWarehouses?: boolean): Promise<(Inventory & { product: Product; store: Store })[]> {
+  let filter: any = undefined;
+  if (storeId) {
+    if (includeWarehouses) {
+      const owned = await db.select({ id: stores.id }).from(stores)
+        .where(and(eq(stores.ownerStoreId, storeId), eq(stores.type, "warehouse")));
+      const ids = [storeId, ...owned.map(r => r.id)];
+      filter = inArray(inventory.storeId, ids);
+    } else {
+      filter = eq(inventory.storeId, storeId);
+    }
+  }
   const rows = await db.select({
     inv: inventory,
     product: products,
@@ -487,7 +501,7 @@ export async function getInventory(storeId?: number): Promise<(Inventory & { pro
     .from(inventory)
     .innerJoin(products, eq(inventory.productId, products.id))
     .innerJoin(stores, eq(inventory.storeId, stores.id))
-    .where(storeId ? eq(inventory.storeId, storeId) : undefined)
+    .where(filter)
     .orderBy(asc(products.name));
   return rows.map(r => ({ ...r.inv, product: r.product, store: r.store }));
 }
@@ -900,6 +914,9 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
   if (req.type === "INV" && req.customerId == null) {
     throw new Error("A customer is required for every invoice — select or add one before saving.");
   }
+  if (req.type === "INV" && req.storeId == null) {
+    throw new Error("A store is required for every invoice — assign the user to a store or select one.");
+  }
 
   // ── Credit-limit gate (server-side, money integrity) ──
   // The client (SaveInterceptorModal) blocks this too, but a direct API POST must
@@ -968,6 +985,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     deliveryMethod: (req as any).deliveryMethod,
     deliveryStatus: (req as any).deliveryStatus,
     deliveryAddress: (req as any).deliveryAddress,
+    mapLink: (req as any).mapLink ?? null,
     expectedDeliveryDate: (req as any).expectedDeliveryDate ?? null,
     driverId: (req as any).driverId ?? null,
     deliveryInstructions: (req as any).deliveryInstructions ?? null,
@@ -1016,19 +1034,184 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     items.push(...inserted);
   }
 
-  // Deduct stock for INV — from each line's OWN location (Quick Sale per-line location),
-  // falling back to the invoice store when a line has none.
+  // ── Smart split: deduct stock per-location, generate arrangement note ──
   if (req.type === "INV") {
-    for (const item of req.items) {
-      if (item.productId) {
-        const loc = (item as any).locationStoreId ?? req.storeId;
-        if (loc) {
-          await adjustStock(
-            item.productId, loc, -parseFloat(String(item.qty)),
-            "sale", "Invoice sale", doc.id, req.createdBy,
-          );
-        }
+    const invoiceStoreId = req.storeId;
+    // Find all same-owner locations (stores + warehouses under same owner).
+    const allStores = await db.select().from(stores).where(eq(stores.active, true));
+    let sameOwnerIds: number[] = [];
+    if (invoiceStoreId) {
+      const invoiceStore = allStores.find(s => s.id === invoiceStoreId);
+      const ownerId = invoiceStore?.ownerStoreId ?? invoiceStoreId;
+      sameOwnerIds = allStores
+        .filter(s => s.id === ownerId || s.ownerStoreId === ownerId || s.id === invoiceStoreId)
+        .map(s => s.id);
+    }
+
+    // Build split plan for each item.
+    type SplitEntry = { productId: number; description: string; unit: string; totalQty: number;
+      sourceStoreId: number; splitQty: number; documentItemId?: number };
+    const splitPlan: SplitEntry[] = [];
+    let needsNote = false;
+
+    for (let idx = 0; idx < req.items.length; idx++) {
+      const item = req.items[idx];
+      if (!item.productId) {
+        // Non-product line (custom description) — no stock to split.
+        continue;
       }
+      const totalQty = parseFloat(String(item.qty));
+      const preferredLoc = (item as any).locationStoreId ?? invoiceStoreId;
+      const insertedItem = items[idx];
+
+      if (preferredLoc && sameOwnerIds.length <= 1) {
+        // Single location — deduct directly (backward compat for simple setups).
+        await adjustStock(item.productId, preferredLoc, -totalQty, "sale", "Invoice sale", doc.id, req.createdBy);
+        splitPlan.push({ productId: item.productId, description: String(item.description),
+          unit: String(item.unit), totalQty, sourceStoreId: preferredLoc, splitQty: totalQty,
+          documentItemId: insertedItem?.id });
+        continue;
+      }
+
+      // Multi-location split: check availability across all same-owner locations.
+      const stockByLoc: { storeId: number; available: number }[] = [];
+      for (const locId of sameOwnerIds) {
+        const qty = await getProductStock(item.productId, locId);
+        if (qty > 0) stockByLoc.push({ storeId: locId, available: qty });
+      }
+
+      // Sort: preferred location first (minimize transfers), then by most stock.
+      stockByLoc.sort((a, b) => {
+        if (a.storeId === preferredLoc) return -1;
+        if (b.storeId === preferredLoc) return 1;
+        return b.available - a.available;
+      });
+
+      let remaining = totalQty;
+      const itemSplits: { storeId: number; take: number }[] = [];
+
+      for (const loc of stockByLoc) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, loc.available);
+        itemSplits.push({ storeId: loc.storeId, take });
+        remaining -= take;
+      }
+
+      // If still remaining after all locations, deduct from preferred (goes to 0, clamped).
+      if (remaining > 0 && preferredLoc) {
+        itemSplits.push({ storeId: preferredLoc, take: remaining });
+        remaining = 0;
+      }
+
+      // Deduct stock per split.
+      for (const sp of itemSplits) {
+        await adjustStock(item.productId, sp.storeId, -sp.take, "sale", "Invoice sale", doc.id, req.createdBy);
+        splitPlan.push({ productId: item.productId, description: String(item.description),
+          unit: String(item.unit), totalQty, sourceStoreId: sp.storeId, splitQty: sp.take,
+          documentItemId: insertedItem?.id });
+      }
+      if (itemSplits.length > 1) needsNote = true;
+      if (itemSplits.length === 1 && itemSplits[0].storeId !== preferredLoc) needsNote = true;
+    }
+
+    // Generate arrangement note when items span multiple locations.
+    // Also generate for any invoice with product items — staff need to know what to prepare.
+    if (splitPlan.length > 0) {
+      try {
+        const pickupLocId = invoiceStoreId ?? null;
+        const isDelivery = (req as any).deliveryMethod === "deliver_site";
+        // Determine main warehouse: type=warehouse with ownerStoreId matching invoice store.
+        const mainWh = allStores.find(s => s.type === "warehouse" && s.ownerStoreId === invoiceStoreId) ?? null;
+        const deliveryHub = mainWh?.id ?? invoiceStoreId;
+
+        const [note] = await db.insert(arrangementNotes).values({
+          documentId: doc.id,
+          pickupLocationId: isDelivery ? deliveryHub : pickupLocId,
+          deliveryMethod: isDelivery ? "delivery" : "pickup",
+          status: "pending",
+        }).returning();
+
+        // Group items by staff responsibility:
+        // - Main warehouse staff handles items at main warehouse.
+        // - Store staff handles everything else (store + other warehouses).
+        for (const sp of splitPlan) {
+          const isMainWh = mainWh && sp.sourceStoreId === mainWh.id;
+          const staffGroup = isMainWh ? "warehouse" : "store";
+          const bringToLoc = (sp.sourceStoreId !== (isDelivery ? deliveryHub : pickupLocId))
+            ? (isDelivery ? deliveryHub : pickupLocId)
+            : null;
+
+          await db.insert(arrangementNoteItems).values({
+            noteId: note.id,
+            documentItemId: sp.documentItemId ?? null,
+            productId: sp.productId,
+            description: sp.description,
+            unit: sp.unit,
+            totalQty: String(sp.totalQty),
+            sourceStoreId: sp.sourceStoreId,
+            splitQty: String(sp.splitQty),
+            bringTo: bringToLoc,
+            staffGroup,
+            arranged: false,
+          });
+        }
+
+        // Notify staff about arrangement.
+        await createNotification({
+          targetRole: "warehouse", type: "arrangement", title: "New arrangement note",
+          message: `${number} for ${req.customerName || "customer"} — ${splitPlan.length} item(s) to arrange.`,
+          link: `/documents/${doc.id}`, entityType: "document", entityId: doc.id, createdBy: req.createdBy,
+        });
+        if (needsNote || splitPlan.some(s => s.sourceStoreId !== deliveryHub)) {
+          await createNotification({
+            targetRole: "salesman", type: "arrangement", title: "Multi-location arrangement",
+            message: `${number} — items split across locations. Check arrangement note.`,
+            link: `/documents/${doc.id}`, entityType: "document", entityId: doc.id, createdBy: req.createdBy,
+          });
+        }
+
+        // Also notify admin
+        await createNotification({
+          targetRole: "admin", type: "arrangement", title: "Arrangement note created",
+          message: `${number} for ${req.customerName || "customer"} — ${splitPlan.length} item(s).`,
+          link: `/documents/${doc.id}`, entityType: "document", entityId: doc.id, createdBy: req.createdBy,
+        }).catch(() => {});
+
+        // Create tasks in staff dashboard so staff see arrangement in TasksPanel
+        const staffUsers = await db.select().from(users);
+        const whItems = splitPlan.filter(s => mainWh && s.sourceStoreId === mainWh.id);
+        const storeItems = splitPlan.filter(s => !(mainWh && s.sourceStoreId === mainWh.id));
+
+        // Warehouse staff tasks
+        if (whItems.length > 0) {
+          const warehouseUsers = staffUsers.filter(u => u.role === "warehouse");
+          const itemList = whItems.map(i => `${i.description} x${i.splitQty}`).join(", ");
+          for (const wUser of warehouseUsers) {
+            await createTask({
+              title: `📦 Arrange: ${number}`,
+              note: `Warehouse items to prepare: ${itemList}. Customer: ${req.customerName || "N/A"}. View arrangement note on document page.`,
+              assignedTo: wUser.id,
+              assignedBy: req.createdBy ?? null,
+              storeId: mainWh?.id ?? null,
+            }).catch(() => {});
+          }
+        }
+
+        // Store staff tasks
+        if (storeItems.length > 0) {
+          const storeUsers = staffUsers.filter(u => u.role === "salesman" && u.storeId === invoiceStoreId);
+          const itemList = storeItems.map(i => `${i.description} x${i.splitQty}`).join(", ");
+          for (const sUser of storeUsers) {
+            await createTask({
+              title: `📦 Arrange: ${number}`,
+              note: `Store items to prepare: ${itemList}. Customer: ${req.customerName || "N/A"}. View arrangement note on document page.`,
+              assignedTo: sUser.id,
+              assignedBy: req.createdBy ?? null,
+              storeId: invoiceStoreId ?? null,
+            }).catch(() => {});
+          }
+        }
+      } catch (e) { console.error("Arrangement note generation failed:", e); }
     }
   }
 
@@ -1047,6 +1230,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         status: "pending_pick",
         deliveryStatus: "pending_pick",
         deliveryAddress: (req as any).deliveryAddress ?? null,
+        mapLink: (req as any).mapLink ?? null,
         deliveryInstructions: (req as any).deliveryInstructions ?? null,
         driverId: (req as any).driverId ?? null,
         expectedDeliveryDate: (req as any).expectedDeliveryDate ?? null,
@@ -1082,7 +1266,6 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
   // ── Split payment: record each tender. Cash/Card/Online = collected now;
   //    PDC = a tracked cheque (receivable, not collected); Credit = deferred. ──
   const tenders: any[] = (req as any).payments || [];
-  let collected = 0;
   for (const p of tenders) {
     const amt = Number(p.amount) || 0;
     if (amt <= 0) continue;
@@ -1123,7 +1306,6 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
       });
       // PDC is a post-dated cheque — not collected cash until it clears.
     } else {
-      collected += amt;
       // Money actually collected now → cash-in ledger entry, linked to the invoice.
       // Demo/test transactions never touch the real cash ledger.
       if ((req as any).transactionMode !== "demo") {
@@ -1135,10 +1317,13 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
       }
     }
   }
-  // Status reflects money actually collected (PDC + Credit stay receivable).
+  // Recompute status from ALL payment rows (same logic as createPayment).
   if (doc.type === "INV" && tenders.length > 0) {
+    const allPays = await getPayments(doc.id);
+    const totalPaid = allPays.reduce(
+      (s, p) => s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
     const totalNum = parseFloat(doc.total || "0");
-    const status = totalNum > 0 && collected >= totalNum - 0.005 ? "paid" : collected > 0 ? "partial" : "unpaid";
+    const status = totalNum > 0 && totalPaid >= totalNum - 0.005 ? "paid" : totalPaid > 0.005 ? "partial" : "unpaid";
     await db.update(documents).set({ status }).where(eq(documents.id, doc.id));
     doc.status = status;
   }
@@ -1155,6 +1340,19 @@ export async function updateDocument(id: number, data: Partial<InsertDocument>):
 }
 
 export async function updateDocumentItems(documentId: number, items: Omit<InsertDocumentItem, "documentId">[]): Promise<void> {
+  // Clear FK-constrained child rows before deleting document items
+  const oldItems = await db.select({ id: documentItems.id }).from(documentItems).where(eq(documentItems.documentId, documentId));
+  if (oldItems.length > 0) {
+    const oldIds = oldItems.map(i => i.id);
+    // arrangement_note_items → document_item_id FK
+    const notes = await db.select({ id: arrangementNotes.id }).from(arrangementNotes).where(eq(arrangementNotes.documentId, documentId));
+    for (const n of notes) {
+      await db.delete(arrangementNoteItems).where(eq(arrangementNoteItems.noteId, n.id));
+    }
+    if (notes.length > 0) {
+      await db.delete(arrangementNotes).where(eq(arrangementNotes.documentId, documentId));
+    }
+  }
   await db.delete(documentItems).where(eq(documentItems.documentId, documentId));
   if (items.length > 0) {
     await db.insert(documentItems).values(
@@ -1376,19 +1574,23 @@ export async function getCashflow(opts?: { start?: string; end?: string; storeId
 
 // Real-time cash position: per-location + company total, split cash-in-hand vs
 // bank vs PDC-pending (receivable cheques not yet cleared).
-export async function getCashPosition(): Promise<{
+export async function getCashPosition(filterStoreId?: number | null): Promise<{
   perStore: Array<{ storeId: number | null; storeName: string; net: number }>;
   total: number; cashInHand: number; bank: number; pdcPending: number; pdcPayable: number;
 }> {
-  const rows = await db.select().from(cashflow);
+  const allRows = await db.select().from(cashflow);
   const allStores = await db.select().from(stores);
-  // Opening balances (Go-Live) seed the position so it never shows spuriously
-  // negative just because outflows were booked before any opening float.
   const [cfg] = await db.select().from(settings).limit(1);
   const openingCash = Number(cfg?.openingCash || 0);
   const openingBank = Number(cfg?.openingBank || 0);
+  // When filtering by store, only include that store's cashflow — opening
+  // balances are company-wide so they only appear in the "all" view.
+  const storeFiltered = filterStoreId != null;
+  const rows = storeFiltered
+    ? allRows.filter((r) => r.storeId === filterStoreId)
+    : allRows;
   const byStore = new Map<number | null, number>();
-  let total = openingCash + openingBank;
+  let total = storeFiltered ? 0 : openingCash + openingBank;
   for (const r of rows) {
     const amt = Number(r.amount || 0) * (r.direction === "in" ? 1 : -1);
     total += amt;
@@ -1397,7 +1599,8 @@ export async function getCashPosition(): Promise<{
   // Split by instrument: cashflow notes tag the method. Only genuine Cash hits the
   // till; Bank Transfer / Online / Cheque / Card all move through the bank — a
   // cheque-paid expense (e.g. shop rent) must NOT drain cash-in-hand.
-  let cashInHand = openingCash, bank = openingBank;
+  let cashInHand = storeFiltered ? 0 : openingCash;
+  let bank = storeFiltered ? 0 : openingBank;
   for (const r of rows) {
     const amt = Number(r.amount || 0) * (r.direction === "in" ? 1 : -1);
     if (/bank transfer|online|cheque|card/i.test(r.notes || "")) bank += amt; else cashInHand += amt;
@@ -1830,7 +2033,7 @@ export async function correctPayment(
       const allPays = await getPayments(pay.documentId);
       const totalPaid = allPays.reduce((s, p) => s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
       const total = parseFloat(doc.total || "0");
-      const status = total > 0 && totalPaid >= total - 0.005 ? "paid" : totalPaid > 0 ? "partial" : "unpaid";
+      const status = total > 0 && totalPaid >= total - 0.005 ? "paid" : totalPaid > 0.005 ? "partial" : "unpaid";
       await updateDocument(pay.documentId, { status });
     }
   }
@@ -2315,25 +2518,74 @@ export async function authorizeDeliveryNote(dnId: number, userId?: number): Prom
 }
 
 // Driver confirms delivery on site. Requires manager authorisation first. Completes
-// both the DN and its parent invoice.
-export async function markDeliveryNoteDelivered(dnId: number, userId?: number): Promise<any> {
+// both the DN and its parent invoice. Proof of receipt (receiver name/phone + an
+// uploaded photo of the all-party-signed paper DN) is mandatory — no blind "delivered".
+export async function markDeliveryNoteDelivered(
+  dnId: number,
+  userId?: number,
+  proof?: { receiverName?: string; receiverPhone?: string; signedDnImage?: string },
+): Promise<any> {
   const dn = await getDocument(dnId);
   if (!dn || dn.type !== "DN") throw new Error("Delivery note not found");
   if (dn.deliveryStatus === "delivered") return dn; // idempotent
   if (dn.deliveryStatus !== "authorized" && dn.deliveryStatus !== "in_transit")
     throw new Error("A manager must authorise this delivery before it can be marked delivered.");
-  await updateDocument(dnId, { deliveryStatus: "delivered", status: "delivered" } as any);
+
+  const receiverName = (proof?.receiverName || "").trim();
+  const signedDnImage = proof?.signedDnImage || dn.signedDnUrl || "";
+  if (!receiverName) throw new Error("Receiver name is required to confirm the delivery.");
+  if (!signedDnImage) throw new Error("Upload the signed delivery note before confirming.");
+
+  await updateDocument(dnId, {
+    deliveryStatus: "delivered", status: "delivered",
+    receiverName, receiverPhone: (proof?.receiverPhone || "").trim() || null,
+    signedDnUrl: signedDnImage,
+  } as any);
   if (dn.linkedDocId) await updateDocument(dn.linkedDocId, { deliveryStatus: "delivered" } as any);
-  await logEdit({ documentId: dnId, userId, field: "deliveryStatus", oldValue: dn.deliveryStatus || "authorized", newValue: "delivered", reason: "Driver confirmed delivery on site" });
+  await logEdit({ documentId: dnId, userId, field: "deliveryStatus", oldValue: dn.deliveryStatus || "authorized", newValue: "delivered", reason: `Driver confirmed delivery — received by ${receiverName}` });
   // Notify the salesman who raised the invoice + admin.
   const inv = dn.linkedDocId ? await getDocument(dn.linkedDocId) : null;
   if (inv?.createdBy) {
     await createNotification({
       targetUserId: inv.createdBy, type: "delivery_done", title: "Delivery completed",
-      message: `${inv.number} delivered to ${inv.customerName || "customer"} — ${dn.number} completed.`,
+      message: `${inv.number} delivered to ${inv.customerName || "customer"} — received by ${receiverName}.`,
       link: `/documents/${inv.id}`, entityType: "document", entityId: inv.id, createdBy: userId,
     });
   }
+  return getDocument(dnId);
+}
+
+// Warehouse manager signs off / releases the load (validates the physical DN paper at
+// dispatch). Recorded against the DN with who + when.
+export async function signWarehouseRelease(dnId: number, userId?: number): Promise<any> {
+  const dn = await getDocument(dnId);
+  if (!dn || dn.type !== "DN") throw new Error("Delivery note not found");
+  if (dn.deliveryStatus === "delivered") throw new Error("This delivery is already completed.");
+  await updateDocument(dnId, { warehouseSignedBy: userId ?? null, warehouseSignedAt: new Date() } as any);
+  await logEdit({ documentId: dnId, userId, field: "warehouseSignedBy", oldValue: "", newValue: String(userId ?? ""), reason: "Warehouse manager signed / released the load" });
+  return getDocument(dnId);
+}
+
+// Driver reports damage found in transit / on delivery. Flags the DN and alerts a
+// manager to act (partial refund, replacement, supplier claim…).
+export async function reportDeliveryDamage(
+  dnId: number,
+  userId?: number,
+  data?: { notes?: string; photo?: string },
+): Promise<any> {
+  const dn = await getDocument(dnId);
+  if (!dn || dn.type !== "DN") throw new Error("Delivery note not found");
+  const notes = (data?.notes || "").trim();
+  if (!notes) throw new Error("Describe the damage before submitting.");
+  await updateDocument(dnId, {
+    damageReported: true, damageNotes: notes, damagePhoto: data?.photo || null, damageReportedAt: new Date(),
+  } as any);
+  await logEdit({ documentId: dnId, userId, field: "damageReported", oldValue: "false", newValue: "true", reason: `Damage reported: ${notes.slice(0, 120)}` });
+  await createNotification({
+    targetRole: "manager", type: "delivery_damage", title: "⚠ Damage reported on delivery",
+    message: `${dn.number} (${dn.customerName || "customer"}): ${notes.slice(0, 140)}`,
+    link: `/documents/${dnId}`, entityType: "document", entityId: dnId, createdBy: userId,
+  });
   return getDocument(dnId);
 }
 
@@ -2450,17 +2702,19 @@ export async function getSupplierOrders(supplierId?: number): Promise<SupplierOr
 
 export async function updateSupplierOrder(
   id: number,
-  data: Partial<{ status: string; receivedAt: string; notes: string }>
+  data: Partial<{ status: string; receivedAt: string; notes: string;
+    supplierInvoiceNumber: string; supplierInvoiceUrl: string; supplierInvoiceAmount: string }>
 ): Promise<SupplierOrder> {
+  const patch: any = {};
+  if (data.status !== undefined) patch.status = data.status;
+  if (data.receivedAt !== undefined) patch.receivedAt = new Date(data.receivedAt);
+  if (data.notes !== undefined) patch.notes = data.notes;
+  if (data.supplierInvoiceNumber !== undefined) patch.supplierInvoiceNumber = data.supplierInvoiceNumber;
+  if (data.supplierInvoiceUrl !== undefined) patch.supplierInvoiceUrl = data.supplierInvoiceUrl;
+  if (data.supplierInvoiceAmount !== undefined) patch.supplierInvoiceAmount = data.supplierInvoiceAmount;
   const [row] = await db
     .update(supplierOrders)
-    .set({
-      ...(data.status !== undefined ? { status: data.status } : {}),
-      ...(data.receivedAt !== undefined
-        ? { receivedAt: new Date(data.receivedAt) }
-        : {}),
-      ...(data.notes !== undefined ? { notes: data.notes } : {}),
-    })
+    .set(patch)
     .where(eq(supplierOrders.id, id))
     .returning();
   return row;
@@ -2532,15 +2786,19 @@ export async function receiveSupplierOrder(id: number, storeId: number, userId?:
 export async function createSupplierReturn(data: {
   poId?: number; supplierId?: number; storeId?: number;
   returnType: "initiated" | "rejected_delivery";
+  refundMode?: "credit_note" | "cash_refund";
+  refundMethod?: string;
   items: Array<{ productId?: number; name?: string; qty: number; unit?: string; amount?: number }>;
   notes?: string; refundAmount?: number; createdBy?: number;
 }): Promise<SupplierReturn> {
   const total = (data.items || []).reduce((s, i) => s + Number(i.amount || 0), 0);
   const [row] = await db.insert(supplierReturns).values({
     poId: data.poId, supplierId: data.supplierId, storeId: data.storeId,
-    returnType: data.returnType, status: "pending_confirmation",
+    returnType: data.returnType, refundMode: data.refundMode || "credit_note",
+    status: "pending_confirmation",
     items: data.items || [], total: String(total),
     refundAmount: data.refundAmount != null ? String(data.refundAmount) : String(total),
+    refundMethod: data.refundMethod || null,
     notes: data.notes, createdBy: data.createdBy,
   }).returning();
 
@@ -2566,26 +2824,104 @@ export async function getSupplierReturns(filter?: { poId?: number; supplierId?: 
 }
 
 // pending_confirmation → confirmed → refund_received.
-// On refund_received: log a cash-in entry under "Supplier Refund", linked to the PO.
-export async function updateSupplierReturnStatus(id: number, status: string, userId?: number): Promise<SupplierReturn> {
+// credit_note mode: confirmed = done (amount deducts from balance, no cash moves).
+// cash_refund mode: confirmed → refund_received logs actual cash-in entry.
+export async function updateSupplierReturnStatus(
+  id: number, status: string, userId?: number, refundMethod?: string,
+): Promise<SupplierReturn> {
   const [ret] = await db.select().from(supplierReturns).where(eq(supplierReturns.id, id));
   if (!ret) throw new Error("Supplier return not found");
   const ALLOWED = ["pending_confirmation", "confirmed", "refund_received"];
   if (!ALLOWED.includes(status)) throw new Error(`Invalid supplier-return status: ${status}`);
 
   const patch: any = { status };
+  if (refundMethod) patch.refundMethod = refundMethod;
+
   if (status === "refund_received" && !ret.refundReceivedAt) {
     patch.refundReceivedAt = new Date();
+    const method = refundMethod || ret.refundMethod || "cash";
     await db.insert(cashflow).values({
       direction: "in", category: "Supplier Refund",
       amount: String(Number(ret.refundAmount || ret.total || 0)),
       refType: "supplier_return", refId: ret.id, storeId: ret.storeId ?? undefined,
-      notes: `Refund received for supplier return #${ret.id}${ret.poId ? ` (PO ${ret.poId})` : ""}`,
+      notes: `Supplier refund (${method}) for return #${ret.id}${ret.poId ? ` (PO ${ret.poId})` : ""}`,
       date: new Date().toISOString().slice(0, 10), createdBy: userId,
     });
   }
   const [row] = await db.update(supplierReturns).set(patch).where(eq(supplierReturns.id, id)).returning();
   return row;
+}
+
+// ─── Supplier Payments (outgoing to suppliers) ──────────────────────────────
+export async function createSupplierPayment(data: {
+  supplierId: number; poId?: number; amount: number; method: string; date: string;
+  reference?: string; supplierInvoiceNumber?: string; supplierInvoiceUrl?: string;
+  receiptUrl?: string; chequeId?: number; bankName?: string; notes?: string;
+  createdBy?: number; override?: boolean; overrideReason?: string;
+}): Promise<SupplierPayment> {
+  const instrument = data.method === "Bank Transfer" ? "bank" : "cash";
+  if (data.method !== "PDC") {
+    await ensureFunds({
+      instrument, amount: Number(data.amount),
+      override: data.override, overrideReason: data.overrideReason, userId: data.createdBy,
+      context: `Supplier payment — supplier #${data.supplierId}`,
+    });
+  }
+  const [row] = await db.insert(supplierPayments).values({
+    supplierId: data.supplierId, poId: data.poId ?? null,
+    amount: String(data.amount), method: data.method, date: data.date,
+    reference: data.reference ?? null, supplierInvoiceNumber: data.supplierInvoiceNumber ?? null,
+    supplierInvoiceUrl: data.supplierInvoiceUrl ?? null, receiptUrl: data.receiptUrl ?? null,
+    chequeId: data.chequeId ?? null, bankName: data.bankName ?? null,
+    notes: data.notes ?? null, createdBy: data.createdBy ?? null,
+  }).returning();
+  if (data.method !== "PDC") {
+    await logCashflow({
+      direction: "out", category: "Supplier Payment",
+      amount: data.amount, refType: "supplier_payment", refId: row.id,
+      notes: `Payment to supplier #${data.supplierId}${data.reference ? ` ref:${data.reference}` : ""} (${data.method})`,
+      createdBy: data.createdBy,
+    });
+  }
+  return row;
+}
+
+export async function getSupplierPayments(filter?: { supplierId?: number }): Promise<SupplierPayment[]> {
+  const conds: any[] = [];
+  if (filter?.supplierId) conds.push(eq(supplierPayments.supplierId, filter.supplierId));
+  const q = conds.length
+    ? db.select().from(supplierPayments).where(and(...conds))
+    : db.select().from(supplierPayments);
+  return q.orderBy(desc(supplierPayments.id));
+}
+
+export async function getSupplierLedger(supplierId: number) {
+  const orders = await db.select().from(supplierOrders)
+    .where(and(eq(supplierOrders.supplierId, supplierId), ne(supplierOrders.status, "draft"), ne(supplierOrders.status, "cancelled")))
+    .orderBy(desc(supplierOrders.id));
+  const pmts = await db.select().from(supplierPayments)
+    .where(eq(supplierPayments.supplierId, supplierId))
+    .orderBy(desc(supplierPayments.id));
+  const rets = await db.select().from(supplierReturns)
+    .where(eq(supplierReturns.supplierId, supplierId))
+    .orderBy(desc(supplierReturns.id));
+  const totalOrdered = orders.reduce((s, o) => {
+    const items = Array.isArray(o.items) ? (o.items as any[]) : [];
+    return s + items.reduce((t: number, it: any) => t + (Number(it.receivedQty || 0) * Number(it.cost || it.price || 0)), 0);
+  }, 0);
+  const totalReturned = rets.filter(r => r.status !== "pending_confirmation")
+    .reduce((s, r) => s + Number(r.refundAmount || r.total || 0), 0);
+  const totalPaid = pmts.reduce((s, p) => s + Number(p.amount || 0), 0);
+  const balance = totalOrdered - totalReturned - totalPaid;
+  return {
+    orders, payments: pmts, returns: rets,
+    summary: {
+      totalOrdered: Number(totalOrdered.toFixed(2)),
+      totalReturned: Number(totalReturned.toFixed(2)),
+      totalPaid: Number(totalPaid.toFixed(2)),
+      balance: Number(balance.toFixed(2)),
+    },
+  };
 }
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
@@ -2634,6 +2970,7 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
     eq(documents.type, "INV"),
     gte(documents.date, startDate),
     lte(documents.date, endDate),
+    ne(documents.status, "void"),
   ];
   if (storeId) conditions.push(eq(documents.storeId, storeId));
 
@@ -2642,6 +2979,8 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
     .from(payments)
     .innerJoin(documents, eq(payments.documentId, documents.id))
     .where(and(
+      eq(documents.type, "INV"),
+      ne(documents.status, "void"),
       gte(documents.date, startDate),
       lte(documents.date, endDate),
       storeId ? eq(documents.storeId, storeId) : undefined,
@@ -2651,7 +2990,56 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
   const cashSales = payRows.filter(p => p.method === "Cash").reduce((s, p) => s + parseFloat(p.amount || "0"), 0);
   const creditSales = totalRevenue - cashSales;
 
-  // Best customer (by spend) + best product (by qty) over the period (Bug 5).
+  // COGS: join document_items → products.costPrice, same as getProfitDetail
+  const ids = docs.map((d: any) => d.id);
+  const cogsByDoc: Record<number, number> = {};
+  let bestProduct: { name: string; qty: number } | null = null;
+  if (ids.length) {
+    const items = await db.select({
+      documentId: documentItems.documentId,
+      description: documentItems.description,
+      qty: documentItems.qty,
+      cost: products.costPrice,
+    }).from(documentItems)
+      .leftJoin(products, eq(documentItems.productId, products.id))
+      .where(inArray(documentItems.documentId, ids));
+
+    const byProduct: Record<string, number> = {};
+    for (const it of items as any[]) {
+      const c = Number(it.cost || 0) * Number(it.qty || 0);
+      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + c;
+      byProduct[it.description] = (byProduct[it.description] || 0) + Number(it.qty || 0);
+    }
+    const bpEntry = Object.entries(byProduct).sort((a, b) => b[1] - a[1])[0];
+    if (bpEntry) bestProduct = { name: bpEntry[0], qty: Number(bpEntry[1]) };
+  }
+
+  let totalCogs = 0;
+  const dailyMap: Record<string, { revenue: number; invoiceCount: number; cogs: number }> = {};
+  for (const d of docs as any[]) {
+    const date = d.date;
+    const total = parseFloat(d.total || "0");
+    const cogs = cogsByDoc[d.id] || 0;
+    totalCogs += cogs;
+    if (!dailyMap[date]) dailyMap[date] = { revenue: 0, invoiceCount: 0, cogs: 0 };
+    dailyMap[date].revenue += total;
+    dailyMap[date].invoiceCount += 1;
+    dailyMap[date].cogs += cogs;
+  }
+  const rows = Object.entries(dailyMap)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, v]) => ({
+      date,
+      revenue: Number(v.revenue.toFixed(2)),
+      invoiceCount: v.invoiceCount,
+      cogs: Number(v.cogs.toFixed(2)),
+      profit: Number((v.revenue - v.cogs).toFixed(2)),
+    }));
+
+  const grossProfit = totalRevenue - totalCogs;
+  const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
+  // Best customer (by spend)
   const byCustomer: Record<string, number> = {};
   for (const d of docs as any[]) {
     const name = d.customerName || "Walk-in Customer";
@@ -2660,25 +3048,17 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
   const bcEntry = Object.entries(byCustomer).sort((a, b) => b[1] - a[1])[0];
   const bestCustomer = bcEntry ? { name: bcEntry[0], total: Number(bcEntry[1].toFixed(2)) } : null;
 
-  let bestProduct: { name: string; qty: number } | null = null;
-  const ids = docs.map((d: any) => d.id);
-  if (ids.length) {
-    const { inArray } = await import("drizzle-orm");
-    const items = await db.select({ description: documentItems.description, qty: documentItems.qty })
-      .from(documentItems).where(inArray(documentItems.documentId, ids));
-    const byProduct: Record<string, number> = {};
-    for (const it of items as any[]) byProduct[it.description] = (byProduct[it.description] || 0) + Number(it.qty || 0);
-    const bpEntry = Object.entries(byProduct).sort((a, b) => b[1] - a[1])[0];
-    if (bpEntry) bestProduct = { name: bpEntry[0], qty: Number(bpEntry[1]) };
-  }
-
   return {
+    rows,
     totalRevenue,
     invoiceCount: docs.length,
     avgInvoiceValue: docs.length > 0 ? totalRevenue / docs.length : 0,
     cashSales,
     creditSales,
     returnsTotal: 0,
+    cogs: Number(totalCogs.toFixed(2)),
+    grossProfit: Number(grossProfit.toFixed(2)),
+    marginPct: Number(marginPct.toFixed(1)),
     bestCustomer,
     bestProduct,
   };
@@ -2773,6 +3153,127 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
     invoices,
     realProfit: Number(realProfit.toFixed(2)), imaginaryProfit: Number(imaginaryProfit.toFixed(2)),
     realSales: Number(realSales.toFixed(2)), totalSales: Number(totalSales.toFixed(2)),
+  };
+}
+
+// ─── Location overview (per store/warehouse workflow over a date range) ──────
+// One row per location with the full picture: revenue, cash actually collected,
+// invoices rung, paid-vs-credit split, expenses, returns, COGS and profit — plus a
+// day-by-day revenue series for the trend chart. Powers the "Location Overview"
+// (owner dashboard summary + Reports tab). Batched: no N+1.
+export async function getLocationOverview(start: string, end: string) {
+  const r2 = (n: number) => Number((n || 0).toFixed(2));
+  const allStores = await db.select().from(stores);
+  const storeName = (id: number | null) =>
+    id == null ? "Unassigned" : (allStores.find((s) => s.id === id)?.nameEn || `#${id}`);
+
+  // Sales invoices in range (revenue / count / paid-vs-credit / COGS source).
+  const invDocs = await db.select().from(documents).where(and(
+    eq(documents.type, "INV"), gte(documents.date, start), lte(documents.date, end), ne(documents.status, "void"),
+  ));
+  const invIds = invDocs.map((d) => d.id);
+  const cogsByDoc: Record<number, number> = {};
+  if (invIds.length) {
+    const items = await db.select({
+      documentId: documentItems.documentId, qty: documentItems.qty, cost: products.costPrice,
+    }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
+      .where(inArray(documentItems.documentId, invIds));
+    for (const it of items as any[]) {
+      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + Number(it.cost || 0) * Number(it.qty || 0);
+    }
+  }
+
+  // Cash actually collected + expenses paid, per location, in range.
+  const cfRows = await db.select().from(cashflow).where(and(gte(cashflow.date, start), lte(cashflow.date, end)));
+  // Approved returns (refund value) per location, in range.
+  const retRows = await db.select().from(returnsTable).where(and(
+    eq(returnsTable.status, "approved"), gte(returnsTable.date, start), lte(returnsTable.date, end),
+  ));
+
+  type Bucket = {
+    storeId: number | null; storeName: string; revenue: number; cogs: number;
+    invoiceCount: number; paidSales: number; creditSales: number;
+    cashCollected: number; expenses: number; returns: number;
+  };
+  const map = new Map<number | null, Bucket>();
+  const bucket = (id: number | null): Bucket => {
+    const k = id ?? null;
+    let b = map.get(k);
+    if (!b) {
+      b = { storeId: k, storeName: storeName(k), revenue: 0, cogs: 0, invoiceCount: 0,
+            paidSales: 0, creditSales: 0, cashCollected: 0, expenses: 0, returns: 0 };
+      map.set(k, b);
+    }
+    return b;
+  };
+
+  for (const d of invDocs) {
+    const b = bucket(d.storeId ?? null);
+    const t = Number(d.total || 0);
+    b.revenue += t; b.invoiceCount += 1; b.cogs += cogsByDoc[d.id] || 0;
+    if (d.status === "paid") b.paidSales += t; else b.creditSales += t; // partial counts as credit-side
+  }
+  for (const r of cfRows as any[]) {
+    const amt = Number(r.amount || 0);
+    if (r.direction === "in" && /sales|pdc cleared/i.test(r.category || "")) bucket(r.storeId ?? null).cashCollected += amt;
+    else if (r.direction === "out" && /^expense/i.test(r.category || "")) bucket(r.storeId ?? null).expenses += amt;
+  }
+  for (const r of retRows as any[]) {
+    bucket(r.storeId ?? null).returns += Number(r.refundAmount ?? r.total ?? 0);
+  }
+
+  const locations = Array.from(map.values()).map((b) => ({
+    storeId: b.storeId, storeName: b.storeName,
+    revenue: r2(b.revenue), cogs: r2(b.cogs), profit: r2(b.revenue - b.cogs),
+    invoiceCount: b.invoiceCount, paidSales: r2(b.paidSales), creditSales: r2(b.creditSales),
+    cashCollected: r2(b.cashCollected), expenses: r2(b.expenses), returns: r2(b.returns),
+  })).sort((a, b) => b.revenue - a.revenue);
+
+  // Day-by-day revenue series (one key per location: s<storeId>, 0 = Unassigned).
+  const dates: string[] = [];
+  for (let d = new Date(start + "T00:00:00"); d <= new Date(end + "T00:00:00"); d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  const dailyMap: Record<string, any> = {};
+  for (const dt of dates) dailyMap[dt] = { date: dt, total: 0 };
+  for (const d of invDocs) {
+    const row = dailyMap[String(d.date)];
+    if (!row) continue;
+    const key = `s${d.storeId ?? 0}`;
+    const t = Number(d.total || 0);
+    row[key] = (row[key] || 0) + t; row.total += t;
+  }
+  const daily = dates.map((dt) => dailyMap[dt]);
+
+  const totals = locations.reduce((a, l) => ({
+    revenue: a.revenue + l.revenue, profit: a.profit + l.profit, cogs: a.cogs + l.cogs,
+    invoiceCount: a.invoiceCount + l.invoiceCount, paidSales: a.paidSales + l.paidSales,
+    creditSales: a.creditSales + l.creditSales, cashCollected: a.cashCollected + l.cashCollected,
+    expenses: a.expenses + l.expenses, returns: a.returns + l.returns,
+  }), { revenue: 0, profit: 0, cogs: 0, invoiceCount: 0, paidSales: 0, creditSales: 0, cashCollected: 0, expenses: 0, returns: 0 });
+  for (const k of Object.keys(totals) as (keyof typeof totals)[]) totals[k] = r2(totals[k]);
+
+  // Top customers by revenue in the period.
+  const custMap = new Map<string, { customerId: number | null; name: string; revenue: number; invoices: number }>();
+  for (const d of invDocs) {
+    const name = d.customerName || "Walk-in";
+    const key = d.customerId != null ? `id:${d.customerId}` : `name:${name}`;
+    let c = custMap.get(key);
+    if (!c) { c = { customerId: d.customerId ?? null, name, revenue: 0, invoices: 0 }; custMap.set(key, c); }
+    c.revenue += Number(d.total || 0); c.invoices += 1;
+  }
+  const topCustomers = Array.from(custMap.values())
+    .map((c) => ({ ...c, revenue: r2(c.revenue) }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8);
+
+  return {
+    start, end,
+    locations,
+    daily,
+    totals,
+    topCustomers,
+    seriesKeys: locations.map((l) => ({ key: `s${l.storeId ?? 0}`, name: l.storeName })),
   };
 }
 
@@ -2994,11 +3495,12 @@ export async function seedDatabase(): Promise<void> {
   const existingStores = await getStores();
   if (existingStores.length === 0) {
     await db.insert(stores).values([
-      { nameEn: "Store 1 - Najma", nameAr: "المتجر 1 - النجمة", address: "Najma Street, Doha", type: "store" },
-      { nameEn: "Store 2 - Main", nameAr: "المتجر 2 - الرئيسي", address: "Doha, Qatar", type: "store" },
-      { nameEn: "Warehouse 1", nameAr: "المستودع 1", address: "Doha, Qatar", type: "warehouse" },
-      { nameEn: "Warehouse 2", nameAr: "المستودع 2", address: "Doha, Qatar", type: "warehouse" },
-      { nameEn: "Warehouse 3", nameAr: "المستودع 3", address: "Doha, Qatar", type: "warehouse" },
+      { nameEn: "MAMUN TRADING OLD (72986/1)", nameAr: "مأمون للتجارة القديم", address: "Najma Street, Doha", type: "store" },
+      { nameEn: "Mamun TRADING (72986/4)", nameAr: "مأمون للتجارة", address: "Doha, Qatar", type: "store" },
+      { nameEn: "3rd Floor", nameAr: "الطابق الثالث", address: "Doha, Qatar", type: "warehouse", ownerStoreId: 1 },
+      { nameEn: "2nd Warehouse Rental Shop", nameAr: "المستودع الثاني - محل إيجار", address: "Doha, Qatar", type: "warehouse", ownerStoreId: 1 },
+      { nameEn: "Basement of 27 Villa", nameAr: "قبو فيلا 27", address: "Doha, Qatar", type: "warehouse", ownerStoreId: 1 },
+      { nameEn: "Main Warehouse/Store1", nameAr: "المستودع الرئيسي", address: "Doha, Qatar", type: "warehouse", ownerStoreId: 1 },
     ]);
   }
 
@@ -3108,6 +3610,114 @@ export async function updateCustomRecord(id: number, data: any) {
 }
 export async function deleteCustomRecord(id: number) {
   await db.delete(customRecords).where(eq(customRecords.id, id));
+}
+
+// ─── Staff Payroll ───────────────────────────────────────────────────────────
+export async function getStaffPayroll(opts?: { userId?: number; month?: string }): Promise<StaffPayroll[]> {
+  const conds: any[] = [];
+  if (opts?.userId) conds.push(eq(staffPayroll.userId, opts.userId));
+  if (opts?.month) conds.push(eq(staffPayroll.month, opts.month));
+  return db.select().from(staffPayroll)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(staffPayroll.date));
+}
+
+export async function createStaffPayrollEntry(data: InsertStaffPayroll): Promise<StaffPayroll> {
+  const [row] = await db.insert(staffPayroll).values(data).returning();
+  return row;
+}
+
+export async function deleteStaffPayrollEntry(id: number): Promise<void> {
+  await db.delete(staffPayroll).where(eq(staffPayroll.id, id));
+}
+
+export async function updateUserSalary(id: number, salary: string, dayRate: string) {
+  const [row] = await db.update(users).set({ salary, dayRate }).where(eq(users.id, id)).returning();
+  return row;
+}
+
+export async function getStaffPayrollSummary(month: string) {
+  const allUsers = await db.select().from(users).where(eq(users.active, true));
+  const entries = await db.select().from(staffPayroll).where(eq(staffPayroll.month, month));
+
+  return allUsers.map(u => {
+    const userEntries = entries.filter(e => e.userId === u.id);
+    const advances = userEntries.filter(e => e.type === "advance").reduce((s, e) => s + Number(e.amount), 0);
+    const deductions = userEntries.filter(e => e.type === "deduction").reduce((s, e) => s + Number(e.amount), 0);
+    const bonuses = userEntries.filter(e => e.type === "bonus").reduce((s, e) => s + Number(e.amount), 0);
+    const daysOff = userEntries.filter(e => e.type === "day_off").length;
+    const dayOffDeduction = daysOff * Number(u.dayRate || 0);
+    const salaryPaid = userEntries.filter(e => e.type === "salary_payment").reduce((s, e) => s + Number(e.amount), 0);
+    const baseSalary = Number(u.salary || 0);
+    const netSalary = baseSalary - advances - deductions - dayOffDeduction + bonuses;
+
+    return {
+      userId: u.id,
+      name: u.name,
+      role: u.role,
+      baseSalary,
+      dayRate: Number(u.dayRate || 0),
+      advances,
+      deductions,
+      bonuses,
+      daysOff,
+      dayOffDeduction,
+      netSalary,
+      salaryPaid,
+      remaining: netSalary - salaryPaid,
+      entries: userEntries,
+    };
+  }).filter(u => u.baseSalary > 0 || u.entries.length > 0);
+}
+
+// ─── Arrangement Notes ──────────────────────────────────────────────────────
+
+export async function getArrangementNote(documentId: number): Promise<{
+  note: ArrangementNote; items: (ArrangementNoteItem & { store: Store })[]; corrections: ArrangementCorrection[];
+} | null> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.documentId, documentId));
+  if (!note) return null;
+  const rows = await db.select({ item: arrangementNoteItems, store: stores })
+    .from(arrangementNoteItems)
+    .innerJoin(stores, eq(arrangementNoteItems.sourceStoreId, stores.id))
+    .where(eq(arrangementNoteItems.noteId, note.id));
+  const noteItems = rows.map(r => ({ ...r.item, store: r.store }));
+  const corr = await db.select().from(arrangementCorrections).where(eq(arrangementCorrections.noteId, note.id));
+  return { note, items: noteItems, corrections: corr };
+}
+
+export async function createArrangementCorrection(data: {
+  noteId: number; noteItemId?: number; reason: string;
+  productId?: number; storeId?: number; qtyReturned?: number; qtyCorrect?: number;
+  correctedBy?: number;
+}): Promise<ArrangementCorrection> {
+  const [corr] = await db.insert(arrangementCorrections).values({
+    noteId: data.noteId,
+    noteItemId: data.noteItemId ?? null,
+    reason: data.reason,
+    productId: data.productId ?? null,
+    storeId: data.storeId ?? null,
+    qtyReturned: data.qtyReturned != null ? String(data.qtyReturned) : null,
+    qtyCorrect: data.qtyCorrect != null ? String(data.qtyCorrect) : null,
+    correctedBy: data.correctedBy ?? null,
+  }).returning();
+
+  // Reverse the wrong deduction and apply correct one.
+  if (data.productId && data.storeId) {
+    if (data.qtyReturned && data.qtyReturned > 0) {
+      await adjustStock(data.productId, data.storeId, data.qtyReturned,
+        "correction", `Arrangement correction: ${data.reason}`, data.noteId, data.correctedBy);
+    }
+    if (data.qtyCorrect && data.qtyCorrect > 0) {
+      await adjustStock(data.productId, data.storeId, -data.qtyCorrect,
+        "correction", `Arrangement correction re-deduct: ${data.reason}`, data.noteId, data.correctedBy);
+    }
+  }
+
+  await db.update(arrangementNotes).set({ status: "corrected" })
+    .where(eq(arrangementNotes.id, data.noteId));
+
+  return corr;
 }
 
 // Legacy compatibility

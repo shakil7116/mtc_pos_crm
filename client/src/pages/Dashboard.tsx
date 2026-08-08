@@ -474,14 +474,17 @@ export default function Dashboard() {
     },
     payment_reminders: paymentReminders.slice(0, 8).map((r: any) => ({
       customer_name: r.customerName ?? `Customer #${r.customerId ?? "—"}`,
+      customer_id: r.customerId ?? undefined,
       invoices: toNum(r.invoiceCount),
       outstanding: toNum(r.outstanding),
       status_days: toNum(r.maxDaysOverdue) > 0 ? `${toNum(r.maxDaysOverdue)} overdue` : "due",
       status_severity: toNum(r.maxDaysOverdue) > 30 ? "high" : toNum(r.maxDaysOverdue) > 0 ? "medium" : "low",
       phone: r.customerPhone ?? undefined,
+      message: r.message ?? undefined,
     })),
     inventory_alerts: lowStockArr.slice(0, 8).map((it) => ({
       sku_name: it.name,
+      product_id: it.productId,
       current_stock: it.qty,
       min_stock: it.minStockQty,
     })),

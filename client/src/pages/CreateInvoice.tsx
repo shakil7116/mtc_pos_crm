@@ -138,7 +138,17 @@ export default function CreateInvoice() {
   generateWords();
 }, [totalAmount, form]);
 
-  const units = ["PCS", "BAG", "NOS", "BUNDLE", "KG", "MTR", "BOX", "PKT", "SET", "ROLL", "CTN", "GLN", "DRUM", "LTR"];
+  const units = [
+    "PCS", "NOS", "SET", "PAIR", "DOZEN",
+    "BOX", "BAG", "PKT", "PACK", "BUNDLE", "CTN", "CASE", "CARTON", "PALLET",
+    "KG", "GM", "TON", "LB",
+    "LTR", "ML", "GLN", "DRUM", "BUCKET", "BARREL",
+    "MTR", "CM", "MM", "FT", "IN", "YD",
+    "SQFT", "SQM",
+    "ROLL", "SHEET", "SPOOL", "COIL", "REAM",
+    "TUBE", "BOTTLE", "CAN", "JAR",
+    "LENGTH", "LOT", "LOAD", "TRIP",
+  ];
 
   const onSubmit = (data: InvoiceFormValues) => {
     createMutation.mutate({
@@ -430,42 +440,42 @@ export default function CreateInvoice() {
   return (
     <Layout>
       <div className="max-w-5xl mx-auto space-y-8 pb-20">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Link href="/" className="p-2 hover:bg-secondary rounded-full transition-colors text-muted-foreground hover:text-foreground">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link href="/" className="p-2 hover:bg-secondary rounded-full transition-colors text-muted-foreground hover:text-foreground shrink-0">
               <ArrowLeft className="w-5 h-5" />
             </Link>
-            <div>
-              <h2 className="text-3xl font-black text-foreground uppercase tracking-tighter">
+            <div className="min-w-0">
+              <h2 className="text-xl sm:text-3xl font-black text-foreground uppercase tracking-tighter truncate">
                 {docType === "invoice" ? "NEW INVOICE" : docType === "quotation" ? "NEW QUOTATION" : "NEW DELIVERY NOTE"}
               </h2>
               {/* Doc Type Selector */}
-              <div className="flex gap-2 mt-2 mb-1">
+              <div className="flex gap-1.5 sm:gap-2 mt-2 mb-1 overflow-x-auto">
                 {([
-                  { key: "invoice", label: "INVOICE", color: "bg-blue-600" },
-                  { key: "quotation", label: "QUOTATION", color: "bg-amber-500" },
-                  { key: "delivery_note", label: "DELIVERY NOTE", color: "bg-emerald-600" },
-                ] as const).map(({ key, label, color }) => (
+                  { key: "invoice", label: "INV", labelFull: "INVOICE", color: "bg-blue-600" },
+                  { key: "quotation", label: "QT", labelFull: "QUOTATION", color: "bg-amber-500" },
+                  { key: "delivery_note", label: "DN", labelFull: "DELIVERY NOTE", color: "bg-emerald-600" },
+                ] as const).map(({ key, label, labelFull, color }) => (
                   <button
                     key={key}
                     type="button"
                     onClick={() => { setDocType(key); updateNumberPrefix(key); }}
                     className={clsx(
-                      "text-[10px] font-black uppercase px-4 py-2 rounded-xl border-2 transition-all tracking-widest whitespace-nowrap",
+                      "text-[10px] font-black uppercase px-2.5 sm:px-4 py-1.5 sm:py-2 rounded-xl border-2 transition-all tracking-widest whitespace-nowrap",
                       docType === key ? `${color} text-white border-transparent shadow-md` : "bg-white text-muted-foreground border-border hover:bg-gray-50"
                     )}
-                  >{label}</button>
+                  ><span className="sm:hidden">{label}</span><span className="hidden sm:inline">{labelFull}</span></button>
                 ))}
               </div>
-              <div className="flex gap-2 mt-1 overflow-x-auto pb-2">
+              <div className="flex gap-1.5 sm:gap-2 mt-1 overflow-x-auto pb-2">
                 {[1, 2, 3, 4, 5].map((num) => {
                   const styleLabel = num === 1 ? "BLUE" : num === 2 ? "YELLOW" : num === 3 ? "CYAN" : num === 4 ? "RED" : "DARK";
                   return (
-                    <button 
+                    <button
                       key={num}
                       onClick={() => setTemplate(`template${num}` as any)}
                       className={clsx(
-                        "text-[10px] font-black uppercase px-3 py-1 rounded border transition-all tracking-widest whitespace-nowrap",
+                        "text-[10px] font-black uppercase px-2.5 sm:px-3 py-1 rounded border transition-all tracking-widest whitespace-nowrap",
                         template === `template${num}` ? "bg-primary text-white border-primary shadow-md" : "bg-white text-muted-foreground hover:bg-gray-50"
                       )}
                     >{styleLabel}</button>
@@ -474,13 +484,13 @@ export default function CreateInvoice() {
               </div>
             </div>
           </div>
-          <button 
+          <button
             onClick={form.handleSubmit(onSubmit)}
             disabled={createMutation.isPending}
-            className="bg-primary text-primary-foreground px-8 py-4 rounded-2xl font-black uppercase text-sm tracking-[0.2em] shadow-2xl shadow-primary/40 hover:shadow-primary/60 hover:-translate-y-1 transition-all duration-300 flex items-center gap-3 disabled:opacity-50"
+            className="bg-primary text-primary-foreground px-5 sm:px-8 py-3 sm:py-4 rounded-2xl font-black uppercase text-xs sm:text-sm tracking-[0.2em] shadow-2xl shadow-primary/40 hover:shadow-primary/60 hover:-translate-y-1 transition-all duration-300 flex items-center gap-2 sm:gap-3 disabled:opacity-50 shrink-0 self-end sm:self-auto"
           >
-            {createMutation.isPending ? "SAVING..." : "SAVE INVOICE"}
-            <Save className="w-5 h-5" />
+            {createMutation.isPending ? "SAVING..." : "SAVE"}
+            <Save className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
 
@@ -575,81 +585,164 @@ export default function CreateInvoice() {
 
               <div className="space-y-4">
                 {fields.map((field, index) => (
-                  <div key={field.id} className="grid grid-cols-12 gap-4 items-end bg-secondary/20 p-5 rounded-2xl relative group transition-all hover:bg-secondary/30">
-                    <div className="col-span-5 space-y-1 relative">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">DESCRIPTION</label>
-                      <input
-                        placeholder="ITEM DESCRIPTION"
-                        {...form.register(`items.${index}.description`)}
-                        onChange={(e) => handleDescriptionChange(index, e.target.value)}
-                        onKeyDown={(e) => handleKeyDown(e, index, 'description')}
-                        onFocus={() => {
-                          const value = form.getValues(`items.${index}.description`);
-                          if (value.trim()) handleDescriptionChange(index, value);
-                        }}
-                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
-                        className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-bold uppercase"
-                      />
-                      {showSuggestions && currentFieldIndex === index && suggestions.length > 0 && (
-                        <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-primary rounded-xl shadow-2xl z-50 max-h-60 overflow-auto">
-                          {suggestions.map((product, idx) => (
-                            <div
-                              key={idx}
-                              onClick={() => selectSuggestion(index, product)}
-                              className={clsx(
-                                "px-4 py-3 cursor-pointer transition-colors",
-                                idx === activeSuggestionIndex 
-                                  ? "bg-primary text-white" 
-                                  : "hover:bg-primary/10"
-                              )}
-                            >
-                              <div className="text-sm font-bold uppercase">{product.description}</div>
-                              <div className="text-xs opacity-70 mt-1">
-                                {product.unit} • {product.unitPrice} QAR
+                  <div key={field.id} className="bg-secondary/20 p-3 sm:p-5 rounded-2xl relative group transition-all hover:bg-secondary/30">
+                    {/* Mobile: stacked layout / Desktop: 12-col grid */}
+                    <div className="hidden sm:grid grid-cols-12 gap-4 items-end">
+                      <div className="col-span-5 space-y-1 relative">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">DESCRIPTION</label>
+                        <input
+                          placeholder="ITEM DESCRIPTION"
+                          {...form.register(`items.${index}.description`)}
+                          onChange={(e) => handleDescriptionChange(index, e.target.value)}
+                          onKeyDown={(e) => handleKeyDown(e, index, 'description')}
+                          onFocus={() => {
+                            const value = form.getValues(`items.${index}.description`);
+                            if (value.trim()) handleDescriptionChange(index, value);
+                          }}
+                          onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                          className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-bold uppercase"
+                        />
+                        {showSuggestions && currentFieldIndex === index && suggestions.length > 0 && (
+                          <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-primary rounded-xl shadow-2xl z-50 max-h-60 overflow-auto">
+                            {suggestions.map((product, idx) => (
+                              <div
+                                key={idx}
+                                onClick={() => selectSuggestion(index, product)}
+                                className={clsx(
+                                  "px-4 py-3 cursor-pointer transition-colors",
+                                  idx === activeSuggestionIndex
+                                    ? "bg-primary text-white"
+                                    : "hover:bg-primary/10"
+                                )}
+                              >
+                                <div className="text-sm font-bold uppercase">{product.description}</div>
+                                <div className="text-xs opacity-70 mt-1">
+                                  {product.unit} • {product.unitPrice} QAR
+                                </div>
                               </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">QTY</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          {...form.register(`items.${index}.quantity`)}
+                          onKeyDown={(e) => handleKeyDown(e, index, 'quantity')}
+                          className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
+                        />
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">UNIT</label>
+                        <select
+                          {...form.register(`items.${index}.unit`)}
+                          onKeyDown={(e) => handleKeyDown(e, index, 'unit')}
+                          className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-[10px] font-black uppercase"
+                        >
+                          {units.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </div>
+                      <div className="col-span-2 space-y-1">
+                        <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">PRICE</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          {...form.register(`items.${index}.unitPrice`)}
+                          onKeyDown={(e) => handleKeyDown(e, index, 'unitPrice')}
+                          className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
+                        />
+                      </div>
+                      <div className="col-span-1 flex justify-center pb-2">
+                        <button
+                          type="button"
+                          onClick={() => remove(index)}
+                          className="text-muted-foreground hover:text-red-500 transition-colors p-2 rounded-full hover:bg-white"
+                        >
+                          <Trash2 className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                    {/* Mobile stacked layout */}
+                    <div className="sm:hidden space-y-2">
+                      <div className="flex items-start gap-2">
+                        <div className="flex-1 space-y-1 relative">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">DESCRIPTION</label>
+                          <input
+                            placeholder="ITEM DESCRIPTION"
+                            {...form.register(`items.${index}.description`)}
+                            onChange={(e) => handleDescriptionChange(index, e.target.value)}
+                            onKeyDown={(e) => handleKeyDown(e, index, 'description')}
+                            onFocus={() => {
+                              const value = form.getValues(`items.${index}.description`);
+                              if (value.trim()) handleDescriptionChange(index, value);
+                            }}
+                            onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-bold uppercase"
+                          />
+                          {showSuggestions && currentFieldIndex === index && suggestions.length > 0 && (
+                            <div className="absolute top-full left-0 right-0 mt-1 bg-white border-2 border-primary rounded-xl shadow-2xl z-50 max-h-60 overflow-auto">
+                              {suggestions.map((product, idx) => (
+                                <div
+                                  key={idx}
+                                  onClick={() => selectSuggestion(index, product)}
+                                  className={clsx(
+                                    "px-3 py-2.5 cursor-pointer transition-colors",
+                                    idx === activeSuggestionIndex
+                                      ? "bg-primary text-white"
+                                      : "hover:bg-primary/10"
+                                  )}
+                                >
+                                  <div className="text-sm font-bold uppercase">{product.description}</div>
+                                  <div className="text-xs opacity-70 mt-0.5">
+                                    {product.unit} • {product.unitPrice} QAR
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          )}
                         </div>
-                      )}
-                    </div>
-                    <div className="col-span-2 space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">QTY</label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        {...form.register(`items.${index}.quantity`)}
-                        onKeyDown={(e) => handleKeyDown(e, index, 'quantity')}
-                        className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
-                      />
-                    </div>
-                    <div className="col-span-2 space-y-1">
-                       <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">UNIT</label>
-                       <select
-                        {...form.register(`items.${index}.unit`)}
-                        onKeyDown={(e) => handleKeyDown(e, index, 'unit')}
-                        className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-[10px] font-black uppercase"
-                      >
-                        {units.map(u => <option key={u} value={u}>{u}</option>)}
-                      </select>
-                    </div>
-                    <div className="col-span-2 space-y-1">
-                      <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">PRICE</label>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        {...form.register(`items.${index}.unitPrice`)}
-                        onKeyDown={(e) => handleKeyDown(e, index, 'unitPrice')}
-                        className="w-full px-4 py-2.5 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
-                      />
-                    </div>
-                    <div className="col-span-1 flex justify-center pb-2">
-                      <button
-                        type="button"
-                        onClick={() => remove(index)}
-                        className="text-muted-foreground hover:text-red-500 transition-colors p-2 rounded-full hover:bg-white"
-                      >
-                        <Trash2 className="w-5 h-5" />
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => remove(index)}
+                          className="text-muted-foreground hover:text-red-500 transition-colors p-1.5 rounded-full hover:bg-white mt-5 shrink-0"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">QTY</label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            {...form.register(`items.${index}.quantity`)}
+                            onKeyDown={(e) => handleKeyDown(e, index, 'quantity')}
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">UNIT</label>
+                          <select
+                            {...form.register(`items.${index}.unit`)}
+                            onKeyDown={(e) => handleKeyDown(e, index, 'unit')}
+                            className="w-full px-2 py-2 rounded-xl bg-white border border-border focus:border-primary outline-none text-[10px] font-black uppercase"
+                          >
+                            {units.map(u => <option key={u} value={u}>{u}</option>)}
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] font-black uppercase tracking-widest text-muted-foreground ml-1">PRICE</label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            {...form.register(`items.${index}.unitPrice`)}
+                            onKeyDown={(e) => handleKeyDown(e, index, 'unitPrice')}
+                            className="w-full px-3 py-2 rounded-xl bg-white border border-border focus:border-primary outline-none text-sm font-mono font-bold"
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -677,7 +770,7 @@ export default function CreateInvoice() {
               <div className="mt-10 flex flex-col items-end gap-4 border-t-4 border-secondary/50 pt-8">
                 <div className="flex justify-between items-baseline w-full md:w-1/2">
                   <span className="text-sm font-black uppercase tracking-[0.3em] text-muted-foreground">TOTAL AMOUNT:</span>
-                  <span className="text-4xl font-mono font-black text-primary">{totalAmount.toFixed(2)} <span className="text-sm font-sans">QAR</span></span>
+                  <span className="text-2xl sm:text-4xl font-mono font-black text-primary">{totalAmount.toFixed(2)} <span className="text-xs sm:text-sm font-sans">QAR</span></span>
                 </div>
                 <div className="w-full">
                    <label className="text-[10px] font-black uppercase tracking-widest text-muted-foreground ml-1">AMOUNT IN WORDS</label>

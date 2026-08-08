@@ -85,7 +85,7 @@ interface Customer {
 }
 interface CustomerBalance { balance: number; creditLimit: number; totalInvoiced: number; totalPaid: number; }
 interface Product { id: number; sku: string; name: string; category: string; unit: string; salePrice: number; wholesalePrice?: number; costPrice: number; active: boolean; locationStoreId?: number | null; locationArea?: string | null; locationRack?: string | null; locationShelf?: string | null; imageUrl?: string | null; }
-interface Store { id: number; nameEn: string; nameAr: string; type: string; active: boolean; }
+interface Store { id: number; nameEn: string; nameAr: string; type: string; active: boolean; ownerStoreId?: number | null; }
 interface ExistingDocument {
   id: number; type: string; number: string; date: string;
   customerId?: number; customerName: string; storeId: number; status: string; poNumber?: string;
@@ -131,7 +131,17 @@ function calcLineAmount(item: LineItem): number {
   return Math.max(0, item.qty * item.price * (1 - item.discountAmount / 100));
 }
 
-const UNITS = ["PCS", "BAG", "MTR", "PAIR", "BOX", "ROLL", "SET", "KG", "LTR", "GALLON", '"'];
+const UNITS = [
+  "PCS", "NOS", "SET", "PAIR", "DOZEN",
+  "BOX", "BAG", "PKT", "PACK", "BUNDLE", "CTN", "CASE", "CARTON", "PALLET",
+  "KG", "GM", "TON", "LB",
+  "LTR", "ML", "GLN", "DRUM", "BUCKET", "BARREL",
+  "MTR", "CM", "MM", "FT", "IN", "YD",
+  "SQFT", "SQM",
+  "ROLL", "SHEET", "SPOOL", "COIL", "REAM",
+  "TUBE", "BOTTLE", "CAN", "JAR",
+  "LENGTH", "LOT", "LOAD", "TRIP",
+];
 
 // ─── Color themes (accent for active pills + document) ──
 type ThemeKey = "blue" | "yellow" | "cyan" | "red" | "dark" | "premium";
@@ -191,6 +201,7 @@ export default function DocumentEditor({ type, params }: Props) {
   const [poNumber, setPoNumber] = useState("");
   const [deliveryMethod, setDeliveryMethod] = useState("pickup_store"); // pickup_store | pickup_warehouse | deliver_site
   const [deliveryAddress, setDeliveryAddress] = useState("");
+  const [mapLink, setMapLink] = useState(""); // pasted Google Maps pin URL for the site
   const [driverId, setDriverId] = useState("");
   const [deliveryInstructions, setDeliveryInstructions] = useState("");
   const [docCustomData, setDocCustomData] = useState<Record<string, any>>({});
@@ -271,6 +282,16 @@ export default function DocumentEditor({ type, params }: Props) {
     catch { return []; }
   };
   const { data: stores = [] } = useQuery<Store[]>({ queryKey: ["stores"], queryFn: () => safeArray("/api/stores") });
+  const userStoreId = user?.storeId ?? null;
+  const allowedLocations = useMemo(() => {
+    if (isAdmin) return stores.filter((s) => s.active);
+    if (!userStoreId) return stores.filter((s) => s.active);
+    return stores.filter((s) => s.active && (
+      s.id === userStoreId ||
+      (s.type === "warehouse" && s.ownerStoreId === userStoreId) ||
+      (s.type === "warehouse" && s.ownerStoreId == null)
+    ));
+  }, [stores, isAdmin, userStoreId]);
   const { data: customers = [] } = useQuery<Customer[]>({ queryKey: ["customers"], queryFn: () => safeArray("/api/customers") });
   const { data: products = [] } = useQuery<Product[]>({ queryKey: ["products"], queryFn: () => safeArray("/api/products") });
   const { data: existingDoc } = useQuery<ExistingDocument>({
@@ -292,16 +313,23 @@ export default function DocumentEditor({ type, params }: Props) {
     setPoNumber(existingDoc.poNumber ?? "");
     setDeliveryMethod((existingDoc as any).deliveryMethod ?? "pickup_store");
     setDeliveryAddress((existingDoc as any).deliveryAddress ?? "");
+    setMapLink((existingDoc as any).mapLink ?? "");
     setDriverId((existingDoc as any).driverId ? String((existingDoc as any).driverId) : "");
     setDeliveryInstructions((existingDoc as any).deliveryInstructions ?? "");
     setCustomerInput(existingDoc.customerName);
     setDocNumber(existingDoc.number);
     setNumberTouched(true);
     if (existingDoc.items && existingDoc.items.length > 0) {
-      setItems(existingDoc.items.map((i) => ({
-        id: uid(), productId: i.productId, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit,
-        price: i.price, discountType: i.discountType ?? "QAR", discountAmount: i.discountAmount ?? 0, amount: i.amount, originalPrice: i.price,
-      })));
+      setItems(existingDoc.items.map((i) => {
+        const qty = Number(i.qty) || 0;
+        const price = Number(i.price) || 0;
+        const discountAmount = Number(i.discountAmount) || 0;
+        const amount = Number(i.amount) || 0;
+        return {
+          id: uid(), productId: i.productId, sku: i.sku ?? "", description: i.description, qty, unit: i.unit,
+          price, discountType: i.discountType ?? "QAR", discountAmount, amount, originalPrice: price,
+        };
+      }));
     }
     if (existingDoc.customerId) {
       const c = customers.find((c) => c.id === existingDoc.customerId);
@@ -324,10 +352,16 @@ export default function DocumentEditor({ type, params }: Props) {
       if (c) setSelectedCustomer(c);
     }
     if (Array.isArray(refDoc.items) && refDoc.items.length > 0) {
-      setItems(refDoc.items.map((i) => ({
-        id: uid(), productId: i.productId, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit,
-        price: i.price, discountType: i.discountType ?? "QAR", discountAmount: i.discountAmount ?? 0, amount: i.amount, originalPrice: i.price,
-      })));
+      setItems(refDoc.items.map((i) => {
+        const qty = Number(i.qty) || 0;
+        const price = Number(i.price) || 0;
+        const discountAmount = Number(i.discountAmount) || 0;
+        const amount = Number(i.amount) || 0;
+        return {
+          id: uid(), productId: i.productId, sku: i.sku ?? "", description: i.description, qty, unit: i.unit,
+          price, discountType: i.discountType ?? "QAR", discountAmount, amount, originalPrice: price,
+        };
+      }));
     }
   }, [refDoc, isEdit, customers]);
 
@@ -338,11 +372,13 @@ export default function DocumentEditor({ type, params }: Props) {
     if (c) { setSelectedCustomer(c); setCustomerInput(c.name); }
   }, [prefillCustomerId, customers, isEdit, refInvoiceId, selectedCustomer]);
 
-  // Default the Invoice Type from the selected customer's Financial Status, until
-  // staff manually flips it (invoiceModeTouched).
+  // Default the Invoice Type from the selected customer's Financial Status.
+  // If customer has no credit limit, always force cash — even if staff manually picked credit.
   useEffect(() => {
-    if (invoiceModeTouched || !selectedCustomer) return;
-    setInvoiceMode(Number(selectedCustomer.creditLimit) > 0 ? "credit" : "cash");
+    if (!selectedCustomer) { setInvoiceMode("cash"); return; }
+    const hasCredit = Number(selectedCustomer.creditLimit) > 0;
+    if (!hasCredit) { setInvoiceMode("cash"); return; }
+    if (!invoiceModeTouched) setInvoiceMode("credit");
   }, [selectedCustomer, invoiceModeTouched]);
 
   const fetchNextNumber = useCallback(async (type: DocType) => {
@@ -419,10 +455,11 @@ export default function DocumentEditor({ type, params }: Props) {
     () => normalizeInvoice({
       type: docType, number: docNumber || `${docType}-DRAFT`, date, poNumber: poNumber.trim() || null,
       customerName: customerInput.trim() || null,
+      invoiceType: docType === "INV" ? (invoiceMode === "credit" ? "Credit Invoice" : "Cash Invoice") : undefined,
       items: items.filter((i) => i.description.trim() || i.amount > 0),
       subtotal, discountType: "QAR", discountAmount: docDiscount, taxRate: 0, taxAmount: 0, total, totalWords, notes,
     }, selectedCustomer?.phone),
-    [docType, docNumber, date, poNumber, customerInput, items, subtotal, docDiscount, total, totalWords, notes, selectedCustomer?.phone],
+    [docType, docNumber, date, poNumber, customerInput, items, subtotal, docDiscount, total, totalWords, notes, selectedCustomer?.phone, invoiceMode],
   );
   const previewOptions = {
     showSignature: invoiceCfg.showSignature,
@@ -569,6 +606,7 @@ export default function DocumentEditor({ type, params }: Props) {
         ...(docType === "INV" ? {
           deliveryMethod,
           deliveryAddress: deliveryMethod === "deliver_site" ? deliveryAddress.trim() || null : null,
+          mapLink: deliveryMethod === "deliver_site" ? mapLink.trim() || null : null,
           deliveryStatus: deliveryMethod === "deliver_site" ? "pending" : null,
           driverId: deliveryMethod === "deliver_site" && driverId ? Number(driverId) : null,
           deliveryInstructions: deliveryMethod === "deliver_site" ? deliveryInstructions.trim() || null : null,
@@ -646,9 +684,13 @@ export default function DocumentEditor({ type, params }: Props) {
     // not just a typed name. Other doc types keep the lighter name-only requirement.
     if (docType === "INV") {
       if (!selectedCustomer?.id) return "Select an existing customer or add a new one before saving.";
+      if (invoiceMode === "credit" && Number(selectedCustomer.creditLimit) <= 0)
+        return "Credit invoices require a customer with a credit limit. Register the customer with a credit limit first, or switch to Cash Invoice.";
     } else if (!customerInput.trim()) {
       return "Customer name is required.";
     }
+    const effectiveStoreId = storeId ?? user?.storeId ?? null;
+    if ((docType === "INV" || docType === "QT") && !effectiveStoreId) return "Select a store before saving.";
     const lines = items.filter((i) => i.description.trim());
     if (lines.length === 0) return "At least one line item is required.";
     // Per-line sanity: whole positive qty, price > 0 (except DN/QT drafts where
@@ -692,7 +734,7 @@ export default function DocumentEditor({ type, params }: Props) {
   const docTypeLabel: Record<DocType, string> = { INV: "Invoice", QT: "Quotation", DN: "Delivery Note", CN: "Credit Note", RV: "Return Invoice" };
   const isDeliveryNote = docType === "DN";
 
-  const inputCls = "w-full px-3.5 py-2.5 rounded-xl border border-slate-300 bg-white text-sm font-medium outline-none hover:border-slate-400 focus:border-[#1e2a3a] focus:ring-2 focus:ring-[#1e2a3a]/15 transition";
+  const inputCls = "w-full px-3 py-2 rounded-xl border border-slate-300 bg-white text-sm font-medium outline-none hover:border-slate-400 focus:border-[#1e2a3a] focus:ring-2 focus:ring-[#1e2a3a]/15 transition";
 
   return (
     <div id="invoice-editor-root" className="min-h-screen bg-slate-50">
@@ -853,13 +895,19 @@ export default function DocumentEditor({ type, params }: Props) {
               </div>
             )}
 
+          </div>{/* end space-y-6 right column */}
+        </div>{/* end product-grid + preview grid */}
+
+            {/* Side-by-side: Invoice Details (narrow) + Items (wide) — full width below product grid */}
+            <div className="flex flex-col lg:flex-row gap-4 lg:items-start">
+
             {/* INVOICE DETAILS card */}
             <ErrorBoundary label="invoice-details">
-              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 sm:p-7">
-                <h2 className="text-lg font-black uppercase tracking-tight text-slate-900 mb-5" style={{ fontFamily: "var(--font-sans)" }}>
+              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 lg:w-[420px] lg:min-w-[420px] lg:shrink-0">
+                <h2 className="text-sm font-black uppercase tracking-tight text-slate-900 mb-3" style={{ fontFamily: "var(--font-sans)" }}>
                   {docTypeLabel[docType]} Details
                 </h2>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-4">
+                <div className="grid grid-cols-2 gap-x-3 gap-y-2.5">
                   <Field label={`${docTypeLabel[docType]} Number`}>
                     <div className="relative">
                       <input
@@ -881,7 +929,7 @@ export default function DocumentEditor({ type, params }: Props) {
                     <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
                   </Field>
 
-                  <Field label={docType === "INV" ? "Customer *" : "Customer Name"} className="relative">
+                  <Field label={docType === "INV" ? "Customer *" : "Customer Name"} className="relative col-span-2">
                     <input
                       ref={customerInputRef}
                       className={inputCls}
@@ -912,32 +960,44 @@ export default function DocumentEditor({ type, params }: Props) {
                     </div>
                   </Field>
 
-                  {docType === "INV" && (
-                    <Field label="Invoice Type">
+                  {docType === "INV" && (() => {
+                    const hasCreditAccount = !!selectedCustomer && Number(selectedCustomer.creditLimit) > 0;
+                    return (
+                    <Field label="Invoice Type" className="col-span-2">
                       <div className="grid grid-cols-2 gap-2">
-                        {([["cash", "Cash Invoice"], ["credit", "Credit Invoice"]] as const).map(([val, label]) => (
+                        {([["cash", "Cash Invoice"], ["credit", "Credit Invoice"]] as const).map(([val, label]) => {
+                          const disabled = val === "credit" && !hasCreditAccount;
+                          return (
                           <button
                             key={val}
                             type="button"
-                            onClick={() => { setInvoiceMode(val); setInvoiceModeTouched(true); }}
+                            disabled={disabled}
+                            onClick={() => { if (!disabled) { setInvoiceMode(val); setInvoiceModeTouched(true); } }}
                             className={cn(
-                              "px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all cursor-pointer active:scale-[0.98]",
-                              invoiceMode === val
+                              "px-3 py-2.5 rounded-xl border-2 text-sm font-semibold transition-all",
+                              disabled
+                                ? "border-slate-200 bg-slate-100 text-slate-400 cursor-not-allowed opacity-60"
+                                : "cursor-pointer active:scale-[0.98]",
+                              !disabled && invoiceMode === val
                                 ? (val === "credit" ? "border-amber-500 bg-amber-500 text-white shadow-md" : "border-green-600 bg-green-600 text-white shadow-md")
-                                : "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:bg-slate-50",
+                                : !disabled ? "border-slate-300 bg-white text-slate-600 hover:border-slate-500 hover:bg-slate-50" : "",
                             )}
                           >
                             {label}
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
                       <p className="text-[11px] text-muted-foreground mt-1">
-                        {invoiceMode === "cash"
+                        {!hasCreditAccount
+                          ? "Credit invoice requires a registered customer with a credit limit."
+                          : invoiceMode === "cash"
                           ? "Full payment now via Cash / Card / Online Transfer. No PDC."
                           : "Allows partial, zero, or PDC payment. Needs a Credit account."}
                       </p>
                     </Field>
-                  )}
+                    );
+                  })()}
 
                   {(settings as any)?.showPoField !== false && (
                     <Field label="PO Number">
@@ -961,8 +1021,12 @@ export default function DocumentEditor({ type, params }: Props) {
 
                   {docType === "INV" && deliveryMethod === "deliver_site" && (
                     <>
-                      <Field label="Delivery Address" className="sm:col-span-2">
+                      <Field label="Delivery Address" className="col-span-2">
                         <input className={inputCls} placeholder="Site address for delivery…" value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} />
+                      </Field>
+                      <Field label="Google Maps Pin (link)" className="col-span-2">
+                        <input className={inputCls} placeholder="Paste the Google Maps location link — driver taps it to navigate…" value={mapLink} onChange={(e) => setMapLink(e.target.value)} />
+                        <p className="text-[11px] text-slate-400 mt-1">Shows on the delivery note only — never on the invoice. In Google Maps: drop a pin → Share → Copy link.</p>
                       </Field>
                       <Field label="Assign Driver">
                         <select className={inputCls} value={driverId} onChange={(e) => setDriverId(e.target.value)}>
@@ -976,21 +1040,21 @@ export default function DocumentEditor({ type, params }: Props) {
                     </>
                   )}
 
-                  <Field label="Receiver Signature" className="sm:col-span-2">
+                  <Field label="Receiver Signature" className="col-span-2">
                     <input className={inputCls} placeholder="Enter receiver name…" value={receiver} onChange={(e) => setReceiver(e.target.value)} />
                   </Field>
 
-                  <div className="sm:col-span-2">
+                  <div className="col-span-2">
                     <CustomFields moduleKey="documents" value={docCustomData} onChange={setDocCustomData} />
                   </div>
 
                   {isAdmin && (
-                    <Field label="Store" className="sm:col-span-2">
+                    <Field label="Store" className="col-span-2">
                       <ErrorBoundary label="store-select">
                         <Select value={storeId ? storeId.toString() : undefined} onValueChange={(v) => setStoreId(Number(v))}>
                           <SelectTrigger className="rounded-xl h-11 bg-slate-50/60"><SelectValue placeholder="Select store" /></SelectTrigger>
                           <SelectContent>
-                            {(Array.isArray(stores) ? stores : []).filter((s) => s.active).map((s) => (
+                            {(Array.isArray(stores) ? stores : []).filter((s) => s.active && s.type === "store").map((s) => (
                               <SelectItem key={s.id} value={s.id.toString()}>{s.nameEn}</SelectItem>
                             ))}
                           </SelectContent>
@@ -1004,9 +1068,9 @@ export default function DocumentEditor({ type, params }: Props) {
 
             {/* ITEMS card */}
             <ErrorBoundary label="items-grid">
-              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 sm:p-7">
-                <div className="flex items-center justify-between mb-5">
-                  <h2 className="text-lg font-black uppercase tracking-tight text-slate-900" style={{ fontFamily: "var(--font-sans)" }}>Items</h2>
+              <section className="bg-white rounded-2xl shadow-sm border border-slate-100 p-4 sm:p-5 lg:flex-1 min-w-0">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-sm font-black uppercase tracking-tight text-slate-900" style={{ fontFamily: "var(--font-sans)" }}>Items</h2>
                   <div className="flex gap-2 items-center">
                     <button onClick={() => (voiceMode === "items" ? stopVoice() : startVoice("items"))}
                       title="Speak items — e.g. 'add 20 bags of cement at 15'"
@@ -1028,16 +1092,16 @@ export default function DocumentEditor({ type, params }: Props) {
                     <thead>
                       <tr className="bg-slate-50 text-slate-500 text-[11px] uppercase tracking-wide select-none">
                         <th className="border border-slate-200 w-8 py-1.5 font-semibold">#</th>
-                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold">Description</th>
-                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-28">SKU</th>
-                        <th className="border border-slate-200 text-center py-1.5 font-semibold w-16">Qty</th>
-                        <th className="border border-slate-200 text-center py-1.5 font-semibold w-20">Unit</th>
-                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-32" title="Which store/warehouse this line's stock comes from">From</th>
+                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold min-w-[200px]">Description</th>
+                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-20">SKU</th>
+                        <th className="border border-slate-200 text-center py-1.5 font-semibold w-14">Qty</th>
+                        <th className="border border-slate-200 text-center py-1.5 font-semibold w-16">Unit</th>
+                        <th className="border border-slate-200 text-left px-2 py-1.5 font-semibold w-28" title="Which store/warehouse this line's stock comes from">From</th>
                         {!isDeliveryNote && (<>
-                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-20 text-amber-700" title="Cost price — staff reference only, never printed">Cost*</th>
-                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-24">Price</th>
-                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-24">Disc.</th>
-                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-28">Total</th>
+                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-16 text-amber-700" title="Cost price — staff reference only, never printed">Cost*</th>
+                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-20">Price</th>
+                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-20">Disc.</th>
+                          <th className="border border-slate-200 text-right px-2 py-1.5 font-semibold w-24">Total</th>
                         </>)}
                         <th className="border border-slate-200 w-8" />
                       </tr>
@@ -1049,7 +1113,7 @@ export default function DocumentEditor({ type, params }: Props) {
                           item={item}
                           index={idx}
                           isDeliveryNote={isDeliveryNote}
-                          stores={stores}
+                          stores={allowedLocations}
                           defaultStoreId={storeId ?? user?.storeId ?? null}
                           onChange={(patch) => updateItem(item.id, patch)}
                           onDelete={() => setItems((prev) => prev.filter((i) => i.id !== item.id))}
@@ -1064,7 +1128,7 @@ export default function DocumentEditor({ type, params }: Props) {
                 {/* Mobile cards */}
                 <div className="md:hidden space-y-3">
                   {items.map((item, idx) => (
-                    <LineItemCard key={item.id} item={item} index={idx} isDeliveryNote={isDeliveryNote} stores={stores} defaultStoreId={storeId ?? user?.storeId ?? null}
+                    <LineItemCard key={item.id} item={item} index={idx} isDeliveryNote={isDeliveryNote} stores={allowedLocations} defaultStoreId={storeId ?? user?.storeId ?? null}
                       onChange={(patch) => updateItem(item.id, patch)}
                       onDelete={() => setItems((prev) => prev.filter((i) => i.id !== item.id))} />
                   ))}
@@ -1127,9 +1191,8 @@ export default function DocumentEditor({ type, params }: Props) {
                 )}
               </section>
             </ErrorBoundary>
-          </div>
 
-        </div>
+            </div>{/* end side-by-side flex */}
       </div>
 
       {/* ── Product Search Dialog ── */}

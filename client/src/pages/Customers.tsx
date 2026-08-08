@@ -64,7 +64,7 @@ type SortKey = "name" | "outstanding" | "lastPurchase";
 type FilterType = "all" | "walk-in" | "contractor" | "corporate" | "government";
 // Behaviour tier is system-calculated server-side (never staff-set, never printed).
 type TierFilter = "all" | "best" | "better" | "good" | "watch" | "bad";
-type FinFilter = "all" | "cash" | "credit";
+type FinFilter = "all" | "cash" | "credit" | "credit-owing";
 
 /* ─────────────────────────────────────────
    Helpers
@@ -490,15 +490,18 @@ function CustomerRowSkeleton() {
 ───────────────────────────────────────── */
 export default function Customers() {
   const [, nav] = useLocation();
+
+  // Credit Exposure deep-link (dashboard "Credit Exposure" card):
+  // /customers?filter=credit-outstanding → preset the VISIBLE controls
+  // (Financial → Credit, Sort → highest outstanding) so the applied filter
+  // shows in the dropdowns instead of filtering silently.
+  const urlSearch = useSearch();
+  const creditDeepLink = new URLSearchParams(urlSearch).get("filter") === "credit-outstanding";
+
   const [search, setSearch] = useState("");
   const [filterType, setFilterType] = useState<FilterType>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortKey, setSortKey] = useState<SortKey>(creditDeepLink ? "outstanding" : "name");
   const [dialogOpen, setDialogOpen] = useState(false);
-
-  // Credit Exposure deep-link: /customers?filter=credit-outstanding →
-  // only credit accounts with an open balance, highest first.
-  const urlSearch = useSearch();
-  const creditMode = new URLSearchParams(urlSearch).get("filter") === "credit-outstanding";
 
   /* fetch customers */
   const { data: customers, isLoading } = useQuery<Customer[]>({
@@ -519,7 +522,7 @@ export default function Customers() {
 
   /* money-behaviour overview per customer (due / paid / PDC / tier) → dropdown filters + export */
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
-  const [finFilter, setFinFilter] = useState<FinFilter>("all");
+  const [finFilter, setFinFilter] = useState<FinFilter>(creditDeepLink ? "credit-owing" : "all");
   const { data: overview } = useQuery<any>({
     queryKey: ["/api/reports/customer-overview"],
     queryFn: () => fetch("/api/reports/customer-overview").then((r) => r.json()).catch(() => ({ rows: [], totals: {} })),
@@ -548,13 +551,16 @@ export default function Customers() {
   /* filter */
   const filtered = list.filter((c) => {
     if (c.active === false) return false;
-    if (creditMode && !(bal(c.id) > 0)) return false; // credit-exposure preset
-    if (!creditMode && filterType !== "all" && c.type !== filterType) return false;
-    if (tierFilter !== "all" || finFilter !== "all") {
+    if (filterType !== "all" && c.type !== filterType) return false;
+    if (finFilter === "credit-owing") {
+      const o = ov(c.id);
+      if (!o || o.financialStatus !== "credit" || !(bal(c.id) > 0)) return false;
+      if (tierFilter !== "all" && o.tier !== tierFilter) return false;
+    } else if (tierFilter !== "all" || finFilter !== "all") {
       const o = ov(c.id);
       if (!o) return false;
-      if (tierFilter !== "all" && o.tier !== tierFilter) return false;         // Behavior tier
-      if (finFilter !== "all" && o.financialStatus !== finFilter) return false; // Cash / Credit account
+      if (tierFilter !== "all" && o.tier !== tierFilter) return false;
+      if (finFilter !== "all" && o.financialStatus !== finFilter) return false;
     }
     const q = search.toLowerCase();
     if (!q) return true;
@@ -581,7 +587,7 @@ export default function Customers() {
 
   /* sort */
   const sorted = [...filtered].sort((a, b) => {
-    if (creditMode || sortKey === "outstanding") return bal(b.id) - bal(a.id); // highest owed first
+    if (sortKey === "outstanding") return bal(b.id) - bal(a.id); // highest owed first
     if (sortKey === "lastPurchase") return lastP(b.id).localeCompare(lastP(a.id)); // most recent first
     return a.name.localeCompare(b.name); // name (default)
   });
@@ -627,18 +633,6 @@ export default function Customers() {
         ))}
       </div>
 
-      {/* Credit-exposure filter banner (dashboard "Credit Exposure" deep-link) */}
-      {creditMode && (
-        <div className="flex items-center gap-3 rounded-xl border-2 border-red-200 bg-red-50/60 px-4 py-3">
-          <CreditCard className="w-5 h-5 text-red-600 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-bold text-red-800">Credit Exposure — accounts with an open balance</p>
-            <p className="text-xs text-red-700">{sorted.length} customers · {fmt(exposure?.total)} outstanding · highest first</p>
-          </div>
-          <button onClick={() => nav("/customers")} className="text-xs font-semibold text-red-700 hover:underline shrink-0">Show all</button>
-        </div>
-      )}
-
       {/* ── Filters row ── */}
       <div className="flex flex-col sm:flex-row sm:flex-wrap gap-3">
         {/* Search */}
@@ -669,13 +663,14 @@ export default function Customers() {
 
         {/* Financial status filter — account type (Cash / Credit) */}
         <Select value={finFilter} onValueChange={(v) => setFinFilter(v as FinFilter)}>
-          <SelectTrigger className="w-full sm:w-36">
+          <SelectTrigger className="w-full sm:w-44">
             <SelectValue placeholder="Financial" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Accounts</SelectItem>
             <SelectItem value="cash">Cash{totals.cash != null ? ` (${totals.cash})` : ""}</SelectItem>
             <SelectItem value="credit">Credit{totals.credit != null ? ` (${totals.credit})` : ""}</SelectItem>
+            <SelectItem value="credit-owing">Credit (Owing)</SelectItem>
           </SelectContent>
         </Select>
 

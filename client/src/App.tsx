@@ -20,6 +20,7 @@ import CustomerDetail from "@/pages/CustomerDetail";
 import Inventory from "@/pages/Inventory";
 import ProductDetail from "@/pages/ProductDetail";
 import Suppliers from "@/pages/Suppliers";
+import SupplierLedger from "@/pages/SupplierLedger";
 import Reports from "@/pages/Reports";
 import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
@@ -75,6 +76,7 @@ function ProtectedApp() {
         <Route path="/customers/:id" component={CustomerDetail} />
         <Route path="/inventory" component={Inventory} />
         <Route path="/inventory/:id" component={ProductDetail} />
+        <Route path="/suppliers/:id/ledger" component={SupplierLedger} />
         <Route path="/suppliers" component={Suppliers} />
         <Route path="/finance" component={Finance} />
         <Route path="/reports/finance" component={Finance} />

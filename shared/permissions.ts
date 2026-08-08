@@ -17,8 +17,10 @@ export type NavKey =
 // Which roles may access each module. Per MTC_MASTER_SPEC Module 10.
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
   dashboard:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper", "driver"],
-  documents:   ["admin", "manager", "salesman", "salesman_helper"],
-  customers:   ["admin", "manager", "salesman", "salesman_helper"],
+  // warehouse_manager can invoice too: a customer sometimes buys on the spot at the
+  // warehouse (sees stock, wants it now). Needs documents + customers to ring a sale.
+  documents:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
+  customers:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
   inventory:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper"],
   suppliers:   ["admin", "manager"],
   reports:     ["admin", "manager"],

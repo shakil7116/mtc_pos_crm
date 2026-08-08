@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Package,
@@ -23,7 +23,10 @@ import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
+  SelectSeparator,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -119,6 +122,7 @@ type StoreItem = {
   nameEn: string;
   type: "store" | "warehouse";
   active: boolean | null;
+  ownerStoreId?: number | null;
 };
 
 type AdjustmentLog = {
@@ -213,8 +217,24 @@ type AdjForm = {
   fromStoreId: string;
   toStoreId: string;
   qty: string;
-  reason: string;
+  adjustReason: string;
+  notes: string;
 };
+
+const ADD_REASONS = [
+  { value: "purchase", label: "Purchase from Supplier" },
+  { value: "return", label: "Customer Return" },
+  { value: "correction", label: "Stock Correction / Count" },
+  { value: "add", label: "Other" },
+] as const;
+
+const REMOVE_REASONS = [
+  { value: "damaged", label: "Damaged / Broken" },
+  { value: "expired", label: "Expired / Waste" },
+  { value: "lost", label: "Lost / Missing" },
+  { value: "correction", label: "Stock Correction / Count" },
+  { value: "remove", label: "Other" },
+] as const;
 
 const BLANK_ADJ: AdjForm = {
   mode: "add",
@@ -222,7 +242,8 @@ const BLANK_ADJ: AdjForm = {
   fromStoreId: "",
   toStoreId: "",
   qty: "",
-  reason: "",
+  adjustReason: "",
+  notes: "",
 };
 
 function AdjustmentDialog({
@@ -251,11 +272,14 @@ function AdjustmentDialog({
   const [errors, setErrors] = useState<Partial<Record<keyof AdjForm, string>>>(
     {}
   );
+  const qtyRef = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  // Reset when dialog opens with new prefill
-  const handleOpen = () => {
+  // Re-seed from the clicked row every time the dialog opens. The dialog stays
+  // mounted, so the useState initializer above only ever sees the first prefill.
+  useEffect(() => {
+    if (!open) return;
     setForm({
       ...BLANK_ADJ,
       mode: prefillMode ?? "add",
@@ -263,7 +287,7 @@ function AdjustmentDialog({
       fromStoreId: prefillStoreId ? String(prefillStoreId) : "",
     });
     setErrors({});
-  };
+  }, [open, prefillMode, prefillProductId, prefillStoreId]);
 
   const mut = useMutation({
     mutationFn: async (body: object) => {
@@ -291,7 +315,11 @@ function AdjustmentDialog({
   });
 
   function set<K extends keyof AdjForm>(field: K, value: AdjForm[K]) {
-    setForm((f) => ({ ...f, [field]: value }));
+    setForm((f) => {
+      const next = { ...f, [field]: value };
+      if (field === "mode") next.adjustReason = "";
+      return next;
+    });
     setErrors((e) => ({ ...e, [field]: undefined }));
   }
 
@@ -306,6 +334,8 @@ function AdjustmentDialog({
     const qty = parseFloat(form.qty);
     if (!form.qty || isNaN(qty) || qty <= 0)
       errs.qty = "Enter a positive quantity";
+    if (form.mode !== "transfer" && !form.adjustReason)
+      errs.adjustReason = "Select a reason";
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -323,7 +353,7 @@ function AdjustmentDialog({
         productId: body.productId,
         qtyChange: body.qty,
         type: "transfer" as const,
-        reason: body.reason || "Transfer",
+        reason: body.reason || null,
       };
       const r1 = await fetch("/api/inventory/adjust", {
         method: "POST",
@@ -358,15 +388,17 @@ function AdjustmentDialog({
         fromStoreId: Number(form.fromStoreId),
         toStoreId: Number(form.toStoreId),
         qty,
-        reason: form.reason,
+        reason: form.notes,
       });
     } else {
+      const reasonLabel = (form.mode === "add" ? ADD_REASONS : REMOVE_REASONS)
+        .find((r) => r.value === form.adjustReason)?.label;
       mut.mutate({
         productId: Number(form.productId),
         storeId: Number(form.fromStoreId),
         qtyChange: form.mode === "add" ? qty : -qty,
-        type: form.mode,
-        reason: form.reason || null,
+        type: form.adjustReason,
+        reason: [reasonLabel, form.notes].filter(Boolean).join(" — ") || null,
       });
     }
   }
@@ -378,10 +410,19 @@ function AdjustmentDialog({
       open={open}
       onOpenChange={(o) => {
         if (!o) onClose();
-        else handleOpen();
       }}
     >
-      <DialogContent className="sm:max-w-md">
+      <DialogContent
+        className="sm:max-w-md"
+        onOpenAutoFocus={(e) => {
+          // With product + store already filled in, quantity is the only field
+          // left to type — skip Radix's default focus on the first mode button.
+          if (!prefillProductId) return;
+          e.preventDefault();
+          qtyRef.current?.focus();
+          qtyRef.current?.select();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Stock Adjustment</DialogTitle>
         </DialogHeader>
@@ -504,6 +545,7 @@ function AdjustmentDialog({
               Quantity <span className="text-red-500">*</span>
             </Label>
             <Input
+              ref={qtyRef}
               type="number"
               min="0.01"
               step="0.01"
@@ -516,14 +558,43 @@ function AdjustmentDialog({
             )}
           </div>
 
-          {/* Reason */}
+          {/* Reason (required for add/remove) */}
+          {form.mode !== "transfer" && (
+            <div className="space-y-1.5">
+              <Label>
+                Reason <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={form.adjustReason}
+                onValueChange={(v) => set("adjustReason", v)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Why is stock changing?" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(form.mode === "add" ? ADD_REASONS : REMOVE_REASONS).map(
+                    (r) => (
+                      <SelectItem key={r.value} value={r.value}>
+                        {r.label}
+                      </SelectItem>
+                    )
+                  )}
+                </SelectContent>
+              </Select>
+              {errors.adjustReason && (
+                <p className="text-xs text-red-500">{errors.adjustReason}</p>
+              )}
+            </div>
+          )}
+
+          {/* Notes */}
           <div className="space-y-1.5">
-            <Label>Reason</Label>
+            <Label>Notes</Label>
             <Textarea
               rows={2}
-              value={form.reason}
-              onChange={(e) => set("reason", e.target.value)}
-              placeholder="Optional note..."
+              value={form.notes}
+              onChange={(e) => set("notes", e.target.value)}
+              placeholder="Optional details..."
             />
           </div>
         </div>
@@ -1015,10 +1086,14 @@ function AllStockTab({
     mode?: AdjMode;
   }>({});
 
-  const url =
-    storeFilter === "all"
-      ? "/api/inventory"
-      : `/api/inventory?storeId=${storeFilter}`;
+  const url = (() => {
+    if (storeFilter === "all") return "/api/inventory";
+    if (storeFilter.startsWith("group:")) {
+      const id = storeFilter.slice(6);
+      return `/api/inventory?storeId=${id}&includeWarehouses=true`;
+    }
+    return `/api/inventory?storeId=${storeFilter}`;
+  })();
 
   const { data: rawInventory, isLoading } = useQuery<InventoryRow[]>({
     queryKey: ["/api/inventory", storeFilter],
@@ -1084,19 +1159,50 @@ function AllStockTab({
           />
         </div>
         <Select value={storeFilter} onValueChange={setStoreFilter}>
-          <SelectTrigger className="w-full sm:w-52">
+          <SelectTrigger className="w-full sm:w-64">
             <SelectValue placeholder="All Stores" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">All Stores</SelectItem>
+            <SelectItem value="all">All Locations</SelectItem>
+            <SelectSeparator />
             {stores
-              .filter((s) => s.active !== false)
-              .map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {storeIcon(s.type)}
-                  {s.nameEn}
-                </SelectItem>
-              ))}
+              .filter((s) => s.active !== false && s.type === "store")
+              .map((s) => {
+                const owned = stores.filter((w) => w.active !== false && w.type === "warehouse" && w.ownerStoreId === s.id);
+                return (
+                  <SelectGroup key={s.id}>
+                    <SelectLabel className="text-xs text-muted-foreground">{s.nameEn}</SelectLabel>
+                    {owned.length > 0 && (
+                      <SelectItem value={`group:${s.id}`}>
+                        {storeIcon("store")} {s.nameEn} — Total
+                      </SelectItem>
+                    )}
+                    <SelectItem value={String(s.id)}>
+                      {storeIcon("store")} {s.nameEn} only
+                    </SelectItem>
+                    {owned.map((w) => (
+                      <SelectItem key={w.id} value={String(w.id)}>
+                        {storeIcon("warehouse")} {w.nameEn}
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                );
+              })}
+            {stores.filter((s) => s.active !== false && s.type === "warehouse" && !s.ownerStoreId).length > 0 && (
+              <>
+                <SelectSeparator />
+                <SelectGroup>
+                  <SelectLabel className="text-xs text-muted-foreground">Common Warehouses</SelectLabel>
+                  {stores
+                    .filter((s) => s.active !== false && s.type === "warehouse" && !s.ownerStoreId)
+                    .map((w) => (
+                      <SelectItem key={w.id} value={String(w.id)}>
+                        {storeIcon("warehouse")} {w.nameEn}
+                      </SelectItem>
+                    ))}
+                </SelectGroup>
+              </>
+            )}
           </SelectContent>
         </Select>
       </div>
@@ -1792,12 +1898,20 @@ function AdjustmentsTab({
     switch (type) {
       case "add":
       case "return":
+      case "purchase":
         return "bg-green-100 text-green-700";
       case "remove":
       case "sale":
+      case "damaged":
+      case "expired":
+      case "lost":
         return "bg-red-100 text-red-700";
       case "transfer":
         return "bg-blue-100 text-blue-700";
+      case "correction":
+        return "bg-amber-100 text-amber-700";
+      case "void":
+        return "bg-purple-100 text-purple-700";
       default:
         return "bg-gray-100 text-gray-700";
     }

@@ -61,6 +61,10 @@ import {
   ImageIcon,
   Eye,
   EyeOff,
+  Wallet,
+  CalendarOff,
+  Banknote,
+  ArrowDownCircle,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -189,6 +193,8 @@ export default function SettingsPage() {
         <Section2 toast={toast} qc={qc} />
         {/* S3 — Staff */}
         <Section3 toast={toast} qc={qc} currentUserId={user.id} />
+        {/* S3b — Staff Payroll */}
+        <StaffPayrollSection toast={toast} qc={qc} />
         {/* S4 — Document Settings */}
         <Section4 toast={toast} qc={qc} />
         {/* S4b — Document Numbering (Phase 3 Step 1) */}
@@ -1139,6 +1145,453 @@ function Section3({
               >
                 {credMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
                 Save login
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </AccordionContent>
+    </AccordionItem>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   STAFF PAYROLL — Salary config, advances, days off, monthly summary
+════════════════════════════════════════════════════════════════════ */
+
+type PayrollEntry = {
+  id: number;
+  userId: number;
+  type: string;
+  amount: string;
+  date: string;
+  month: string;
+  note: string | null;
+};
+
+type PayrollSummary = {
+  userId: number;
+  name: string;
+  role: string;
+  baseSalary: number;
+  dayRate: number;
+  advances: number;
+  deductions: number;
+  bonuses: number;
+  daysOff: number;
+  dayOffDeduction: number;
+  netSalary: number;
+  salaryPaid: number;
+  remaining: number;
+  entries: PayrollEntry[];
+};
+
+function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
+  const now = new Date();
+  const [month, setMonth] = useState(now.toISOString().slice(0, 7));
+
+  const { data: users = [] } = useQuery<User[]>({
+    queryKey: ["/api/users"],
+    queryFn: () => fetch("/api/users").then((r) => r.json()),
+  });
+
+  const { data: summary = [], isLoading } = useQuery<PayrollSummary[]>({
+    queryKey: ["/api/staff-payroll/summary", month],
+    queryFn: () => fetch(`/api/staff-payroll/summary?month=${month}`).then((r) => r.json()),
+  });
+
+  const [salaryDialog, setSalaryDialog] = useState<{ userId: number; name: string; salary: string; dayRate: string } | null>(null);
+  const [entryDialog, setEntryDialog] = useState<{
+    userId: number;
+    name: string;
+    type: string;
+    amount: string;
+    date: string;
+    note: string;
+  } | null>(null);
+  const [expandedUser, setExpandedUser] = useState<number | null>(null);
+
+  const salaryMut = useMutation({
+    mutationFn: () => {
+      if (!salaryDialog) return Promise.resolve();
+      return fetch(`/api/users/${salaryDialog.userId}/salary`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ salary: salaryDialog.salary, dayRate: salaryDialog.dayRate }),
+      }).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/staff-payroll/summary"] });
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+      setSalaryDialog(null);
+      toast({ title: "Salary updated" });
+    },
+    onError: () => toast({ title: "Failed", variant: "destructive" }),
+  });
+
+  const addEntryMut = useMutation({
+    mutationFn: () => {
+      if (!entryDialog) return Promise.resolve();
+      return fetch("/api/staff-payroll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: entryDialog.userId,
+          type: entryDialog.type,
+          amount: entryDialog.type === "day_off" ? "0" : entryDialog.amount,
+          date: entryDialog.date,
+          month,
+          note: entryDialog.note || null,
+        }),
+      }).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/staff-payroll/summary"] });
+      setEntryDialog(null);
+      toast({ title: "Entry added" });
+    },
+    onError: () => toast({ title: "Failed", variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (id: number) =>
+      fetch(`/api/staff-payroll/${id}`, { method: "DELETE" }).then((r) => { if (!r.ok) throw new Error(); }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/staff-payroll/summary"] });
+      toast({ title: "Entry removed" });
+    },
+    onError: () => toast({ title: "Failed", variant: "destructive" }),
+  });
+
+  const activeUsers = users.filter((u: User) => u.active);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const typeLabel = (t: string) => {
+    const map: Record<string, string> = {
+      advance: "Advance",
+      day_off: "Day Off",
+      salary_payment: "Salary Paid",
+      deduction: "Deduction",
+      bonus: "Bonus",
+    };
+    return map[t] || t;
+  };
+
+  const typeBadgeClass = (t: string) => {
+    const map: Record<string, string> = {
+      advance: "text-orange-600 border-orange-200 bg-orange-50",
+      day_off: "text-red-600 border-red-200 bg-red-50",
+      salary_payment: "text-green-600 border-green-200 bg-green-50",
+      deduction: "text-rose-600 border-rose-200 bg-rose-50",
+      bonus: "text-blue-600 border-blue-200 bg-blue-50",
+    };
+    return map[t] || "text-slate-600 border-slate-200 bg-slate-50";
+  };
+
+  return (
+    <AccordionItem value="payroll" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
+      <AccordionTrigger className="hover:no-underline">
+        <span className="flex items-center gap-2 font-semibold text-base">
+          <Wallet className="w-4 h-4 text-[#d4a017]" />
+          Staff Payroll
+        </span>
+      </AccordionTrigger>
+      <AccordionContent>
+        <div className="space-y-4 pt-2 pb-4">
+          {/* Month selector */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Label className="text-sm font-medium">Month</Label>
+              <Input
+                type="month"
+                value={month}
+                onChange={(e) => setMonth(e.target.value)}
+                className="w-44 h-9"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {summary.length} staff with payroll
+            </p>
+          </div>
+
+          {isLoading ? (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            </div>
+          ) : summary.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <Wallet className="w-10 h-10 mx-auto mb-2 opacity-40" />
+              <p className="text-sm">No staff with salary configured.</p>
+              <p className="text-xs mt-1">Set salary for staff members below.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {summary.map((s) => (
+                <div key={s.userId} className="border rounded-xl overflow-hidden">
+                  {/* Summary row */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    onClick={() => setExpandedUser(expandedUser === s.userId ? null : s.userId)}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <span className="font-medium text-sm">{s.name}</span>
+                        <Badge variant="outline" className="ml-2 text-xs text-slate-500 border-slate-200">{s.role}</Badge>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="text-right hidden sm:block">
+                        <span className="text-muted-foreground">Base: </span>
+                        <span className="font-mono font-medium">{s.baseSalary.toLocaleString()} QAR</span>
+                      </div>
+                      {s.advances > 0 && (
+                        <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50">
+                          -{s.advances.toLocaleString()} adv
+                        </Badge>
+                      )}
+                      {s.daysOff > 0 && (
+                        <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50">
+                          {s.daysOff}d off
+                        </Badge>
+                      )}
+                      <div className="text-right min-w-[90px]">
+                        <span className="text-muted-foreground text-xs">Remaining: </span>
+                        <span className={`font-mono font-semibold ${s.remaining > 0 ? "text-green-600" : s.remaining < 0 ? "text-red-600" : "text-slate-500"}`}>
+                          {s.remaining.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded detail */}
+                  {expandedUser === s.userId && (
+                    <div className="border-t bg-muted/10 px-4 py-3 space-y-3">
+                      {/* Summary numbers */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Base Salary</p>
+                          <p className="font-mono font-semibold text-sm">{s.baseSalary.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Day Rate</p>
+                          <p className="font-mono font-semibold text-sm">{s.dayRate.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Days Off ({s.daysOff})</p>
+                          <p className="font-mono font-semibold text-sm text-red-600">-{s.dayOffDeduction.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Advances</p>
+                          <p className="font-mono font-semibold text-sm text-orange-600">-{s.advances.toLocaleString()}</p>
+                        </div>
+                        {s.deductions > 0 && (
+                          <div className="bg-white border rounded-lg px-3 py-2">
+                            <p className="text-muted-foreground">Deductions</p>
+                            <p className="font-mono font-semibold text-sm text-rose-600">-{s.deductions.toLocaleString()}</p>
+                          </div>
+                        )}
+                        {s.bonuses > 0 && (
+                          <div className="bg-white border rounded-lg px-3 py-2">
+                            <p className="text-muted-foreground">Bonuses</p>
+                            <p className="font-mono font-semibold text-sm text-blue-600">+{s.bonuses.toLocaleString()}</p>
+                          </div>
+                        )}
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Net Salary</p>
+                          <p className="font-mono font-semibold text-sm">{s.netSalary.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-white border rounded-lg px-3 py-2">
+                          <p className="text-muted-foreground">Paid</p>
+                          <p className="font-mono font-semibold text-sm text-green-600">{s.salaryPaid.toLocaleString()}</p>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "advance", amount: "", date: today, note: "" })}>
+                          <ArrowDownCircle className="w-3 h-3" /> Advance
+                        </Button>
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "day_off", amount: "0", date: today, note: "" })}>
+                          <CalendarOff className="w-3 h-3" /> Day Off
+                        </Button>
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "salary_payment", amount: String(s.remaining > 0 ? s.remaining : 0), date: today, note: "" })}>
+                          <Banknote className="w-3 h-3" /> Pay Salary
+                        </Button>
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "deduction", amount: "", date: today, note: "" })}>
+                          Deduction
+                        </Button>
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "bonus", amount: "", date: today, note: "" })}>
+                          Bonus
+                        </Button>
+                        <Button size="sm" variant="ghost" className="gap-1.5 text-xs h-7 ml-auto"
+                          onClick={() => setSalaryDialog({ userId: s.userId, name: s.name, salary: String(s.baseSalary), dayRate: String(s.dayRate) })}>
+                          Edit Salary
+                        </Button>
+                      </div>
+
+                      {/* Entry log */}
+                      {s.entries.length > 0 && (
+                        <div className="border rounded-lg overflow-hidden">
+                          <table className="w-full text-xs">
+                            <thead className="bg-muted/40">
+                              <tr>
+                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Date</th>
+                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
+                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
+                                <th className="text-left px-3 py-2 font-medium text-muted-foreground hidden sm:table-cell">Note</th>
+                                <th className="px-3 py-2"></th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-border/50">
+                              {s.entries.map((e) => (
+                                <tr key={e.id}>
+                                  <td className="px-3 py-2 font-mono">{e.date}</td>
+                                  <td className="px-3 py-2">
+                                    <Badge variant="outline" className={typeBadgeClass(e.type)}>
+                                      {typeLabel(e.type)}
+                                    </Badge>
+                                  </td>
+                                  <td className="px-3 py-2 text-right font-mono">
+                                    {e.type === "day_off" ? "—" : Number(e.amount).toLocaleString()}
+                                  </td>
+                                  <td className="px-3 py-2 text-muted-foreground hidden sm:table-cell">{e.note || "—"}</td>
+                                  <td className="px-3 py-2 text-right">
+                                    <button
+                                      onClick={() => deleteMut.mutate(e.id)}
+                                      className="text-muted-foreground hover:text-destructive transition-colors"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Set salary for users who don't have one yet */}
+          {activeUsers.filter((u: User) => !summary.find((s) => s.userId === u.id)).length > 0 && (
+            <div className="border-t pt-4 mt-4">
+              <p className="text-sm font-medium mb-2">Configure Salary</p>
+              <p className="text-xs text-muted-foreground mb-3">Staff without salary configured:</p>
+              <div className="flex flex-wrap gap-2">
+                {activeUsers
+                  .filter((u: User) => !summary.find((s) => s.userId === u.id))
+                  .map((u: User) => (
+                    <Button
+                      key={u.id}
+                      size="sm"
+                      variant="outline"
+                      className="text-xs h-7 gap-1.5"
+                      onClick={() => setSalaryDialog({ userId: u.id, name: u.name, salary: "0", dayRate: "0" })}
+                    >
+                      <Plus className="w-3 h-3" />
+                      {u.name}
+                    </Button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Salary config dialog */}
+        <Dialog open={!!salaryDialog} onOpenChange={(v) => { if (!v) setSalaryDialog(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Salary — {salaryDialog?.name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <Field label="Monthly Salary (QAR)">
+                <Input
+                  type="number"
+                  min="0"
+                  value={salaryDialog?.salary || ""}
+                  onChange={(e) => setSalaryDialog((d) => d ? { ...d, salary: e.target.value } : null)}
+                  placeholder="0"
+                />
+              </Field>
+              <Field label="Day Rate (QAR) — deducted per day off">
+                <Input
+                  type="number"
+                  min="0"
+                  value={salaryDialog?.dayRate || ""}
+                  onChange={(e) => setSalaryDialog((d) => d ? { ...d, dayRate: e.target.value } : null)}
+                  placeholder="0"
+                />
+              </Field>
+              <div className="bg-muted/30 rounded-lg p-3 text-xs text-muted-foreground">
+                Day Rate is auto-calculated if left at 0: salary / 30.
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setSalaryDialog(null)}>Cancel</Button>
+              <Button
+                onClick={() => salaryMut.mutate()}
+                disabled={salaryMut.isPending}
+                className="gap-2"
+              >
+                {salaryMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add entry dialog */}
+        <Dialog open={!!entryDialog} onOpenChange={(v) => { if (!v) setEntryDialog(null); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {entryDialog ? `${typeLabel(entryDialog.type)} — ${entryDialog.name}` : ""}
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              <Field label="Date">
+                <Input
+                  type="date"
+                  value={entryDialog?.date || ""}
+                  onChange={(e) => setEntryDialog((d) => d ? { ...d, date: e.target.value } : null)}
+                />
+              </Field>
+              {entryDialog?.type !== "day_off" && (
+                <Field label="Amount (QAR)">
+                  <Input
+                    type="number"
+                    min="0"
+                    value={entryDialog?.amount || ""}
+                    onChange={(e) => setEntryDialog((d) => d ? { ...d, amount: e.target.value } : null)}
+                    placeholder="0"
+                  />
+                </Field>
+              )}
+              <Field label="Note (optional)">
+                <Input
+                  value={entryDialog?.note || ""}
+                  onChange={(e) => setEntryDialog((d) => d ? { ...d, note: e.target.value } : null)}
+                  placeholder="Reason..."
+                />
+              </Field>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setEntryDialog(null)}>Cancel</Button>
+              <Button
+                onClick={() => addEntryMut.mutate()}
+                disabled={addEntryMut.isPending || (entryDialog?.type !== "day_off" && !entryDialog?.amount)}
+                className="gap-2"
+              >
+                {addEntryMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Add
               </Button>
             </DialogFooter>
           </DialogContent>

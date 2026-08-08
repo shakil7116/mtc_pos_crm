@@ -27,6 +27,10 @@ export interface TemplateInvoice {
   } | null;
   customerName?: string | null;
   customerPhone?: string | null;
+  /** Site-delivery fields — DN only, never rendered on an invoice. */
+  deliveryAddress?: string | null;
+  mapLink?: string | null;
+  deliveryInstructions?: string | null;
   items: TemplateItem[];
   subtotal: number;
   discountType?: string | null;

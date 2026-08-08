@@ -73,6 +73,15 @@ type QueueItem = {
     total: number | string;
     date: string;
   };
+  // Statement breakdown — all open invoices for this customer + their total due.
+  invoices?: {
+    id: number;
+    number: string;
+    date: string;
+    remaining: number | string;
+    daysOverdue: number;
+  }[];
+  totalOutstanding?: number | string;
   cheque?: {
     id: number;
     chequeNumber: string;
@@ -147,7 +156,7 @@ function buildWhatsAppUrl(phone: string, message: string): string {
 }
 
 function truncateLines(text: string, lines = 2): string {
-  return text.split("\n").slice(0, lines).join("\n");
+  return text.split("\n").filter((l) => l.trim()).slice(0, lines).join("\n");
 }
 
 function fmtAmount(v: number | string): string {
@@ -262,8 +271,41 @@ function QueueCard({
                 </div>
               </div>
 
-              {/* Invoice / Cheque info */}
-              {item.invoice && (
+              {/* Statement breakdown — total due + every open invoice for this
+                  customer, so staff can see exactly what the reminder itemises. */}
+              {item.invoices && item.invoices.length > 0 ? (
+                <div className="mb-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 mb-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Account statement · {item.invoices.length} invoice{item.invoices.length !== 1 ? "s" : ""}
+                    </span>
+                    <span className="text-xs font-bold text-red-600 font-mono">
+                      {fmtAmount(item.totalOutstanding ?? 0)}
+                    </span>
+                  </div>
+                  <ul className="space-y-0.5">
+                    {item.invoices.slice(0, 6).map((iv) => (
+                      <li key={iv.id} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-foreground font-medium truncate">
+                          #{iv.number}
+                          <span className="text-muted-foreground font-normal">
+                            {" "}· {iv.date}
+                            {iv.daysOverdue > 0 ? ` · ${iv.daysOverdue}d overdue` : ""}
+                          </span>
+                        </span>
+                        <span className="font-mono text-muted-foreground shrink-0">
+                          {fmtAmount(iv.remaining)}
+                        </span>
+                      </li>
+                    ))}
+                    {item.invoices.length > 6 && (
+                      <li className="text-[11px] text-muted-foreground pt-0.5">
+                        +{item.invoices.length - 6} more…
+                      </li>
+                    )}
+                  </ul>
+                </div>
+              ) : item.invoice ? (
                 <p className="text-xs text-muted-foreground mb-2">
                   Invoice{" "}
                   <span className="font-medium text-foreground">
@@ -271,7 +313,7 @@ function QueueCard({
                   </span>{" "}
                   · {fmtAmount(item.invoice.total)}
                 </p>
-              )}
+              ) : null}
               {item.cheque && (
                 <p className="text-xs text-muted-foreground mb-2">
                   Cheque{" "}
