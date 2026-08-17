@@ -180,14 +180,14 @@ function StatCard({
   const content = (
     <div
       className={cn(
-        "bg-white rounded-2xl p-5 border shadow-sm flex items-start gap-4 transition-all",
-        danger ? "border-red-300 ring-1 ring-red-200 bg-red-50/40" : "border-border/40",
-        href && "hover:shadow-md hover:-translate-y-0.5 cursor-pointer"
+        "stat-card group flex items-start gap-4",
+        danger && "!border-red-200 !bg-red-50/50 before:!bg-gradient-to-b before:!from-red-500 before:!to-red-300",
+        href && "cursor-pointer"
       )}
     >
-      <div className={cn("p-3 rounded-xl shrink-0", danger ? "bg-red-100" : color)}>{icon}</div>
+      <div className={cn("p-2.5 rounded-lg shrink-0 transition-transform group-hover:scale-105", danger ? "bg-red-100" : color)}>{icon}</div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+        <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">
           {label}
         </p>
         {locked ? (
@@ -198,12 +198,12 @@ function StatCard({
         ) : (
           <>
             <p className={cn("text-xl font-bold font-mono truncate", danger ? "text-red-600" : "text-foreground")}>{value}</p>
-            {sub && <p className={cn("text-xs mt-0.5", danger ? "text-red-600 font-semibold" : "text-muted-foreground")}>{sub}</p>}
+            {sub && <p className={cn("text-[11px] mt-0.5", danger ? "text-red-600 font-semibold" : "text-muted-foreground")}>{sub}</p>}
           </>
         )}
       </div>
       {href && !locked && (
-        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0 mt-1" />
+        <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0 mt-1 transition-transform group-hover:translate-x-0.5" />
       )}
     </div>
   );
@@ -216,8 +216,8 @@ function StatCard({
 
 function StatSkeleton() {
   return (
-    <div className="bg-white rounded-2xl p-5 border border-border/40 shadow-sm flex items-start gap-4">
-      <Skeleton className="w-12 h-12 rounded-xl" />
+    <div className="stat-card flex items-start gap-4">
+      <Skeleton className="w-10 h-10 rounded-lg" />
       <div className="flex-1 space-y-2">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-6 w-32" />
@@ -336,14 +336,22 @@ export default function Dashboard() {
     staleTime: 60_000,
   });
 
-  // Pending approvals count (alerts row)
+  // Pending approvals count (alerts row) — returns + override requests.
   const { data: allReturns = [] } = useQuery<any[]>({
     queryKey: ["/api/returns"],
     queryFn: () => fetch("/api/returns").then((r) => r.json()).catch(() => []),
     refetchInterval: 60_000,
     enabled: isAdmin,
   });
-  const pendingApprovalsCount = Array.isArray(allReturns) ? allReturns.filter((r: any) => r.status === "pending").length : 0;
+  const { data: allApprovalRequests = [] } = useQuery<any[]>({
+    queryKey: ["/api/approvals"],
+    queryFn: () => fetch("/api/approvals").then((r) => r.json()).catch(() => []),
+    refetchInterval: 60_000,
+    enabled: isAdmin,
+  });
+  const pendingApprovalsCount =
+    (Array.isArray(allReturns) ? allReturns.filter((r: any) => r.status === "pending").length : 0) +
+    (Array.isArray(allApprovalRequests) ? allApprovalRequests.filter((r: any) => r.status === "pending").length : 0);
 
   // Real-time cash position (Phase 4 — cashflow ledger)
   const { data: cashPos } = useQuery<any>({
@@ -588,103 +596,112 @@ export default function Dashboard() {
 
   /* ── Render ───────────────────────────────────────────── */
   return (
-    <div className="p-4 md:p-6 space-y-6 max-w-7xl mx-auto">
+    <div className="p-4 md:p-6 space-y-5 max-w-7xl mx-auto">
 
       {/* ══ Header ══════════════════════════════════════════ */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-foreground">Dashboard</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-[13px] text-muted-foreground mt-0.5">
             {format(today, "EEEE, d MMMM yyyy")}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && modeSwitch}
-          {/* Location filter — admin sees all; a store-assigned manager is locked to theirs */}
           <select
             value={locFilter}
             onChange={(e) => setLocFilter(e.target.value)}
-            className="text-xs font-medium bg-white border border-border/40 px-3 py-1.5 rounded-full shadow-sm cursor-pointer outline-none"
+            className="text-xs font-medium bg-white border border-border/50 px-3 py-1.5 rounded-lg cursor-pointer outline-none hover:border-amber-300 transition-colors"
+            style={{ boxShadow: "var(--shadow-xs)" }}
             title="Filter dashboard by location"
           >
-            {!scopedStoreId && <option value="all">🌍 All locations</option>}
+            {!scopedStoreId && <option value="all">All locations</option>}
             {locationOptions.map((s: any) => (
               <option key={s.id} value={String(s.id)}>{s.nameEn}</option>
             ))}
           </select>
-          <span className="text-xs text-muted-foreground font-medium bg-white border border-border/40 px-3 py-1.5 rounded-full shadow-sm">
-            {user?.name} &mdash; <span className="capitalize">{user?.role}</span>
-          </span>
         </div>
       </div>
 
-      {/* ══ 1. ALERTS BAR ══════════════════════════════════ */}
+      {/* ══ 1. ALERTS BAR ══ */}
       {(dueSoonCheques.length > 0 || lowStockCount > 0 || pendingApprovalsCount > 0) && (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 stagger-children">
           {pendingApprovalsCount > 0 && (
             <Link href="/approvals">
-              <div className="flex items-center gap-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl px-4 py-3 cursor-pointer hover:bg-amber-100 transition-colors">
-                <AlertTriangle className="w-5 h-5 shrink-0 text-amber-500" />
-                <span className="text-sm font-semibold">
-                  {pendingApprovalsCount} return{pendingApprovalsCount === 1 ? "" : "s"} waiting for approval
+              <div className="alert-banner flex items-center gap-3 bg-gradient-to-r from-amber-50 to-amber-50/30 border border-amber-200/60 text-amber-800 rounded-xl px-4 py-3 cursor-pointer hover:from-amber-100 hover:to-amber-50/50 transition-all">
+                <div className="w-8 h-8 rounded-lg bg-amber-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                </div>
+                <span className="text-[13px] font-semibold">
+                  {pendingApprovalsCount} item{pendingApprovalsCount === 1 ? "" : "s"} waiting for approval
                 </span>
-                <ChevronRight className="w-4 h-4 ml-auto shrink-0" />
+                <ChevronRight className="w-4 h-4 ml-auto shrink-0 text-amber-400" />
               </div>
             </Link>
           )}
           {dueSoonCheques.length > 0 && (
             <Link href="/finance?tab=cheques">
-              <div className="flex items-center gap-3 bg-orange-50 border border-orange-200 text-orange-800 rounded-xl px-4 py-3 cursor-pointer hover:bg-orange-100 transition-colors">
-                <AlertTriangle className="w-5 h-5 shrink-0 text-orange-500" />
-                <span className="text-sm font-semibold">
+              <div className="alert-banner flex items-center gap-3 bg-gradient-to-r from-orange-50 to-orange-50/30 border border-orange-200/60 text-orange-800 rounded-xl px-4 py-3 cursor-pointer hover:from-orange-100 hover:to-orange-50/50 transition-all">
+                <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-4 h-4 text-orange-600" />
+                </div>
+                <span className="text-[13px] font-semibold">
                   {dueSoonCheques.length} {dueSoonCheques.length === 1 ? "cheque" : "cheques"} due within 3 days
                 </span>
-                <ChevronRight className="w-4 h-4 ml-auto shrink-0" />
+                <ChevronRight className="w-4 h-4 ml-auto shrink-0 text-orange-400" />
               </div>
             </Link>
           )}
           {lowStockCount > 0 && (
             <Link href="/inventory?filter=low-stock">
-              <div className="flex items-center gap-3 bg-red-50 border border-red-200 text-red-800 rounded-xl px-4 py-3 cursor-pointer hover:bg-red-100 transition-colors">
-                <Package className="w-5 h-5 shrink-0 text-red-500" />
-                <span className="text-sm font-semibold">
+              <div className="alert-banner flex items-center gap-3 bg-gradient-to-r from-red-50 to-red-50/30 border border-red-200/60 text-red-800 rounded-xl px-4 py-3 cursor-pointer hover:from-red-100 hover:to-red-50/50 transition-all">
+                <div className="w-8 h-8 rounded-lg bg-red-100 flex items-center justify-center shrink-0">
+                  <Package className="w-4 h-4 text-red-600" />
+                </div>
+                <span className="text-[13px] font-semibold">
                   {lowStockCount} {lowStockCount === 1 ? "product" : "products"} low on stock
                 </span>
-                <ChevronRight className="w-4 h-4 ml-auto shrink-0" />
+                <ChevronRight className="w-4 h-4 ml-auto shrink-0 text-red-400" />
               </div>
             </Link>
           )}
         </div>
       )}
 
-      {/* ══ 1b. CEO HERO ROW — the four numbers that matter first (spec P6) ══ */}
+      {/* ══ 1b. CEO HERO ROW ══ */}
       {isAdmin && !summaryLoading && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <Link href="/documents?type=INV&date=today" className="rounded-2xl bg-[#1e2a3a] text-white p-4 hover:opacity-95">
-            <p className="text-[11px] uppercase tracking-widest text-white/60">Today's Revenue</p>
-            <p className="font-mono font-bold text-2xl mt-0.5">{fmt(cashToday + creditSalesToday)}</p>
-            <p className="text-[11px] text-white/60">{locFilter === "all" ? "all locations" : allStores.find((s: any) => String(s.id) === locFilter)?.nameEn}</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 stagger-children">
+          <Link href="/documents?type=INV&date=today" className="hero-card bg-gradient-to-br from-[#1a2640] via-[#0c1322] to-[#162038] text-white">
+            <div className="absolute top-0 right-0 w-24 h-24 rounded-full bg-amber-400/[0.06] blur-2xl" />
+            <p className="text-[10px] uppercase tracking-widest text-amber-300/60 font-bold">Today's Revenue</p>
+            <p className="font-mono font-extrabold text-[28px] mt-2 tracking-tight leading-none">{fmt(cashToday + creditSalesToday)}</p>
+            <p className="text-[11px] text-white/35 mt-2">{locFilter === "all" ? "all locations" : allStores.find((s: any) => String(s.id) === locFilter)?.nameEn}</p>
           </Link>
-          {/* ONE unified Profit card — Real (collected) big, Imaginary in brackets.
-              Replaces the old separate Real + Imaginary widgets (dashboard clutter fix). */}
-          <Link href="/finance?tab=profit&period=today" className="rounded-2xl border-2 border-emerald-200 bg-emerald-50/50 p-4 hover:shadow-sm">
-            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Profit Today</p>
-            <p className="font-mono font-bold text-2xl mt-0.5 text-emerald-700">
-              {fmt(profitFromCash)} <span className="text-slate-500 text-lg font-semibold">({fmt(profitFromCash + profitFromCredit)})</span>
+          <Link href="/finance?tab=profit&period=today" className="hero-card bg-gradient-to-br from-emerald-50 via-green-50/50 to-white border border-emerald-200/60 dark:from-emerald-950/30 dark:via-emerald-900/10 dark:to-slate-900 dark:border-emerald-800/30">
+            <div className="absolute top-0 right-0 w-20 h-20 rounded-full bg-emerald-400/10 blur-2xl" />
+            <p className="text-[10px] uppercase tracking-widest text-emerald-600/60 dark:text-emerald-400/60 font-bold">Profit Today</p>
+            <p className="font-mono font-extrabold text-[28px] mt-2 text-emerald-700 dark:text-emerald-400 tracking-tight leading-none">
+              {fmt(profitFromCash)} <span className="text-slate-400 dark:text-slate-500 text-lg font-semibold">({fmt(profitFromCash + profitFromCredit)})</span>
             </p>
-            <p className="text-[11px] text-muted-foreground">real (collected) · imaginary incl. credit</p>
+            <p className="text-[11px] text-emerald-600/50 dark:text-emerald-500/50 mt-2">real (collected) · (expected incl. credit)</p>
           </Link>
-          <Link href="/finance?tab=cash-position" className={cn("rounded-2xl p-4 hover:shadow-sm border-2",
-            filteredCashTotal < 0 ? "border-red-300 bg-red-50/60" : "border-border")}>
-            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Cash Position</p>
-            <p className={cn("font-mono font-bold text-2xl mt-0.5", filteredCashTotal < 0 ? "text-red-600" : "text-emerald-700")}>{fmt(filteredCashTotal)}</p>
-            <p className="text-[11px] text-muted-foreground">{filteredCashTotal < 0 ? "⚠ overdrawn" : locFilter !== "all" ? allStores.find((s: any) => String(s.id) === locFilter)?.nameEn || "selected store" : `hand ${fmt(toNum(cashPos?.cashInHand))} · bank ${fmt(toNum(cashPos?.bank))}`}</p>
+          <Link href="/finance?tab=cash-position" className={cn("hero-card border",
+            filteredCashTotal < 0
+              ? "bg-gradient-to-br from-red-50 to-white border-red-200/60 dark:from-red-950/30 dark:to-slate-900 dark:border-red-800/30"
+              : "bg-gradient-to-br from-blue-50 via-sky-50/50 to-white border-blue-200/40 dark:from-blue-950/30 dark:via-blue-900/10 dark:to-slate-900 dark:border-blue-800/30")}>
+            <div className="absolute top-0 right-0 w-20 h-20 rounded-full bg-blue-400/[0.07] blur-2xl" />
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-bold">Cash Position</p>
+            <p className={cn("font-mono font-extrabold text-[28px] mt-2 tracking-tight leading-none", filteredCashTotal < 0 ? "text-red-600 dark:text-red-400" : "text-slate-800 dark:text-slate-200")}>{fmt(filteredCashTotal)}</p>
+            <p className="text-[11px] text-muted-foreground/60 mt-2">{filteredCashTotal < 0 ? "overdrawn" : locFilter !== "all" ? allStores.find((s: any) => String(s.id) === locFilter)?.nameEn || "selected store" : `hand ${fmt(toNum(cashPos?.cashInHand))} · bank ${fmt(toNum(cashPos?.bank))}`}</p>
           </Link>
-          <Link href="/customers?filter=credit-outstanding" className={cn("rounded-2xl p-4 hover:shadow-sm border-2",
-            totalOutstanding > 0 ? "border-red-200 bg-red-50/50" : "border-border")}>
-            <p className="text-[11px] uppercase tracking-widest text-muted-foreground">Credit Exposure</p>
-            <p className={cn("font-mono font-bold text-2xl mt-0.5", totalOutstanding > 0 ? "text-red-600" : "text-slate-600")}>{fmt(totalOutstanding)}</p>
-            <p className="text-[11px] text-muted-foreground">{paymentReminders.length} unpaid invoices</p>
+          <Link href="/customers?filter=credit-outstanding" className={cn("hero-card border",
+            totalOutstanding > 0
+              ? "bg-gradient-to-br from-orange-50 via-amber-50/50 to-white border-orange-200/60 dark:from-orange-950/30 dark:via-amber-900/10 dark:to-slate-900 dark:border-orange-800/30"
+              : "bg-gradient-to-br from-slate-50 to-white border-border/40 dark:from-slate-800/30 dark:to-slate-900 dark:border-slate-700/30")}>
+            <div className="absolute top-0 right-0 w-20 h-20 rounded-full bg-orange-400/[0.07] blur-2xl" />
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/50 font-bold">Credit Exposure</p>
+            <p className={cn("font-mono font-extrabold text-[28px] mt-2 tracking-tight leading-none", totalOutstanding > 0 ? "text-orange-600 dark:text-orange-400" : "text-slate-600 dark:text-slate-300")}>{fmt(totalOutstanding)}</p>
+            <p className="text-[11px] text-muted-foreground/60 mt-2">{paymentReminders.length} unpaid invoices</p>
           </Link>
         </div>
       )}
@@ -704,23 +721,23 @@ export default function Dashboard() {
         const grand = buckets.reduce((s, b) => s + b.total, 0) || 1;
         return (
           <section>
-            <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-3">Receivables Aging</h2>
+            <h2 className="section-heading">Receivables Aging</h2>
             <Link href="/customers?filter=credit-outstanding">
-              <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-4 hover:shadow-md transition cursor-pointer">
-                <div className="flex h-3 rounded-full overflow-hidden mb-3">
+              <div className="section-card hover:shadow-[var(--shadow-card-hover)] transition-all cursor-pointer">
+                <div className="flex h-2.5 rounded-full overflow-hidden mb-4 bg-slate-100">
                   {buckets.map((b) => b.total > 0 && (
-                    <div key={b.key} className={cn(b.color)} style={{ width: `${(b.total / grand) * 100}%` }} title={`${b.label}: ${fmt(b.total)}`} />
+                    <div key={b.key} className={cn(b.color, "transition-all")} style={{ width: `${(b.total / grand) * 100}%` }} title={`${b.label}: ${fmt(b.total)}`} />
                   ))}
                 </div>
                 <div className="grid grid-cols-5 gap-2">
                   {buckets.map((b) => (
                     <div key={b.key} className="text-center">
-                      <div className="flex items-center justify-center gap-1">
+                      <div className="flex items-center justify-center gap-1.5">
                         <span className={cn("w-2 h-2 rounded-full", b.color)} />
                         <span className={cn("text-[11px] font-semibold", b.key === "90+" && b.count > 0 && "text-red-600")}>{b.label}</span>
                       </div>
-                      <p className="font-mono font-bold text-sm mt-0.5">{fmt(b.total)}</p>
-                      <p className="text-[11px] text-muted-foreground">{b.count} {b.count === 1 ? "customer" : "customers"}</p>
+                      <p className="font-mono font-bold text-sm mt-1">{fmt(b.total)}</p>
+                      <p className="text-[10px] text-muted-foreground mt-0.5">{b.count} {b.count === 1 ? "customer" : "customers"}</p>
                     </div>
                   ))}
                 </div>
@@ -730,11 +747,9 @@ export default function Dashboard() {
         );
       })()}
 
-      {/* ══ 2. TODAY SNAPSHOT ══════════════════════════════ */}
+      {/* ══ 2. TODAY SNAPSHOT ══ */}
       <section>
-        <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-widest mb-3">
-          Today's Snapshot
-        </h2>
+        <h2 className="section-heading">Today's Snapshot</h2>
         {summaryLoading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({ length: 4 }).map((_, i) => <StatSkeleton key={i} />)}
@@ -779,40 +794,38 @@ export default function Dashboard() {
         )}
       </section>
 
-      {/* ══ 2b. CUSTOMER PAYMENT REMINDERS ════════════════ */}
+      {/* ══ 2b. CUSTOMER PAYMENT REMINDERS ══ */}
       <section>
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-bold text-muted-foreground uppercase tracking-widest">
-            Customer Payment Reminders
-          </h2>
-          <Link href="/messages" className="text-xs font-semibold text-primary hover:underline">
+          <h2 className="section-heading mb-0">Customer Payment Reminders</h2>
+          <Link href="/messages" className="text-xs font-semibold text-amber-600 hover:text-amber-700 transition-colors">
             Open Messages
           </Link>
         </div>
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        <div className="section-card !p-0 overflow-hidden">
           {paymentReminders.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               No overdue payments. All caught up.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="dash-table w-full text-sm">
                 <thead>
-                  <tr className="bg-muted/30 text-xs uppercase tracking-wider text-muted-foreground">
-                    <th className="text-left px-4 py-2.5 font-semibold">Customer</th>
-                    <th className="text-center px-4 py-2.5 font-semibold">Invoices</th>
-                    <th className="text-right px-4 py-2.5 font-semibold">Outstanding</th>
-                    <th className="text-center px-4 py-2.5 font-semibold hidden sm:table-cell">Status</th>
-                    <th className="text-right px-4 py-2.5 font-semibold">Action</th>
+                  <tr>
+                    <th className="text-left px-4 py-3">Customer</th>
+                    <th className="text-center px-4 py-3">Invoices</th>
+                    <th className="text-right px-4 py-3">Outstanding</th>
+                    <th className="text-center px-4 py-3 hidden sm:table-cell">Status</th>
+                    <th className="text-right px-4 py-3">Action</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-border/30">
+                <tbody>
               {paymentReminders.map((r: any) => {
                 const overdue = r.maxDaysOverdue > 0;
                 const waNum = (r.customerPhone || "").replace(/\D/g, "");
                 const waMsg = encodeURIComponent(r.message || "");
                 return (
-                  <tr key={r.customerId || r.customerName} className="hover:bg-secondary/10 transition-colors">
+                  <tr key={r.customerId || r.customerName}>
                     <td className="px-4 py-3 font-semibold text-foreground">
                       <p className="truncate max-w-[180px]">{r.customerName ?? `Customer #${r.customerId ?? "—"}`}</p>
                     </td>
@@ -821,7 +834,7 @@ export default function Dashboard() {
                     <td className="px-4 py-3 text-center hidden sm:table-cell">
                       <span
                         className={cn(
-                          "text-xs font-bold px-2.5 py-1 rounded-full border",
+                          "status-pill",
                           r.maxDaysOverdue > 30 ? "bg-red-100 text-red-700 border-red-200"
                             : r.maxDaysOverdue > 0 ? "bg-orange-100 text-orange-700 border-orange-200"
                             : "bg-yellow-100 text-yellow-700 border-yellow-200"
@@ -836,13 +849,13 @@ export default function Dashboard() {
                         href={`https://wa.me/${waNum}?text=${waMsg}`}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-green-50 text-green-700 hover:bg-green-100 transition-colors"
+                        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200/50 transition-colors"
                         title="Send account statement via WhatsApp"
                       >
                         <MessageCircle className="w-3.5 h-3.5" /> Remind
                       </a>
                     ) : (
-                      <Link href="/messages" className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary text-muted-foreground hover:bg-secondary/70">
+                      <Link href="/messages" className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-secondary text-muted-foreground hover:bg-secondary/70 transition-colors">
                         <MessageCircle className="w-3.5 h-3.5" /> Remind
                       </Link>
                     )}
@@ -857,41 +870,46 @@ export default function Dashboard() {
         </div>
       </section>
 
-      {/* ══ 3 + 4. INVENTORY ALERTS & INSIGHTS ════════════ */}
+      {/* ══ 3 + 4. INVENTORY ALERTS & INSIGHTS ══ */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-        {/* Inventory Alerts — each row shows real name / qty / min / location and
-            links to that product's detail page. */}
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <LayoutGrid className="w-5 h-5 text-red-500" />
+        <div className="section-card">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center">
+              <LayoutGrid className="w-4 h-4 text-red-500" />
+            </div>
             <h2 className="font-bold text-sm uppercase tracking-wider text-foreground">Inventory Alerts</h2>
-            <Link href="/inventory?filter=low-stock" className="ml-auto text-xs font-semibold text-primary hover:underline">View all</Link>
+            <Link href="/inventory?filter=low-stock" className="ml-auto text-xs font-semibold text-amber-600 hover:text-amber-700 transition-colors">View all</Link>
           </div>
           {lowStockCount === 0 ? (
-            <p className="text-sm text-green-600 font-medium">All products are well stocked.</p>
+            <p className="text-sm text-emerald-600 font-medium">All products are well stocked.</p>
           ) : (
             <div>
               <p className="text-2xl font-bold font-mono text-red-600">{lowStockCount}</p>
-              <p className="text-sm text-muted-foreground mt-0.5">
+              <p className="text-[13px] text-muted-foreground mt-0.5">
                 {lowStockCount === 1 ? "product" : "products"} at or below minimum stock
               </p>
-              <div className="mt-3 space-y-1.5 max-h-40 overflow-y-auto">
+              <div className="mt-3 space-y-1 max-h-40 overflow-y-auto">
                 {lowStockArr.slice(0, 6).map((item) => (
                   <Link key={`${item.productId}-${item.storeId}`} href={`/inventory/${item.productId}`}
-                    className="block rounded-lg hover:bg-secondary/30 px-2 py-1 -mx-1 transition-colors">
-                    <div className="flex justify-between items-baseline text-xs">
-                      <span className="text-foreground font-semibold truncate max-w-[58%]">{item.name}</span>
-                      <span className={cn("font-mono font-bold", item.qty <= 0 ? "text-red-700" : "text-red-600")}>
-                        {item.qty} / {item.minStockQty} {item.unit || "min"}
+                    className="flex items-center justify-between rounded-lg hover:bg-slate-50 px-2.5 py-1.5 -mx-1 transition-colors group">
+                    <div className="min-w-0">
+                      <span className="text-xs text-foreground font-semibold truncate block max-w-[180px]">{item.name}</span>
+                      {item.location && <p className="text-[10px] text-muted-foreground truncate">{item.location}</p>}
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="stock-bar">
+                        <div className="stock-bar-fill" style={{ width: `${Math.min(100, Math.max(5, (item.qty / Math.max(item.minStockQty, 1)) * 100))}%` }} />
+                      </div>
+                      <span className={cn("font-mono text-[11px] font-bold shrink-0", item.qty <= 0 ? "text-red-700" : "text-red-600")}>
+                        {item.qty}/{item.minStockQty}
                       </span>
                     </div>
-                    {item.location && <p className="text-[10px] text-muted-foreground truncate">📍 {item.location}</p>}
                   </Link>
                 ))}
                 {lowStockCount > 6 && (
-                  <Link href="/inventory?filter=low-stock" className="block text-xs text-muted-foreground mt-1 hover:underline">
-                    +{lowStockCount - 6} more…
+                  <Link href="/inventory?filter=low-stock" className="block text-xs text-amber-600 mt-2 hover:text-amber-700 font-semibold transition-colors">
+                    +{lowStockCount - 6} more...
                   </Link>
                 )}
               </div>
@@ -899,40 +917,41 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* Insights */}
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-5">
+        <div className="section-card">
           <div className="flex items-center gap-3 mb-4">
-            <Star className="w-5 h-5 text-amber-500" />
+            <div className="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center">
+              <Star className="w-4 h-4 text-amber-500" />
+            </div>
             <h2 className="font-bold text-sm uppercase tracking-wider text-foreground">
               Today's Insights
             </h2>
           </div>
           <div className="space-y-4">
-            <div>
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+            <div className="p-3 rounded-lg bg-gradient-to-r from-emerald-50/50 to-transparent">
+              <p className="text-[10px] font-semibold text-emerald-600/60 uppercase tracking-widest mb-1.5">
                 Best Customer
               </p>
               {salesLoading ? (
                 <Skeleton className="h-5 w-40" />
               ) : bestCustomer ? (
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-foreground">{bestCustomer.name}</span>
-                  <span className="text-sm font-mono text-emerald-600">{fmt(bestCustomer.total)}</span>
+                  <span className="font-semibold text-foreground text-sm">{bestCustomer.name}</span>
+                  <span className="text-sm font-mono font-bold text-emerald-600">{fmt(bestCustomer.total)}</span>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No sales today yet</p>
               )}
             </div>
-            <div className="border-t border-border/30 pt-4">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">
+            <div className="p-3 rounded-lg bg-gradient-to-r from-blue-50/50 to-transparent">
+              <p className="text-[10px] font-semibold text-blue-600/60 uppercase tracking-widest mb-1.5">
                 Best Product
               </p>
               {salesLoading ? (
                 <Skeleton className="h-5 w-40" />
               ) : bestProduct ? (
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-foreground">{bestProduct.name}</span>
-                  <span className="text-sm font-mono text-blue-600">{bestProduct.qty} units</span>
+                  <span className="font-semibold text-foreground text-sm">{bestProduct.name}</span>
+                  <span className="text-sm font-mono font-bold text-blue-600">{bestProduct.qty} units</span>
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground">No sales today yet</p>
@@ -1000,7 +1019,7 @@ export default function Dashboard() {
             View all
           </Link>
         </div>
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        <div className="section-card !p-0 overflow-hidden">
           {recentDocs.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               No documents yet.
@@ -1078,17 +1097,17 @@ export default function Dashboard() {
           const sum = (a: any[]) => a.reduce((s, c) => s + toNum(c.amount), 0);
           return (
             <div className="grid grid-cols-3 gap-3 mb-3">
-              <Link href="/finance?tab=cheques&type=receivable" className="bg-white rounded-2xl border border-border/40 shadow-sm p-3 hover:shadow-md transition">
+              <Link href="/finance?tab=cheques&type=receivable" className="stat-card !p-3 hover:shadow-[var(--shadow-card-hover)] transition-all">
                 <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Receivable</p>
                 <p className="text-lg font-bold font-mono text-green-700">{fmt(sum(recv))}</p>
                 <p className="text-[11px] text-muted-foreground">{recv.length} pending</p>
               </Link>
-              <Link href="/finance?tab=cheques&type=payable" className="bg-white rounded-2xl border border-border/40 shadow-sm p-3 hover:shadow-md transition">
+              <Link href="/finance?tab=cheques&type=payable" className="stat-card !p-3 hover:shadow-[var(--shadow-card-hover)] transition-all">
                 <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Payable</p>
                 <p className="text-lg font-bold font-mono text-red-600">{fmt(sum(pay))}</p>
                 <p className="text-[11px] text-muted-foreground">{pay.length} pending</p>
               </Link>
-              <Link href="/finance?tab=cheques&due=today" className="bg-white rounded-2xl border border-border/40 shadow-sm p-3 hover:shadow-md transition">
+              <Link href="/finance?tab=cheques&due=today" className="stat-card !p-3 hover:shadow-[var(--shadow-card-hover)] transition-all">
                 <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Due today</p>
                 <p className="text-lg font-bold font-mono text-amber-600">{dueT.length}</p>
                 <p className="text-[11px] text-muted-foreground">{fmt(sum(dueT))}</p>
@@ -1097,7 +1116,7 @@ export default function Dashboard() {
           );
         })()}
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Due this week</p>
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+        <div className="section-card !p-0 overflow-hidden">
           {dueThisWeekCheques.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
               No cheques due this week.

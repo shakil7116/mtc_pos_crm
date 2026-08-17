@@ -340,8 +340,8 @@ export function BusinessSummaryTab() {
                 onClick={() => setTab("aging")} />
               <DataRow label="PDC" value={money(s.pdcSales)} indent />
               <div className="border-t border-dashed border-border/50" />
-              <DataRow label="Real profit" value={money(s.realProfit)} tone="text-emerald-600 dark:text-emerald-400" bold />
-              <DataRow label="Imaginary profit" value={`(${money(s.imaginaryProfit)})`} tone="text-muted-foreground" />
+              <DataRow label="Real profit (collected)" value={money(s.realProfit)} tone="text-emerald-600 dark:text-emerald-400" bold />
+              <DataRow label="Expected profit (if all paid)" value={money(s.expectedProfit ?? s.imaginaryProfit)} tone="text-amber-600 dark:text-amber-400" />
             </SummarySection>
 
             <SummarySection

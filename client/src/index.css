@@ -10,9 +10,9 @@
   --font-arabic: 'Amiri', serif;
   --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
 
-  /* ── Professional Business Palette — Deep Navy & Brand Gold ── */
-  --background: 213 30% 97.5%;   /* Soft cool off-white */
-  --foreground: 222 47% 11%;     /* Deep Navy */
+  /* ── Deep Business Palette — richer contrast ── */
+  --background: 222 25% 94%;
+  --foreground: 222 47% 11%;
 
   --card: 0 0% 100%;
   --card-foreground: 222 47% 11%;
@@ -20,67 +20,102 @@
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
 
-  --primary: 217 43% 16%;        /* Brand navy #1e2a3a */
+  --primary: 217 43% 16%;
   --primary-foreground: 210 40% 98%;
 
-  --secondary: 214 32% 95%;
+  --secondary: 220 20% 96%;
   --secondary-foreground: 222 47% 11%;
 
-  --muted: 214 32% 95.5%;
-  --muted-foreground: 215 19% 42%;   /* Darker for stronger contrast */
+  --muted: 220 18% 96%;
+  --muted-foreground: 215 16% 44%;
 
-  --accent: 214 32% 94%;
+  --accent: 220 18% 94%;
   --accent-foreground: 222 47% 11%;
 
   --destructive: 0 72% 51%;
   --destructive-foreground: 210 40% 98%;
 
-  --border: 214 25% 89%;
-  --input: 214 25% 89%;
-  --ring: 41 78% 47%;            /* Gold focus ring */
+  --border: 220 13% 88%;
+  --input: 220 13% 91%;
+  --ring: 41 78% 47%;
 
   /* Brand tokens */
   --navy: 217 43% 16%;
   --navy-foreground: 210 40% 98%;
-  --gold: 41 78% 47%;            /* Refined #d4a017, slightly desaturated */
+  --gold: 41 78% 47%;
   --gold-foreground: 222 47% 11%;
 
-  --radius: 0.5rem;
+  /* Shadow system — tinted, not flat black */
+  --shadow-xs: 0 1px 2px 0 hsl(220 40% 20% / 0.04), 0 0 0 1px hsl(220 20% 80% / 0.3);
+  --shadow-sm: 0 1px 3px 0 hsl(220 40% 20% / 0.06), 0 1px 2px -1px hsl(220 40% 20% / 0.04);
+  --shadow-md: 0 4px 12px -2px hsl(220 40% 20% / 0.08), 0 2px 4px -2px hsl(220 40% 20% / 0.05);
+  --shadow-lg: 0 12px 28px -4px hsl(220 40% 20% / 0.1), 0 4px 8px -4px hsl(220 40% 20% / 0.06);
+  --shadow-card: 0 1px 3px 0 hsl(220 40% 20% / 0.05), 0 0 0 1px hsl(220 20% 80% / 0.4);
+  --shadow-card-hover: 0 8px 25px -5px hsl(220 40% 20% / 0.1), 0 0 0 1px hsl(var(--gold) / 0.2);
+
+  --radius: 0.625rem;
 }
 
 .dark {
-  --background: 222 47% 7%;         /* Deep charcoal navy */
-  --foreground: 210 40% 96%;
-
-  --card: 222 44% 10%;
-  --card-foreground: 210 40% 96%;
-
-  --popover: 222 44% 10%;
-  --popover-foreground: 210 40% 96%;
-
-  --primary: 41 78% 52%;            /* Gold accent brighter in dark */
+  --background: 222 50% 5.5%;
+  --foreground: 210 40% 97%;
+  --card: 222 46% 8%;
+  --card-foreground: 210 40% 97%;
+  --popover: 222 46% 8%;
+  --popover-foreground: 210 40% 97%;
+  --primary: 41 78% 52%;
   --primary-foreground: 222 47% 7%;
-
-  --secondary: 217 33% 15%;
-  --secondary-foreground: 210 40% 96%;
-
-  --muted: 217 33% 14%;
-  --muted-foreground: 215 19% 58%;
-
-  --accent: 217 33% 15%;
-  --accent-foreground: 210 40% 96%;
-
+  --secondary: 217 33% 13%;
+  --secondary-foreground: 210 40% 97%;
+  --muted: 217 33% 12%;
+  --muted-foreground: 215 20% 65%;
+  --accent: 217 33% 13%;
+  --accent-foreground: 210 40% 97%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 210 40% 98%;
-
-  --border: 217 30% 18%;
-  --input: 217 30% 18%;
+  --border: 217 30% 16%;
+  --input: 217 30% 16%;
   --ring: 41 78% 52%;
-
   --navy: 217 43% 16%;
   --navy-foreground: 210 40% 98%;
   --gold: 41 78% 52%;
   --gold-foreground: 222 47% 7%;
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.1);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.15), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.15);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.25), 0 4px 6px -4px rgb(0 0 0 / 0.15);
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.15), 0 0 0 1px rgb(255 255 255 / 0.03);
+  --shadow-card-hover: 0 8px 25px -5px rgb(0 0 0 / 0.3), 0 0 0 1px rgb(255 255 255 / 0.05);
+}
+
+/* ── Keyframes ─────────────────────────────────────────── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes shimmer {
+  to { transform: translateX(100%); }
+}
+
+@keyframes pulse-subtle {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 8px hsl(var(--gold) / 0.15); }
+  50% { box-shadow: 0 0 20px hsl(var(--gold) / 0.25); }
 }
 
 @layer base {
@@ -99,10 +134,13 @@
   }
 
   h1, h2, h3, h4, h5, h6 {
-    font-family: var(--font-serif);
-    letter-spacing: -0.02em;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    letter-spacing: -0.025em;
     text-wrap: balance;
   }
+
+  h1 { line-height: 1.15; }
 
   p {
     text-wrap: pretty;
@@ -112,41 +150,36 @@
     font-family: var(--font-arabic);
   }
 
-  /* Tabular, aligned figures everywhere money/quantities are shown */
   .font-mono, [class*="tabular"] {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
     letter-spacing: -0.01em;
   }
 
-  /* Gold-tinted text selection */
   ::selection {
-    background: hsl(var(--gold) / 0.22);
+    background: hsl(var(--gold) / 0.18);
     color: hsl(var(--foreground));
   }
 
-  /* Smooth, GPU-friendly transitions on interactive elements */
   button, a, [role="tab"], [role="button"], [role="menuitem"],
   .transition-base {
     transition:
-      color 0.18s ease,
-      background-color 0.18s ease,
-      border-color 0.18s ease,
-      box-shadow 0.18s ease,
-      transform 0.18s cubic-bezier(0.16, 1, 0.3, 1),
-      opacity 0.18s ease;
+      color 0.15s ease,
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      box-shadow 0.2s ease,
+      transform 0.15s cubic-bezier(0.16, 1, 0.3, 1),
+      opacity 0.15s ease;
   }
 
-  /* Tactile press feedback for real buttons (skips links/tabs to avoid surprises) */
   button:not(:disabled):active {
-    transform: translateY(0.5px) scale(0.985);
+    transform: translateY(0.5px) scale(0.988);
   }
 
   html {
     scroll-behavior: smooth;
   }
 
-  /* Keep app content above the fixed grain texture */
   #root {
     position: relative;
     z-index: 1;
@@ -155,29 +188,330 @@
 }
 
 @layer components {
-  /* Premium card hover-lift — opt-in via class, no layout shift */
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     CARD SYSTEM — real depth, not flat boxes
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
   .card-hover {
     @apply transition-all duration-200;
+    box-shadow: var(--shadow-card);
   }
   .card-hover:hover {
-    box-shadow: 0 12px 16px -4px rgb(16 24 40 / 0.1), 0 4px 6px -2px rgb(16 24 40 / 0.05);
+    box-shadow: var(--shadow-card-hover);
     transform: translateY(-2px);
   }
 
-  /* Brand navy gradient surface (sidebar / headers) */
-  .bg-brand-gradient {
-    background-image: linear-gradient(160deg, hsl(217 43% 18%) 0%, hsl(217 46% 12%) 100%);
+  /* ── Section card — the workhorse container ── */
+  .section-card {
+    @apply rounded-2xl overflow-hidden p-5 relative;
+    background: hsl(var(--card));
+    box-shadow: var(--shadow-card);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+  .dark .section-card {
+    @apply bg-slate-900/80;
+  }
+  .section-card:hover {
+    box-shadow: var(--shadow-md);
   }
 
-  /* True glass surface for sticky bars / overlays */
+  /* ── Stat card — KPI tiles with prominent left accent ── */
+  .stat-card {
+    @apply rounded-2xl p-4 transition-all duration-200 relative overflow-hidden;
+    background: hsl(var(--card));
+    box-shadow: var(--shadow-card);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+  .stat-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 8px;
+    bottom: 8px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: linear-gradient(to bottom, hsl(var(--gold)), hsl(var(--gold) / 0.2));
+  }
+  .stat-card:hover {
+    box-shadow: var(--shadow-card-hover);
+    transform: translateY(-2px);
+    border-color: hsl(var(--gold) / 0.25);
+  }
+  .dark .stat-card {
+    @apply bg-slate-900/80;
+  }
+
+  /* ── Hero card — dashboard spotlight tiles ── */
+  .hero-card {
+    @apply rounded-2xl p-5 transition-all duration-200 relative overflow-hidden;
+    box-shadow: var(--shadow-md);
+  }
+  .hero-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+  }
+  .hero-card::after {
+    content: "";
+    position: absolute;
+    top: -50%;
+    right: -20%;
+    width: 60%;
+    height: 200%;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%);
+    pointer-events: none;
+  }
+
+  /* ── Alert banner ── */
+  .alert-banner {
+    @apply flex items-center gap-3 rounded-xl px-4 py-3 cursor-pointer transition-all duration-200;
+    box-shadow: var(--shadow-xs);
+  }
+  .alert-banner:hover {
+    box-shadow: var(--shadow-sm);
+    transform: translateX(3px);
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     TABLE SYSTEM — polished, readable, pro
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .dash-table {
+    @apply w-full text-sm;
+  }
+  .dash-table thead tr {
+    @apply text-[11px] uppercase tracking-wider;
+    color: hsl(var(--muted-foreground) / 0.7);
+    background: linear-gradient(to bottom, hsl(var(--muted) / 0.7), hsl(var(--muted) / 0.4));
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+  .dash-table thead th {
+    @apply px-4 py-3 font-semibold text-left;
+  }
+  .dash-table tbody tr {
+    @apply transition-all duration-150;
+    border-bottom: 1px solid hsl(var(--border) / 0.3);
+  }
+  .dash-table tbody tr:hover {
+    background: hsl(var(--gold) / 0.04);
+  }
+  .dash-table tbody tr:last-child {
+    border-bottom: none;
+  }
+  .dash-table td {
+    @apply px-4 py-3;
+  }
+  .dash-table tbody tr:nth-child(even) {
+    background: hsl(var(--muted) / 0.2);
+  }
+  .dash-table tbody tr:nth-child(even):hover {
+    background: hsl(var(--gold) / 0.04);
+  }
+
+  /* shadcn Table global overhaul */
+  [data-slot="table-header"] tr,
+  .table-upgrade thead tr {
+    @apply text-[11px] uppercase tracking-wider;
+    color: hsl(var(--muted-foreground) / 0.7);
+    background: linear-gradient(to bottom, hsl(var(--muted) / 0.7), hsl(var(--muted) / 0.4));
+    border-bottom: 1px solid hsl(var(--border) / 0.5);
+  }
+  [data-slot="table-header"] th,
+  .table-upgrade thead th {
+    @apply font-semibold py-3;
+  }
+  [data-slot="table-body"] tr,
+  .table-upgrade tbody tr {
+    @apply transition-all duration-150;
+  }
+  [data-slot="table-body"] tr:nth-child(even),
+  .table-upgrade tbody tr:nth-child(even) {
+    background: hsl(var(--muted) / 0.15);
+  }
+  [data-slot="table-body"] tr:hover,
+  .table-upgrade tbody tr:hover {
+    background: hsl(var(--gold) / 0.04);
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     TYPOGRAPHY & HEADINGS — real presence
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .section-heading {
+    @apply text-[11px] font-bold uppercase tracking-[0.12em] flex items-center gap-2;
+    color: hsl(var(--muted-foreground) / 0.7);
+  }
+  .section-heading::before {
+    content: "";
+    display: inline-block;
+    width: 3px;
+    height: 14px;
+    border-radius: 2px;
+    background: linear-gradient(to bottom, hsl(var(--gold)), hsl(var(--gold) / 0.3));
+    flex-shrink: 0;
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     BADGE & PILL SYSTEM
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .status-pill {
+    @apply text-[10px] font-bold uppercase px-2.5 py-1 rounded-full;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+  }
+
+  .badge-soft {
+    @apply text-[10px] font-bold uppercase px-2.5 py-0.5 rounded-full;
+    letter-spacing: 0.04em;
+    border: 1px solid transparent;
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     INVENTORY BAR
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .stock-bar {
+    @apply h-2 rounded-full overflow-hidden;
+    background: hsl(var(--muted));
+  }
+  .stock-bar-fill {
+    @apply h-full rounded-full transition-all duration-500;
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     PAGE HEADER
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .page-header {
+    @apply flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-2;
+  }
+  .page-header h1 {
+    @apply text-2xl font-bold tracking-tight text-foreground;
+  }
+  .page-header p {
+    @apply text-[13px] mt-0.5;
+    color: hsl(var(--muted-foreground));
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     FILTER BAR
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .filter-bar {
+    @apply flex flex-wrap items-center gap-2.5 px-4 py-3 rounded-xl;
+    background: hsl(var(--card));
+    box-shadow: var(--shadow-xs);
+    border: 1px solid hsl(var(--border) / 0.5);
+  }
+  .dark .filter-bar {
+    background: hsl(var(--card));
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     BUTTONS
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .btn-primary-action {
+    @apply inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all;
+    background: linear-gradient(135deg, hsl(var(--gold)) 0%, hsl(41 78% 38%) 100%);
+    color: white;
+    box-shadow: 0 2px 12px hsl(var(--gold) / 0.3), inset 0 1px 0 hsl(41 78% 65% / 0.3);
+    text-shadow: 0 1px 1px hsl(41 78% 25% / 0.3);
+  }
+  .btn-primary-action:hover {
+    box-shadow: 0 6px 20px hsl(var(--gold) / 0.4), inset 0 1px 0 hsl(41 78% 65% / 0.3);
+    transform: translateY(-2px);
+  }
+  .btn-primary-action:active {
+    transform: translateY(0) scale(0.98);
+    box-shadow: 0 2px 8px hsl(var(--gold) / 0.25);
+  }
+
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     GLASSMORPHISM SURFACE
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  .bg-brand-gradient {
+    background-image: linear-gradient(160deg, hsl(217 43% 18%) 0%, hsl(220 50% 10%) 100%);
+  }
+
   .glass {
     background: hsl(var(--card) / 0.72);
-    backdrop-filter: saturate(180%) blur(12px);
-    -webkit-backdrop-filter: saturate(180%) blur(12px);
-    border: 1px solid hsl(var(--border) / 0.7);
+    backdrop-filter: saturate(180%) blur(16px);
+    -webkit-backdrop-filter: saturate(180%) blur(16px);
+    border: 1px solid hsl(var(--border) / 0.5);
+    box-shadow: inset 0 1px 0 hsl(0 0% 100% / 0.06);
   }
 
-  /* Shimmer overlay for skeleton loaders */
+
+  /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+     SHADCN COMPONENT OVERHAUL
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+  /* Cards */
+  [data-slot="card"],
+  .card-upgrade {
+    box-shadow: var(--shadow-card);
+    border-color: hsl(var(--border) / 0.5);
+    @apply rounded-2xl;
+  }
+  [data-slot="card"]:hover,
+  .card-upgrade:hover {
+    box-shadow: var(--shadow-md);
+  }
+
+  /* Tab bar */
+  [data-slot="tabs-list"],
+  [role="tablist"] {
+    @apply rounded-xl;
+    background: hsl(var(--muted) / 0.6);
+    border: 1px solid hsl(var(--border) / 0.3);
+    padding: 4px;
+  }
+  [data-slot="tabs-trigger"],
+  [role="tab"] {
+    @apply rounded-lg text-[13px] font-medium;
+    transition: all 0.2s ease;
+  }
+  [data-slot="tabs-trigger"][data-state="active"],
+  [role="tab"][aria-selected="true"] {
+    box-shadow: var(--shadow-sm);
+    background: hsl(var(--card));
+    border: 1px solid hsl(var(--border) / 0.4);
+  }
+
+  /* Inputs */
+  [data-slot="input"],
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="hidden"]):not(.no-upgrade),
+  select:not(.no-upgrade),
+  textarea:not(.no-upgrade) {
+    @apply rounded-xl;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  [data-slot="input"]:focus,
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="hidden"]):not(.no-upgrade):focus,
+  select:not(.no-upgrade):focus,
+  textarea:not(.no-upgrade):focus {
+    border-color: hsl(var(--gold) / 0.5);
+    box-shadow: 0 0 0 3px hsl(var(--gold) / 0.08);
+  }
+
+  /* shadcn Button rounding */
+  [data-slot="button"] {
+    @apply rounded-xl;
+  }
+
+  /* Skeleton shimmer */
   .skeleton-shimmer {
     position: relative;
     overflow: hidden;
@@ -192,7 +526,9 @@
   }
 }
 
-/* Subtle film-grain texture to break digital flatness (very low opacity) */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   TEXTURE OVERLAY — subtle grain
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 body::before {
   content: "";
   position: fixed;
@@ -203,79 +539,89 @@ body::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
-/* Gentle entrance for each routed page — accent only, structure untouched */
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MAIN CONTENT AREA POLISH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+
+/* Page entrance */
 main {
   animation: fade-in 0.3s ease-out both;
 }
 
-/* ── Mobile-compact: shrink text, spacing, and padding on small screens ── */
+/* Staggered card entrance */
+.stagger-children > * {
+  animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 60ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 180ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 300ms; }
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   MOBILE COMPACT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 @media (max-width: 767px) {
   html { font-size: 13px; }
-
-  /* Tighter page padding */
   main { padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
-
-  /* Smaller headings */
   h1 { font-size: 1.25rem !important; }
   h2 { font-size: 1.1rem !important; }
   h3 { font-size: 1rem !important; }
-
-  /* Compact cards and sections */
   .rounded-2xl { border-radius: 0.75rem; }
-
-  /* Prevent iOS zoom on input focus */
   input, select, textarea { font-size: 16px !important; }
-
-  /* Compact tables */
   table { font-size: 0.8rem; }
   th, td { padding: 0.35rem 0.5rem !important; }
-
-  /* Smaller buttons */
   button { font-size: 0.8rem; }
 }
 
-/* Print Styles */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   PRINT STYLES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 @media print {
   @page { margin: 0; size: A4; }
   body {
     margin: 0 !important;
     padding: 0 !important;
-    background: white;
+    background: white !important;
   }
   body::before { display: none !important; }
   .no-print { display: none !important; }
   .print-only { display: block !important; }
   .print-break-inside-avoid { break-inside: avoid; }
-
   * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 }
 
-/* Custom Scrollbar */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   SCROLLBAR
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-muted-foreground/25 rounded-full;
+  @apply bg-muted-foreground/15 rounded-full;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-muted-foreground/45;
+  @apply bg-muted-foreground/30;
   background-clip: content-box;
 }
 
-/* ── All-caps inputs (invoicing convention) ──────────────────────────────────
-   Every typed field displays in capital letters. Password + email are excluded
-   so logins keep their exact case; the stored value is unchanged (search, SKU
-   matching and auth still use what was actually typed). `.no-uppercase` opts a
-   field out. Placeholders are left in normal case for readability. */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   ALL-CAPS INPUTS (invoicing convention)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 input:not([type="password"]):not([type="email"]):not([type="date"]):not([type="time"]):not([type="number"]):not([type="tel"]):not([type="url"]):not(.no-uppercase),
 textarea:not(.no-uppercase) {
   text-transform: uppercase;
@@ -285,9 +631,248 @@ textarea::placeholder {
   text-transform: none;
 }
 
-/* ── Transfer Voucher print isolation ──────────────────────────────────────
-   Only when a voucher modal is on screen (:has) do we hide the rest, so normal
-   invoice/statement printing is unaffected. */
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   DARK MODE — global overrides for hardcoded light colors
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
+.dark {
+  color-scheme: dark;
+}
+
+/* ── Invoice paper: ALWAYS keep original print colors ── */
+.dark .invoice-paper,
+.dark .invoice-paper * {
+  color: inherit;
+}
+.dark .invoice-paper.bg-white {
+  background-color: white !important;
+  color: black !important;
+}
+.dark .invoice-paper .bg-white {
+  background-color: white !important;
+}
+.dark .invoice-paper .text-black { color: black !important; }
+.dark .invoice-paper .text-gray-600 { color: rgb(75 85 99) !important; }
+.dark .invoice-paper .text-gray-500 { color: rgb(107 114 128) !important; }
+.dark .invoice-paper .text-gray-400 { color: rgb(156 163 175) !important; }
+.dark .invoice-paper .text-gray-900 { color: rgb(17 24 39) !important; }
+.dark .invoice-paper .text-slate-900 { color: rgb(15 23 42) !important; }
+.dark .invoice-paper .text-slate-800 { color: rgb(30 41 59) !important; }
+.dark .invoice-paper .text-slate-700 { color: rgb(51 65 85) !important; }
+.dark .invoice-paper .text-slate-600 { color: rgb(71 85 105) !important; }
+.dark .invoice-paper .text-slate-500 { color: rgb(100 116 139) !important; }
+.dark .invoice-paper .border-black { border-color: black !important; }
+.dark .invoice-paper .border-gray-200 { border-color: rgb(229 231 235) !important; }
+.dark .invoice-paper .border-gray-300 { border-color: rgb(209 213 219) !important; }
+.dark .invoice-paper .bg-gray-900 { background-color: rgb(17 24 39) !important; }
+.dark .invoice-paper .bg-gray-50 { background-color: rgb(249 250 251) !important; }
+.dark .invoice-paper .bg-slate-50 { background-color: rgb(248 250 252) !important; }
+
+/* Hardcoded bg-white → dark card surface (exclude invoice paper) */
+.dark .bg-white:not(.invoice-paper):not(.invoice-paper *) {
+  background-color: hsl(222 46% 8%) !important;
+}
+
+/* Hardcoded bg-slate-50, bg-gray-50, etc → dark surface */
+.dark .bg-slate-50:not(.invoice-paper *),
+.dark .bg-gray-50:not(.invoice-paper *) {
+  background-color: hsl(217 35% 10%) !important;
+}
+
+/* Light gradient backgrounds → dark equivalents */
+.dark [class*="from-emerald-50"]:not(.invoice-paper *),
+.dark [class*="from-blue-50"]:not(.invoice-paper *),
+.dark [class*="from-amber-50"]:not(.invoice-paper *),
+.dark [class*="from-orange-50"]:not(.invoice-paper *),
+.dark [class*="from-purple-50"]:not(.invoice-paper *),
+.dark [class*="from-red-50"]:not(.invoice-paper *),
+.dark [class*="from-indigo-50"]:not(.invoice-paper *),
+.dark [class*="from-teal-50"]:not(.invoice-paper *),
+.dark [class*="from-rose-50"]:not(.invoice-paper *),
+.dark [class*="from-cyan-50"]:not(.invoice-paper *),
+.dark [class*="from-yellow-50"]:not(.invoice-paper *),
+.dark [class*="from-green-50"]:not(.invoice-paper *) {
+  --tw-gradient-from: hsl(217 35% 10%) !important;
+}
+
+.dark [class*="to-white"]:not(.invoice-paper *) {
+  --tw-gradient-to: hsl(222 46% 8%) !important;
+}
+
+/* Light border colors → dark border */
+.dark [class*="border-emerald-100"]:not(.invoice-paper *),
+.dark [class*="border-blue-100"]:not(.invoice-paper *),
+.dark [class*="border-amber-100"]:not(.invoice-paper *),
+.dark [class*="border-orange-100"]:not(.invoice-paper *),
+.dark [class*="border-purple-100"]:not(.invoice-paper *),
+.dark [class*="border-red-100"]:not(.invoice-paper *),
+.dark [class*="border-indigo-100"]:not(.invoice-paper *),
+.dark [class*="border-teal-100"]:not(.invoice-paper *) {
+  border-color: hsl(217 30% 20%) !important;
+}
+
+/* Text that's too dark for dark mode */
+.dark .text-slate-800:not(.invoice-paper *),
+.dark .text-\[\#1e2a3a\]:not(.invoice-paper *) {
+  color: hsl(210 40% 93%) !important;
+}
+
+/* Muted text needs more brightness in dark */
+.dark .text-muted-foreground\/60:not(.invoice-paper *),
+.dark .text-muted-foreground\/50:not(.invoice-paper *) {
+  color: hsl(215 20% 62%) !important;
+}
+
+/* Hover bg-slate-50 used in list items */
+.dark .hover\:bg-slate-50\/80:not(.invoice-paper *):hover,
+.dark .hover\:bg-slate-50:not(.invoice-paper *):hover {
+  background-color: hsl(217 35% 12%) !important;
+}
+
+/* Tables in dark mode — stronger alternating rows */
+.dark [data-slot="table-body"] tr:nth-child(even),
+.dark .dash-table tbody tr:nth-child(even) {
+  background: hsl(217 35% 9%);
+}
+.dark [data-slot="table-body"] tr:hover,
+.dark .dash-table tbody tr:hover {
+  background: hsl(var(--gold) / 0.06);
+}
+
+/* Grain overlay lighter in dark */
+.dark body::before {
+  opacity: 0.015;
+}
+
+/* Icon containers with light backgrounds */
+.dark [class*="bg-indigo-100"]:not(.invoice-paper *),
+.dark [class*="bg-emerald-100"]:not(.invoice-paper *),
+.dark [class*="bg-amber-100"]:not(.invoice-paper *),
+.dark [class*="bg-blue-100"]:not(.invoice-paper *),
+.dark [class*="bg-orange-100"]:not(.invoice-paper *),
+.dark [class*="bg-green-100"]:not(.invoice-paper *),
+.dark [class*="bg-red-100"]:not(.invoice-paper *),
+.dark [class*="bg-rose-100"]:not(.invoice-paper *),
+.dark [class*="bg-purple-100"]:not(.invoice-paper *),
+.dark [class*="bg-teal-100"]:not(.invoice-paper *) {
+  background-color: hsl(217 35% 14%) !important;
+}
+
+/* Status pills / badges that use light backgrounds */
+.dark [class*="bg-emerald-50"]:not(.invoice-paper *),
+.dark [class*="bg-amber-50"]:not(.invoice-paper *),
+.dark [class*="bg-red-50"]:not(.invoice-paper *),
+.dark [class*="bg-blue-50"]:not(.invoice-paper *),
+.dark [class*="bg-orange-50"]:not(.invoice-paper *),
+.dark [class*="bg-indigo-50"]:not(.invoice-paper *),
+.dark [class*="bg-rose-50"]:not(.invoice-paper *),
+.dark [class*="bg-purple-50"]:not(.invoice-paper *),
+.dark [class*="bg-teal-50"]:not(.invoice-paper *),
+.dark [class*="bg-green-50"]:not(.invoice-paper *),
+.dark [class*="bg-yellow-50"]:not(.invoice-paper *),
+.dark [class*="bg-cyan-50"]:not(.invoice-paper *) {
+  background-color: hsl(217 35% 12%) !important;
+}
+
+/* Fix inline style backgrounds in hero cards for dark mode */
+.dark .hero-card[style*="linear-gradient"] {
+  border-color: hsl(217 30% 20%) !important;
+}
+
+/* ── Semantic text colors: boost to 400-shade for dark backgrounds ── */
+
+/* Green / Emerald — 600/700 → bright 400 */
+.dark .text-green-600:not(.invoice-paper *),
+.dark .text-green-700:not(.invoice-paper *) {
+  color: rgb(74 222 128) !important; /* green-400 */
+}
+.dark .text-emerald-600:not(.invoice-paper *),
+.dark .text-emerald-700:not(.invoice-paper *) {
+  color: rgb(52 211 153) !important; /* emerald-400 */
+}
+
+/* Blue — 600/700 → bright 400 */
+.dark .text-blue-600:not(.invoice-paper *),
+.dark .text-blue-700:not(.invoice-paper *) {
+  color: rgb(96 165 250) !important; /* blue-400 */
+}
+.dark .text-blue-500:not(.invoice-paper *) {
+  color: rgb(96 165 250) !important; /* blue-400 */
+}
+
+/* Red / Rose — 600/700 → bright 400 */
+.dark .text-red-600:not(.invoice-paper *),
+.dark .text-red-700:not(.invoice-paper *) {
+  color: rgb(248 113 113) !important; /* red-400 */
+}
+.dark .text-red-500:not(.invoice-paper *) {
+  color: rgb(248 113 113) !important;
+}
+.dark .text-rose-600:not(.invoice-paper *),
+.dark .text-rose-700:not(.invoice-paper *) {
+  color: rgb(251 113 133) !important; /* rose-400 */
+}
+
+/* Amber / Orange — 600/700 → bright 400 */
+.dark .text-amber-600:not(.invoice-paper *),
+.dark .text-amber-700:not(.invoice-paper *) {
+  color: rgb(251 191 36) !important; /* amber-400 */
+}
+.dark .text-orange-600:not(.invoice-paper *),
+.dark .text-orange-700:not(.invoice-paper *) {
+  color: rgb(251 146 60) !important; /* orange-400 */
+}
+
+/* Purple — 600/700 → bright 400 */
+.dark .text-purple-600:not(.invoice-paper *),
+.dark .text-purple-700:not(.invoice-paper *) {
+  color: rgb(192 132 252) !important; /* purple-400 */
+}
+
+/* Indigo — 600/700 → bright 400 */
+.dark .text-indigo-600:not(.invoice-paper *),
+.dark .text-indigo-700:not(.invoice-paper *) {
+  color: rgb(129 140 248) !important; /* indigo-400 */
+}
+
+/* Teal — 600/700 → bright 400 */
+.dark .text-teal-600:not(.invoice-paper *),
+.dark .text-teal-700:not(.invoice-paper *) {
+  color: rgb(45 212 191) !important; /* teal-400 */
+}
+
+/* Cyan — 600/700 → bright 400 */
+.dark .text-cyan-600:not(.invoice-paper *),
+.dark .text-cyan-700:not(.invoice-paper *) {
+  color: rgb(34 211 238) !important; /* cyan-400 */
+}
+
+/* Slate text shades — brighten for readability */
+.dark .text-slate-600:not(.invoice-paper *) {
+  color: hsl(215 20% 70%) !important;
+}
+.dark .text-slate-700:not(.invoice-paper *) {
+  color: hsl(210 25% 78%) !important;
+}
+.dark .text-slate-500:not(.invoice-paper *) {
+  color: hsl(215 19% 62%) !important;
+}
+
+/* Gray text shades — brighten */
+.dark .text-gray-600:not(.invoice-paper *) {
+  color: hsl(215 16% 70%) !important;
+}
+.dark .text-gray-700:not(.invoice-paper *) {
+  color: hsl(210 20% 78%) !important;
+}
+.dark .text-gray-500:not(.invoice-paper *) {
+  color: hsl(215 16% 62%) !important;
+}
+
+
+/* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   TRANSFER VOUCHER PRINT ISOLATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
 @media print {
   body:has(.transfer-voucher-print) * { visibility: hidden; }
   body:has(.transfer-voucher-print) .transfer-voucher-print,

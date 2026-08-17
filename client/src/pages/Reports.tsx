@@ -8,7 +8,7 @@ import {
 import {
   BarChart2, Download, TrendingUp, DollarSign, FileText, Users, Package,
   CheckCircle2, AlertTriangle, RotateCcw, ShoppingCart, Calendar,
-  ArrowUpRight, Clock, Send, MapPin,
+  ArrowUpRight, Clock, Send, MapPin, Info, ChevronDown, ChevronUp, Filter, Plus,
 } from "lucide-react";
 
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,8 +27,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Tooltip as UITooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Calendar as CalendarUI } from "@/components/ui/calendar";
 import { Input } from "@/components/ui/input";
+import ManualReturnModal from "@/components/ManualReturnModal";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Types
@@ -42,18 +44,27 @@ type DailySalesRow = {
   cogs?: number;
   profit?: number;
 };
+type SalesInvoice = {
+  id: number; number: string; date: string; status: string;
+  customerName: string; customerId: number | null;
+  total: number; paid: number; cogs: number; profit: number;
+};
 type DailySalesResponse = {
   rows: DailySalesRow[];
+  invoices: SalesInvoice[];
   totalRevenue: number;
   invoiceCount: number;
   avgInvoiceValue: number;
   cashSales: number;
   creditSales: number;
   returnsTotal: number;
-  cogs?: number;
-  grossProfit?: number;
-  realProfit?: number;
-  marginPct?: number;
+  cogs: number;
+  grossProfit: number;
+  realProfit: number;
+  marginPct: number;
+  topProducts: { name: string; qty: number; revenue: number; profit: number }[];
+  topCustomers: { name: string; customerId: number | null; total: number; invoiceCount: number }[];
+  salesByCategory: { category: string; total: number }[];
 };
 
 type UnpaidInvoice = {
@@ -111,9 +122,23 @@ type InventoryRow = {
 
 type ReturnSummary = {
   total: number;
+  totalAmount: number;
   rate: number;
+  byStatus: Record<string, number>;
   byType: { type: string; count: number; amount: number }[];
   topProducts: { name: string; count: number; amount: number }[];
+  returnRows: {
+    id: number;
+    voucherNumber: string | null;
+    date: string | null;
+    customerName: string | null;
+    originalInvoiceNumber: string | null;
+    type: string;
+    status: string;
+    reason: string | null;
+    refundAmount: number;
+  }[];
+  invoiceCount: number;
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────
@@ -151,7 +176,7 @@ function normalizeCheques(raw: unknown): ChequeRow[] {
 }
 
 function normalizeReturnSummary(raw: unknown): ReturnSummary {
-  const empty: ReturnSummary = { total: 0, rate: 0, byType: [], topProducts: [] };
+  const empty: ReturnSummary = { total: 0, totalAmount: 0, rate: 0, byStatus: {}, byType: [], topProducts: [], returnRows: [], invoiceCount: 0 };
   if (!raw || typeof raw !== "object") return empty;
 
   const data = raw as Record<string, unknown>;
@@ -186,10 +211,28 @@ function normalizeReturnSummary(raw: unknown): ReturnSummary {
     });
   }
 
-  const total = Number(data.total ?? data.count ?? byType.reduce((s, t) => s + t.count, 0));
-  const rate = toNum(data.rate as number | string | null | undefined);
+  let returnRows: ReturnSummary["returnRows"] = [];
+  if (Array.isArray(data.returnRows)) {
+    returnRows = data.returnRows.map((r: any) => ({
+      id: Number(r.id ?? 0),
+      voucherNumber: r.voucherNumber ?? null,
+      date: r.date ?? null,
+      customerName: r.customerName ?? null,
+      originalInvoiceNumber: r.originalInvoiceNumber ?? null,
+      type: String(r.type ?? "unknown"),
+      status: String(r.status ?? "unknown"),
+      reason: r.reason ?? null,
+      refundAmount: toNum(r.refundAmount),
+    }));
+  }
 
-  return { total, rate, byType, topProducts };
+  const byStatus = (data.byStatus && typeof data.byStatus === "object") ? data.byStatus as Record<string, number> : {};
+  const total = Number(data.total ?? data.count ?? byType.reduce((s, t) => s + t.count, 0));
+  const totalAmount = toNum(data.totalAmount as number | string | null | undefined);
+  const rate = toNum(data.rate as number | string | null | undefined);
+  const invoiceCount = Number(data.invoiceCount ?? 0);
+
+  return { total, totalAmount, rate, byStatus, byType, topProducts, returnRows, invoiceCount };
 }
 
 function downloadCSV(filename: string, rows: string[][]): void {
@@ -399,9 +442,10 @@ export default function Reports() {
   });
 
   /* ── 7. Returns ─── */
+  const [returnStatusFilter, setReturnStatusFilter] = useState<string>("all");
   const { data: returnsSummary, isLoading: returnsLoading } = useQuery<ReturnSummary>({
-    queryKey: ["/api/reports/returns", start, end],
-    queryFn: () => fetch(`/api/reports/returns?start=${start}&end=${end}`).then((r) => r.json()),
+    queryKey: ["/api/reports/returns", start, end, storeParam, returnStatusFilter],
+    queryFn: () => fetch(`/api/reports/returns?start=${start}&end=${end}${storeParam ? `&storeId=${storeParam}` : ""}${returnStatusFilter !== "all" ? `&status=${returnStatusFilter}` : ""}`).then((r) => r.json()),
     enabled: activeTab === "returns",
     select: normalizeReturnSummary,
   });
@@ -539,16 +583,20 @@ export default function Reports() {
   ───────────────────────────────────────────────────────────────────────── */
   const DailySalesTab = () => {
     const rows: DailySalesRow[] = salesLoading ? [] : (dailySales?.rows ?? []);
-    const [showInv, setShowInv] = useState(false);
-    // Drill-down: the actual invoices behind the period's revenue (clickable → invoice).
-    const { data: allDocs = [] } = useQuery<any[]>({
-      queryKey: ["/api/documents"],
-      queryFn: () => fetch("/api/documents").then((r) => r.json()).catch(() => []),
-      enabled: activeTab === "daily-sales",
-    });
-    const periodInvs = (Array.isArray(allDocs) ? allDocs : [])
-      .filter((d: any) => d.type === "INV" && d.status !== "void" && (d.date >= start && d.date <= end))
-      .sort((a: any, b: any) => (b.date || "").localeCompare(a.date || ""));
+    const invoices: SalesInvoice[] = salesLoading ? [] : (dailySales?.invoices ?? []);
+    const topProds: any[] = dailySales?.topProducts ?? [];
+    const topCusts: any[] = dailySales?.topCustomers ?? [];
+    const categories: any[] = dailySales?.salesByCategory ?? [];
+    const [showInv, setShowInv] = useState(true);
+    const [invFilter, setInvFilter] = useState<"all" | "paid" | "unpaid">("all");
+    const [showChart, setShowChart] = useState(false);
+    const [expandedCard, setExpandedCard] = useState<string | null>(null);
+
+    const filteredInvoices = useMemo(() => {
+      if (invFilter === "paid") return invoices.filter((d) => d.status === "paid");
+      if (invFilter === "unpaid") return invoices.filter((d) => d.status !== "paid");
+      return invoices;
+    }, [invoices, invFilter]);
 
     function exportCSV() {
       const headers = ["Date", "Revenue", "Invoice Count", ...(isAdmin ? ["COGS", "Gross Profit"] : [])];
@@ -561,11 +609,57 @@ export default function Reports() {
       downloadCSV(`daily-sales-${start}-${end}.csv`, [headers, ...data]);
     }
 
+    const heroCard = (
+      gradient: string, shadowColor: string, labelColor: string, subColor: string,
+      label: string, value: string, sub: string,
+      onClick: () => void, active?: boolean,
+    ) => (
+      <button onClick={onClick} className={cn(
+        "text-left rounded-2xl p-5 text-white shadow-lg hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer relative overflow-hidden",
+        gradient, shadowColor,
+        active && "ring-2 ring-white/60 ring-offset-2 ring-offset-background"
+      )}>
+        <p className={cn("text-xs font-semibold uppercase tracking-wider mb-1", labelColor)}>{label}</p>
+        <p className="text-2xl font-bold tabular-nums">{value}</p>
+        <p className={cn("text-xs mt-1", subColor)}>{sub}</p>
+        {active && <Filter className="absolute top-3 right-3 w-3.5 h-3.5 text-white/60" />}
+      </button>
+    );
+
+    const infoCard = (
+      label: string, value: string, color: string, tooltip: string,
+      onClick?: () => void, sub?: string,
+    ) => (
+      <button onClick={onClick} className={cn(
+        "rounded-xl border border-border/40 bg-card p-4 text-left transition-all",
+        onClick && "hover:bg-muted/30 hover:shadow-md cursor-pointer active:scale-[0.97]",
+        !onClick && "cursor-default"
+      )}>
+        <div className="flex items-center gap-1.5 mb-1">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">{label}</p>
+          <TooltipProvider delayDuration={200}>
+            <UITooltip>
+              <TooltipTrigger asChild>
+                <span onClick={(e) => e.stopPropagation()} className="inline-flex">
+                  <Info className="w-3 h-3 text-muted-foreground/50" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[220px] text-xs">
+                <p>{tooltip}</p>
+              </TooltipContent>
+            </UITooltip>
+          </TooltipProvider>
+        </div>
+        <p className={cn("text-lg font-bold tabular-nums", color)}>{value}</p>
+        {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
+        {onClick && <p className="text-[10px] text-muted-foreground/60 mt-1">Tap to explore →</p>}
+      </button>
+    );
+
     return (
       <>
         <TopBar onExport={exportCSV} />
 
-        {/* Hero stat cards */}
         {salesLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
             {Array.from({ length: 4 }).map((_, i) => (
@@ -580,126 +674,398 @@ export default function Reports() {
         ) : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-              <button onClick={() => setShowInv((v) => !v)} className="text-left rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30 hover:scale-[1.02] transition-transform">
-                <p className="text-xs font-semibold uppercase tracking-wider text-emerald-100 mb-1">Total revenue</p>
-                <p className="text-2xl font-bold tabular-nums">{fmtQAR(dailySales?.totalRevenue)}</p>
-                <p className="text-xs text-emerald-200 mt-1">{dailySales?.invoiceCount ?? 0} invoices</p>
-              </button>
-              <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30">
-                <p className="text-xs font-semibold uppercase tracking-wider text-blue-100 mb-1">Avg invoice</p>
-                <p className="text-2xl font-bold tabular-nums">{fmtQAR(dailySales?.avgInvoiceValue)}</p>
-                <p className="text-xs text-blue-200 mt-1">per transaction</p>
-              </div>
-              <div className="rounded-2xl bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700 p-5 text-white shadow-lg shadow-green-500/20 dark:shadow-green-900/30">
-                <p className="text-xs font-semibold uppercase tracking-wider text-green-100 mb-1">Cash sales</p>
-                <p className="text-2xl font-bold tabular-nums">{fmtQAR(dailySales?.cashSales)}</p>
-                <p className="text-xs text-green-200 mt-1">collected</p>
-              </div>
-              <div className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30">
-                <p className="text-xs font-semibold uppercase tracking-wider text-amber-100 mb-1">Credit sales</p>
-                <p className="text-2xl font-bold tabular-nums">{fmtQAR(dailySales?.creditSales)}</p>
-                <p className="text-xs text-amber-200 mt-1">outstanding</p>
-              </div>
-            </div>
-            <div className={cn("grid gap-3 mb-6", isAdmin ? "grid-cols-2 lg:grid-cols-4" : "grid-cols-1 max-w-xs")}>
-              <div className="rounded-xl border border-border/40 bg-card p-4">
-                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Returns</p>
-                <p className="text-lg font-bold text-red-600 dark:text-red-400 tabular-nums">{fmtQAR(dailySales?.returnsTotal)}</p>
-              </div>
-              {isAdmin && (
-                <>
-                  <div className="rounded-xl border border-border/40 bg-card p-4">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">COGS</p>
-                    <p className="text-lg font-bold text-foreground tabular-nums">{fmtQAR(dailySales?.cogs)}</p>
-                  </div>
-                  <div className="rounded-xl border border-border/40 bg-card p-4">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Gross profit</p>
-                    <p className="text-lg font-bold text-purple-600 dark:text-purple-400 tabular-nums">{fmtQAR(dailySales?.grossProfit)}</p>
-                    {dailySales?.realProfit !== dailySales?.grossProfit && (
-                      <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-0.5">Real (paid): {fmtQAR(dailySales?.realProfit)}</p>
-                    )}
-                  </div>
-                  <div className="rounded-xl border border-border/40 bg-card p-4">
-                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Margin</p>
-                    <p className="text-lg font-bold text-cyan-600 dark:text-cyan-400 tabular-nums">{toNum(dailySales?.marginPct).toFixed(1)}%</p>
-                  </div>
-                </>
+              {heroCard(
+                "bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700",
+                "shadow-emerald-500/20 dark:shadow-emerald-900/30",
+                "text-emerald-100", "text-emerald-200",
+                "Total revenue", fmtQAR(dailySales?.totalRevenue),
+                `${dailySales?.invoiceCount ?? 0} invoices`,
+                () => { setInvFilter("all"); setShowInv(true); },
+                invFilter === "all",
+              )}
+              {isAdmin ? heroCard(
+                "bg-gradient-to-br from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700",
+                "shadow-blue-500/20 dark:shadow-blue-900/30",
+                "text-blue-100", "text-blue-200",
+                "Real profit", fmtQAR(dailySales?.realProfit),
+                "paid invoices only",
+                () => { setInvFilter("paid"); setShowInv(true); },
+                invFilter === "paid",
+              ) : heroCard(
+                "bg-gradient-to-br from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700",
+                "shadow-blue-500/20 dark:shadow-blue-900/30",
+                "text-blue-100", "text-blue-200",
+                "Avg invoice", fmtQAR(dailySales?.avgInvoiceValue),
+                "per transaction",
+                () => { setShowInv((v) => !v); },
+              )}
+              {heroCard(
+                "bg-gradient-to-br from-green-500 to-emerald-600 dark:from-green-600 dark:to-emerald-700",
+                "shadow-green-500/20 dark:shadow-green-900/30",
+                "text-green-100", "text-green-200",
+                "Cash sales", fmtQAR(dailySales?.cashSales),
+                "collected",
+                () => { setInvFilter("paid"); setShowInv(true); },
+                invFilter === "paid",
+              )}
+              {heroCard(
+                "bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700",
+                "shadow-amber-500/20 dark:shadow-amber-900/30",
+                "text-amber-100", "text-amber-200",
+                "Credit sales", fmtQAR(dailySales?.creditSales),
+                "outstanding",
+                () => { setInvFilter("unpaid"); setShowInv(true); },
+                invFilter === "unpaid",
               )}
             </div>
+            {isAdmin && (
+              <>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-2">
+                  {infoCard(
+                    "Returns", fmtQAR(dailySales?.returnsTotal),
+                    "text-red-600 dark:text-red-400",
+                    "Total value of customer returns (credit notes) in this period.",
+                    () => setActiveTab("returns"),
+                  )}
+                  {infoCard(
+                    "COGS", fmtQAR(dailySales?.cogs),
+                    "text-foreground",
+                    "Cost of Goods Sold — what you paid for the items you sold. Lower COGS = higher profit margin.",
+                    () => setExpandedCard(expandedCard === "cogs" ? null : "cogs"),
+                  )}
+                  {infoCard(
+                    "Gross profit", fmtQAR(dailySales?.grossProfit),
+                    "text-purple-600 dark:text-purple-400",
+                    "Revenue minus COGS for all invoices (paid + unpaid). Real Profit only counts paid invoices.",
+                    () => setExpandedCard(expandedCard === "profit" ? null : "profit"),
+                    dailySales?.realProfit !== dailySales?.grossProfit ? `Real (paid): ${fmtQAR(dailySales?.realProfit)}` : undefined,
+                  )}
+                  {infoCard(
+                    "Margin", `${toNum(dailySales?.marginPct).toFixed(1)}%`,
+                    "text-cyan-600 dark:text-cyan-400",
+                    "Gross Profit ÷ Revenue × 100. Shows how much of each QAR sold is profit after cost.",
+                    () => setActiveTab("summary"),
+                  )}
+                </div>
+
+                {/* Expandable COGS breakdown */}
+                {expandedCard === "cogs" && invoices.length > 0 && (
+                  <div className="mb-6 rounded-xl border border-border/40 bg-card shadow-sm overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                    <div className="px-4 py-2.5 bg-muted/20 border-b flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">COGS Breakdown</span>
+                      <button onClick={() => setExpandedCard(null)} className="text-xs text-muted-foreground hover:text-foreground">Close</button>
+                    </div>
+
+                    {/* Per Product */}
+                    {topProds.length > 0 && (
+                      <>
+                        <div className="px-4 py-2 bg-muted/10 border-b">
+                          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">By Product</span>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="bg-muted/5">
+                                <TableHead className="text-xs">Product</TableHead>
+                                <TableHead className="text-xs text-right">Qty</TableHead>
+                                <TableHead className="text-xs text-right">Revenue</TableHead>
+                                <TableHead className="text-xs text-right">COGS</TableHead>
+                                <TableHead className="text-xs text-right">Profit</TableHead>
+                                <TableHead className="text-xs text-right">Margin</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {topProds.map((p: any, i: number) => {
+                                const pCogs = toNum(p.revenue) - toNum(p.profit);
+                                const pMargin = toNum(p.revenue) > 0 ? (toNum(p.profit) / toNum(p.revenue) * 100) : 0;
+                                return (
+                                  <TableRow key={i} className="hover:bg-muted/10">
+                                    <TableCell className="text-xs font-medium truncate max-w-[150px]">{p.name}</TableCell>
+                                    <TableCell className="text-xs font-mono text-right tabular-nums">{p.qty}</TableCell>
+                                    <TableCell className="text-xs font-mono text-right tabular-nums">{fmtQAR(p.revenue)}</TableCell>
+                                    <TableCell className="text-xs font-mono text-right tabular-nums font-semibold">{fmtQAR(pCogs)}</TableCell>
+                                    <TableCell className={cn("text-xs font-mono text-right tabular-nums", toNum(p.profit) >= 0 ? "text-emerald-600" : "text-red-600")}>{fmtQAR(p.profit)}</TableCell>
+                                    <TableCell className="text-xs font-mono text-right tabular-nums">{pMargin.toFixed(1)}%</TableCell>
+                                  </TableRow>
+                                );
+                              })}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </>
+                    )}
+
+                    {/* Totals row */}
+                    <div className="px-4 py-2.5 bg-muted/20 border-t flex items-center justify-between text-xs font-semibold">
+                      <span>Total</span>
+                      <div className="flex gap-6 font-mono tabular-nums">
+                        <span>Revenue: {fmtQAR(dailySales?.totalRevenue)}</span>
+                        <span>COGS: {fmtQAR(dailySales?.cogs)}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">Profit: {fmtQAR(dailySales?.grossProfit)}</span>
+                        <span>{toNum(dailySales?.marginPct).toFixed(1)}%</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Expandable Profit breakdown */}
+                {expandedCard === "profit" && invoices.length > 0 && (
+                  <div className="mb-6 rounded-xl border border-border/40 bg-card shadow-sm overflow-hidden animate-in slide-in-from-top-2 duration-200">
+                    <div className="px-4 py-2.5 bg-muted/20 border-b flex items-center justify-between">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Profit Breakdown — Paid vs Unpaid</span>
+                      <button onClick={() => setExpandedCard(null)} className="text-xs text-muted-foreground hover:text-foreground">Close</button>
+                    </div>
+                    <div className="p-4 grid grid-cols-2 gap-4">
+                      <div className="rounded-lg bg-emerald-50 dark:bg-emerald-950/30 p-3 border border-emerald-200 dark:border-emerald-800">
+                        <p className="text-[10px] font-semibold uppercase text-emerald-600 dark:text-emerald-400 mb-1">Real Profit (paid)</p>
+                        <p className="text-lg font-bold tabular-nums text-emerald-700 dark:text-emerald-300">{fmtQAR(dailySales?.realProfit)}</p>
+                        <p className="text-[10px] text-emerald-600/70 mt-0.5">{invoices.filter(d => d.status === "paid").length} paid invoices</p>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 p-3 border border-amber-200 dark:border-amber-800">
+                        <p className="text-[10px] font-semibold uppercase text-amber-600 dark:text-amber-400 mb-1">Unrealized (unpaid)</p>
+                        <p className="text-lg font-bold tabular-nums text-amber-700 dark:text-amber-300">{fmtQAR(toNum(dailySales?.grossProfit) - toNum(dailySales?.realProfit))}</p>
+                        <p className="text-[10px] text-amber-600/70 mt-0.5">{invoices.filter(d => d.status !== "paid").length} unpaid invoices</p>
+                      </div>
+                    </div>
+                    <div className="overflow-x-auto border-t">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-muted/10">
+                            <TableHead className="text-xs">Invoice</TableHead>
+                            <TableHead className="text-xs">Status</TableHead>
+                            <TableHead className="text-xs text-right">Revenue</TableHead>
+                            <TableHead className="text-xs text-right">Profit</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {invoices.map((d) => (
+                            <TableRow key={d.id} onClick={() => nav(`/documents/${d.id}`)} className="hover:bg-muted/20 cursor-pointer">
+                              <TableCell className="font-mono text-xs text-blue-600 dark:text-blue-400">{d.number}</TableCell>
+                              <TableCell><Badge variant={d.status === "paid" ? "default" : "secondary"} className="text-[10px] h-4 px-1">{d.status}</Badge></TableCell>
+                              <TableCell className="text-xs font-mono text-right tabular-nums">{fmtQAR(d.total)}</TableCell>
+                              <TableCell className={cn("text-xs font-mono text-right tabular-nums font-semibold", toNum(d.profit) >= 0 ? "text-emerald-600" : "text-red-600")}>{fmtQAR(d.profit)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
           </>
         )}
 
-        {/* Revenue drill-down — the invoices behind the total (clickable → invoice),
-            plus quick links to the Top Products / Top Customers breakdowns. */}
+        {/* Invoice list with filter indicator */}
         <div className="mb-6 rounded-2xl border border-border/40 bg-card shadow-sm overflow-hidden">
           <button onClick={() => setShowInv((v) => !v)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/20 transition-colors">
-            <span className="text-sm font-semibold">Invoices behind this revenue ({periodInvs.length})</span>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold">
+                Invoices behind this revenue ({filteredInvoices.length})
+              </span>
+              {invFilter !== "all" && (
+                <Badge variant="secondary" className="text-[10px] h-5 px-1.5 gap-1">
+                  <Filter className="w-2.5 h-2.5" />
+                  {invFilter}
+                </Badge>
+              )}
+            </div>
             <span className="text-xs text-primary font-semibold">{showInv ? "Hide" : "Show"}</span>
           </button>
-          {showInv && (periodInvs.length === 0 ? (
-            <p className="p-6 text-center text-sm text-muted-foreground border-t">No invoices in this period.</p>
-          ) : (
-            <div className="divide-y border-t max-h-96 overflow-y-auto">
-              {periodInvs.slice(0, 100).map((d: any) => (
-                <div key={d.id} onClick={() => nav(`/documents/${d.id}`)} className="flex items-center gap-3 px-4 py-2 text-sm hover:bg-muted/30 cursor-pointer transition-colors">
-                  <span className="font-mono text-blue-600 dark:text-blue-400">{d.number}</span>
-                  <span className="flex-1 truncate text-muted-foreground">{d.customerName || "—"}</span>
-                  <span className="text-xs text-muted-foreground hidden sm:block">{d.date}</span>
-                  <span className="font-mono font-semibold tabular-nums">{fmtQAR(d.total)}</span>
+          {showInv && (
+            <>
+              {invFilter !== "all" && (
+                <div className="px-4 py-2 border-t bg-muted/10 flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">Showing {invFilter} invoices.</span>
+                  <button onClick={() => setInvFilter("all")} className="text-xs text-primary hover:underline font-medium">
+                    Show all
+                  </button>
                 </div>
-              ))}
-            </div>
-          ))}
-          <div className="flex gap-4 px-4 py-2 border-t bg-muted/10">
-            <button onClick={() => setActiveTab("top-products")} className="text-xs font-semibold text-primary hover:underline">Top products →</button>
-            <button onClick={() => setActiveTab("top-customers")} className="text-xs font-semibold text-primary hover:underline">Top customers →</button>
-            <button onClick={() => setActiveTab("summary")} className="text-xs font-semibold text-primary hover:underline">By category →</button>
-          </div>
+              )}
+              {filteredInvoices.length === 0 ? (
+                <p className="p-6 text-center text-sm text-muted-foreground border-t">No invoices match this filter.</p>
+              ) : (
+                <div className="border-t overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/30">
+                        <TableHead className="text-xs">Invoice</TableHead>
+                        <TableHead className="text-xs">Date</TableHead>
+                        <TableHead className="text-xs">Customer</TableHead>
+                        <TableHead className="text-xs text-right">Total</TableHead>
+                        <TableHead className="text-xs text-right">Paid</TableHead>
+                        {isAdmin && <TableHead className="text-xs text-right">Profit</TableHead>}
+                        <TableHead className="text-xs text-center">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filteredInvoices.slice(0, 100).map((d) => (
+                        <TableRow key={d.id} onClick={() => nav(`/documents/${d.id}`)} className="hover:bg-muted/30 cursor-pointer transition-colors">
+                          <TableCell className="font-mono text-sm text-blue-600 dark:text-blue-400">{d.number}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{d.date}</TableCell>
+                          <TableCell className="text-sm truncate max-w-[200px]">{d.customerName}</TableCell>
+                          <TableCell className="text-sm font-mono font-semibold text-right tabular-nums">{fmtQAR(d.total)}</TableCell>
+                          <TableCell className="text-sm font-mono text-right tabular-nums">{fmtQAR(d.paid)}</TableCell>
+                          {isAdmin && (
+                            <TableCell className={cn("text-sm font-mono text-right tabular-nums", toNum(d.profit) >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+                              {fmtQAR(d.profit)}
+                            </TableCell>
+                          )}
+                          <TableCell className="text-center">
+                            <Badge variant={d.status === "paid" ? "default" : "secondary"} className="text-[10px] h-5 px-1.5">
+                              {d.status}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
-        {/* Bar chart */}
-        <Card className="border-border/40 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-              Daily Revenue
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {salesLoading ? (
-              <div className="h-56 flex items-center justify-center">
-                <Skeleton className="h-full w-full" />
-              </div>
-            ) : rows.length === 0 ? (
-              <div className="h-56 flex items-center justify-center text-muted-foreground text-sm">
-                No data for this period
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart data={rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-                  <XAxis
-                    dataKey="date"
-                    tickFormatter={(v) => format(new Date(v), "dd MMM")}
-                    tick={{ fontSize: 11 }}
-                  />
-                  <YAxis
-                    tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
-                    tick={{ fontSize: 11 }}
-                    width={40}
-                  />
-                  <Tooltip
-                    formatter={(v: number) => [fmtQAR(v), "Revenue"]}
-                    labelFormatter={(l) => format(new Date(l), "dd MMM yyyy")}
-                  />
-                  <Bar dataKey="revenue" radius={[4, 4, 0, 0]}>
-                    {rows.map((_, i) => (
-                      <Cell key={i} fill="#3b82f6" fillOpacity={0.85} />
+        {/* Quick links to breakdowns */}
+        {!salesLoading && invoices.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-4">
+            <button onClick={() => setActiveTab("top-products")} className="text-xs font-medium text-primary hover:underline">Top products →</button>
+            <button onClick={() => setActiveTab("top-customers")} className="text-xs font-medium text-primary hover:underline">Top customers →</button>
+            <span className="text-xs text-muted-foreground">By category →</span>
+          </div>
+        )}
+
+        {/* Breakdowns: top customers + top products + by category */}
+        {!salesLoading && invoices.length > 0 && (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            {topCusts.length > 0 && (
+              <Card className="border-border/40 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Users className="w-3.5 h-3.5" /> Top Customers
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {topCusts.slice(0, 5).map((c: any, i: number) => (
+                      <div key={i} className={cn("flex items-center justify-between px-4 py-2 text-sm", c.customerId && "hover:bg-muted/20 cursor-pointer")}
+                        onClick={() => c.customerId && nav(`/customers/${c.customerId}`)}>
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs text-muted-foreground w-4">{i + 1}</span>
+                          <span className="truncate font-medium">{c.name}</span>
+                          <span className="text-xs text-muted-foreground">{c.invoiceCount}x</span>
+                        </div>
+                        <span className="font-mono font-semibold tabular-nums ml-2">{fmtQAR(c.total)}</span>
+                      </div>
                     ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
             )}
-          </CardContent>
+
+            {topProds.length > 0 && (
+              <Card className="border-border/40 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <Package className="w-3.5 h-3.5" /> Top Products
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {topProds.slice(0, 5).map((p: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-xs text-muted-foreground w-4">{i + 1}</span>
+                          <span className="truncate font-medium">{p.name}</span>
+                          <span className="text-xs text-muted-foreground">×{p.qty}</span>
+                        </div>
+                        <span className="font-mono font-semibold tabular-nums ml-2">{fmtQAR(p.revenue)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {categories.length > 0 && (
+              <Card className="border-border/40 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    <ShoppingCart className="w-3.5 h-3.5" /> By Category
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <div className="divide-y">
+                    {categories.slice(0, 5).map((c: any, i: number) => (
+                      <div key={i} className="flex items-center justify-between px-4 py-2 text-sm">
+                        <span className="truncate font-medium">{c.category}</span>
+                        <span className="font-mono font-semibold tabular-nums ml-2">{fmtQAR(c.total)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+
+        {/* Compact collapsible chart */}
+        <Card className="border-border/40 shadow-sm">
+          <button onClick={() => setShowChart((v) => !v)} className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/10 transition-colors">
+            <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <BarChart2 className="w-3.5 h-3.5" /> Daily Revenue
+            </span>
+            <div className="flex items-center gap-2">
+              {!showChart && !salesLoading && rows.length > 0 && (
+                <div className="flex items-end gap-0.5 h-6">
+                  {rows.slice(-7).map((r, i) => {
+                    const max = Math.max(...rows.slice(-7).map((x) => toNum(x.revenue)), 1);
+                    const h = Math.max(4, (toNum(r.revenue) / max) * 24);
+                    return <div key={i} className="w-1.5 bg-blue-400/70 rounded-t" style={{ height: `${h}px` }} />;
+                  })}
+                </div>
+              )}
+              {showChart ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+            </div>
+          </button>
+          {showChart && (
+            <CardContent className="pt-0 pb-4">
+              {salesLoading ? (
+                <div className="h-32 flex items-center justify-center">
+                  <Skeleton className="h-full w-full" />
+                </div>
+              ) : rows.length === 0 ? (
+                <div className="h-20 flex items-center justify-center text-muted-foreground text-sm">
+                  No data for this period
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={140}>
+                  <BarChart data={rows} margin={{ top: 4, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={(v) => format(new Date(v), "dd MMM")}
+                      tick={{ fontSize: 10 }}
+                    />
+                    <YAxis
+                      tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`}
+                      tick={{ fontSize: 10 }}
+                      width={35}
+                    />
+                    <Tooltip
+                      formatter={(v: number) => [fmtQAR(v), "Revenue"]}
+                      labelFormatter={(l) => format(new Date(l), "dd MMM yyyy")}
+                    />
+                    <Bar dataKey="revenue" radius={[3, 3, 0, 0]}>
+                      {rows.map((_, i) => (
+                        <Cell key={i} fill="#3b82f6" fillOpacity={0.85} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          )}
         </Card>
       </>
     );
@@ -1148,11 +1514,11 @@ export default function Reports() {
               <p className="text-xs text-blue-200 mt-1">{products.length} products</p>
             </div>
             {isAdmin && (
-              <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30">
+              <button onClick={() => setActiveTab("daily-sales")} className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
                 <p className="text-xs font-semibold uppercase tracking-wider text-emerald-100 mb-1">Total revenue</p>
                 <p className="text-2xl font-bold tabular-nums">{fmtQAR(totalRevenue)}</p>
                 <p className="text-xs text-emerald-200 mt-1">from top sellers</p>
-              </div>
+              </button>
             )}
             <button onClick={() => nav(`/inventory?filter=low-stock&search=${encodeURIComponent(products[0]?.name ?? "")}`)} className="rounded-2xl bg-gradient-to-br from-amber-500 to-orange-600 dark:from-amber-600 dark:to-orange-700 p-5 text-white shadow-lg shadow-amber-500/20 dark:shadow-amber-900/30 text-left hover:scale-[1.02] hover:shadow-xl transition-all cursor-pointer">
               <p className="text-xs font-semibold uppercase tracking-wider text-amber-100 mb-1">Best seller</p>
@@ -1397,10 +1763,10 @@ export default function Reports() {
      TAB 7: Returns
   ───────────────────────────────────────────────────────────────────────── */
   const ReturnsTab = () => {
-    const summary = returnsSummary ?? { total: 0, rate: 0, byType: [], topProducts: [] };
+    const summary = returnsSummary ?? { total: 0, totalAmount: 0, rate: 0, byStatus: {}, byType: [], topProducts: [], returnRows: [], invoiceCount: 0 };
     const byTypeRows = summary?.byType ?? [];
     const topProductRows = summary?.topProducts ?? [];
-    const totalAmount = byTypeRows.reduce((s, t) => s + toNum(t.amount), 0);
+    const returnRows = summary?.returnRows ?? [];
 
     const typeColors: Record<string, string> = {
       full: "bg-blue-100 text-blue-700 dark:bg-blue-950/40 dark:text-blue-400 border border-blue-200 dark:border-blue-800",
@@ -1416,25 +1782,92 @@ export default function Reports() {
       damage_claim: "Damage Claim",
       billing_correction: "Billing Correction",
     };
+    const statusColors: Record<string, string> = {
+      approved: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400",
+      pending: "bg-amber-100 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400",
+      rejected: "bg-red-100 text-red-700 dark:bg-red-950/40 dark:text-red-400",
+    };
+    const statusLabels: Record<string, string> = {
+      approved: "Approved",
+      pending: "Pending",
+      rejected: "Rejected",
+    };
 
     function exportCSV() {
-      const headers = ["Type", "Count", "Amount"];
-      const data = byTypeRows.map((t) => [
+      const typeHeaders = ["Type", "Count", "Amount"];
+      const typeData = byTypeRows.map((t) => [
         typeLabels[t.type] ?? t.type,
         String(t.count),
         toNum(t.amount).toFixed(2),
       ]);
-      downloadCSV(`returns-${start}-${end}.csv`, [headers, ...data]);
+      const prodHeaders = ["Product", "Return Count", "Amount"];
+      const prodData = topProductRows.map((p) => [
+        p.name,
+        String(p.count),
+        toNum(p.amount).toFixed(2),
+      ]);
+      const rowHeaders = ["Voucher", "Date", "Customer", "Invoice", "Type", "Status", "Reason", "Amount"];
+      const rowData = returnRows.map((r) => [
+        r.voucherNumber ?? "",
+        r.date ?? "",
+        r.customerName ?? "",
+        r.originalInvoiceNumber ?? "",
+        typeLabels[r.type] ?? r.type,
+        statusLabels[r.status] ?? r.status,
+        r.reason ?? "",
+        toNum(r.refundAmount).toFixed(2),
+      ]);
+      downloadCSV(`returns-${start}-${end}.csv`, [
+        ["--- Returns by Type ---"], typeHeaders, ...typeData,
+        [], ["--- Most Returned Products ---"], prodHeaders, ...prodData,
+        [], ["--- Individual Returns ---"], rowHeaders, ...rowData,
+      ]);
     }
+
+    const [showNewReturn, setShowNewReturn] = useState(false);
 
     return (
       <>
         <TopBar onExport={exportCSV} />
 
+        {/* Status filter + New Return button */}
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status:</span>
+          {["all", "approved", "pending", "rejected"].map((s) => (
+            <Button
+              key={s}
+              size="sm"
+              variant={returnStatusFilter === s ? "default" : "outline"}
+              onClick={() => setReturnStatusFilter(s)}
+              className="h-7 text-xs capitalize"
+            >
+              {s === "all" ? "All" : statusLabels[s] ?? s}
+              {s !== "all" && summary.byStatus[s] != null && (
+                <span className="ml-1 opacity-70">({summary.byStatus[s]})</span>
+              )}
+            </Button>
+          ))}
+          <div className="flex-1" />
+          <Button size="sm" onClick={() => setShowNewReturn(true)} className="h-7 text-xs gap-1">
+            <Plus className="w-3.5 h-3.5" />
+            New Return
+          </Button>
+        </div>
+
+        <ManualReturnModal
+          open={showNewReturn}
+          onClose={() => setShowNewReturn(false)}
+          onSuccess={() => {
+            qc.invalidateQueries({ queryKey: ["/api/reports/returns"] });
+          }}
+          defaultStoreId={storeParam ? Number(storeParam) : undefined}
+        />
+
         {/* Hero stats */}
         {returnsLoading ? (
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
-            {[1, 2, 3].map((i) => (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            {[1, 2, 3, 4].map((i) => (
               <Card key={i} className="border-border/40">
                 <CardContent className="p-5">
                   <Skeleton className="h-4 w-24 mb-2" />
@@ -1444,26 +1877,31 @@ export default function Reports() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
             <div className="rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 dark:from-blue-600 dark:to-indigo-700 p-5 text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/30">
               <p className="text-xs font-semibold uppercase tracking-wider text-blue-100 mb-1">Total returns</p>
               <p className="text-2xl font-bold tabular-nums">{summary.total}</p>
-              <p className="text-xs text-blue-200 mt-1">{byTypeRows.length} types</p>
+              <p className="text-xs text-blue-200 mt-1">{byTypeRows.length} type{byTypeRows.length !== 1 ? "s" : ""}</p>
             </div>
             <div className="rounded-2xl bg-gradient-to-br from-orange-500 to-red-600 dark:from-orange-600 dark:to-red-700 p-5 text-white shadow-lg shadow-orange-500/20 dark:shadow-orange-900/30">
               <p className="text-xs font-semibold uppercase tracking-wider text-orange-100 mb-1">Return rate</p>
               <p className="text-2xl font-bold tabular-nums">{toNum(summary.rate).toFixed(1)}%</p>
-              <p className="text-xs text-orange-200 mt-1">of total invoices</p>
+              <p className="text-xs text-orange-200 mt-1">of {summary.invoiceCount} invoice{summary.invoiceCount !== 1 ? "s" : ""}</p>
             </div>
             <div className="rounded-2xl bg-gradient-to-br from-rose-500 to-pink-600 dark:from-rose-600 dark:to-pink-700 p-5 text-white shadow-lg shadow-rose-500/20 dark:shadow-rose-900/30">
               <p className="text-xs font-semibold uppercase tracking-wider text-rose-100 mb-1">Return value</p>
-              <p className="text-2xl font-bold tabular-nums">{fmtQAR(totalAmount)}</p>
+              <p className="text-2xl font-bold tabular-nums">{fmtQAR(summary.totalAmount)}</p>
               <p className="text-xs text-rose-200 mt-1">total refunded</p>
+            </div>
+            <div className="rounded-2xl bg-gradient-to-br from-emerald-500 to-teal-600 dark:from-emerald-600 dark:to-teal-700 p-5 text-white shadow-lg shadow-emerald-500/20 dark:shadow-emerald-900/30">
+              <p className="text-xs font-semibold uppercase tracking-wider text-emerald-100 mb-1">Avg return value</p>
+              <p className="text-2xl font-bold tabular-nums">{fmtQAR(summary.total > 0 ? summary.totalAmount / summary.total : 0)}</p>
+              <p className="text-xs text-emerald-200 mt-1">per return</p>
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
           {/* By Type */}
           <Card className="border-border/40 shadow-sm">
             <CardHeader className="pb-2">
@@ -1480,17 +1918,23 @@ export default function Reports() {
                 <p className="text-sm text-muted-foreground py-4">No returns in this period.</p>
               ) : (
                 <div className="space-y-2">
-                  {(summary?.byType || []).map((t) => (
-                    <div key={t.type} className="flex items-center justify-between py-2.5 border-b border-border/20 last:border-0">
-                      <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full", typeColors[t.type] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800/40 dark:text-gray-400")}>
-                        {typeLabels[t.type] ?? t.type}
-                      </span>
-                      <div className="flex items-center gap-3">
-                        <span className="text-sm font-bold tabular-nums">{t.count}</span>
-                        <span className="text-sm font-mono text-muted-foreground tabular-nums">{fmtQAR(t.amount)}</span>
+                  {byTypeRows.map((t) => {
+                    const pct = summary.totalAmount > 0 ? (toNum(t.amount) / summary.totalAmount) * 100 : 0;
+                    return (
+                      <div key={t.type} className="flex items-center justify-between py-2.5 border-b border-border/20 last:border-0">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className={cn("text-xs font-semibold px-2.5 py-1 rounded-full shrink-0", typeColors[t.type] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800/40 dark:text-gray-400")}>
+                            {typeLabels[t.type] ?? t.type}
+                          </span>
+                          <span className="text-xs text-muted-foreground tabular-nums">{pct.toFixed(0)}%</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-bold tabular-nums">{t.count}</span>
+                          <span className="text-sm font-mono text-muted-foreground tabular-nums">{fmtQAR(t.amount)}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -1512,7 +1956,7 @@ export default function Reports() {
                 <p className="text-sm text-muted-foreground py-4">No product returns in this period.</p>
               ) : (
                 <div className="space-y-2">
-                  {(summary?.topProducts || []).map((p, i) => (
+                  {topProductRows.map((p, i) => (
                     <div key={i} className="flex items-center gap-3 py-2.5 border-b border-border/20 last:border-0">
                       <span className={cn(
                         "inline-flex items-center justify-center w-6 h-6 rounded-full text-[10px] font-black shrink-0",
@@ -1532,6 +1976,63 @@ export default function Reports() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Individual Returns Table */}
+        <Card className="border-border/40 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
+              Return details ({returnRows.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {returnsLoading ? (
+              <div className="p-4 space-y-3">
+                {[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-10 w-full" />)}
+              </div>
+            ) : returnRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground p-6">No returns found in this period.</p>
+            ) : (
+              <ScrollArea className="max-h-[400px]">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Voucher</TableHead>
+                      <TableHead className="text-xs">Date</TableHead>
+                      <TableHead className="text-xs">Customer</TableHead>
+                      <TableHead className="text-xs">Invoice</TableHead>
+                      <TableHead className="text-xs">Type</TableHead>
+                      <TableHead className="text-xs">Status</TableHead>
+                      <TableHead className="text-xs">Reason</TableHead>
+                      <TableHead className="text-xs text-right">Amount</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {returnRows.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="text-xs font-mono">{r.voucherNumber ?? "—"}</TableCell>
+                        <TableCell className="text-xs tabular-nums">{r.date ?? "—"}</TableCell>
+                        <TableCell className="text-xs truncate max-w-[120px]">{r.customerName ?? "—"}</TableCell>
+                        <TableCell className="text-xs font-mono">{r.originalInvoiceNumber ?? "—"}</TableCell>
+                        <TableCell>
+                          <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", typeColors[r.type] ?? "bg-gray-100 text-gray-700 dark:bg-gray-800/40 dark:text-gray-400")}>
+                            {typeLabels[r.type] ?? r.type}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full", statusColors[r.status] ?? "bg-gray-100 text-gray-700")}>
+                            {statusLabels[r.status] ?? r.status}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-xs truncate max-w-[150px]">{r.reason ?? "—"}</TableCell>
+                        <TableCell className="text-xs font-mono text-right tabular-nums font-semibold">{fmtQAR(r.refundAmount)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </ScrollArea>
+            )}
+          </CardContent>
+        </Card>
       </>
     );
   };
@@ -1631,13 +2132,15 @@ export default function Reports() {
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
       {/* Page header */}
-      <div className="flex items-center gap-3">
-        <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/40">
-          <BarChart2 className="w-6 h-6 text-amber-600 dark:text-amber-400" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Reports</h1>
-          <p className="text-sm text-muted-foreground">Business analytics & financial overview</p>
+      <div className="page-header">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-50 to-yellow-50 flex items-center justify-center">
+            <BarChart2 className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">Reports</h1>
+            <p className="text-[13px] text-muted-foreground">Business analytics & financial overview</p>
+          </div>
         </div>
       </div>
 
@@ -1675,14 +2178,16 @@ export default function Reports() {
                 </Select>
               </div>
               {/* Wide screens: wrapped chips (no horizontal scroll) */}
-              <div className="hidden lg:flex flex-wrap gap-1.5 bg-muted/50 p-1.5 rounded-xl">
+              <div className="hidden lg:flex flex-wrap gap-1.5 bg-muted/40 p-1.5 rounded-xl border border-border/30">
                 {REPORT_TABS.map((t) => (
                   <button
                     key={t.value}
                     onClick={() => setActiveTab(t.value)}
                     className={cn(
-                      "flex items-center gap-1.5 text-xs font-semibold px-3 h-7 rounded-lg transition-colors",
-                      activeTab === t.value ? "bg-white dark:bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground"
+                      "flex items-center gap-1.5 text-xs font-semibold px-3.5 h-8 rounded-lg transition-all duration-150",
+                      activeTab === t.value
+                        ? "bg-white dark:bg-background shadow-sm text-foreground border border-border/40"
+                        : "text-muted-foreground hover:text-foreground hover:bg-white/50"
                     )}
                   >
                     {t.icon}{t.label}

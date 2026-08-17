@@ -668,7 +668,8 @@ export default function DocumentDetail() {
     (Date.now() - createdMs) / 3_600_000 <= voidWindowHours;
   const canReturn =
     doc?.type === "INV" &&
-    !["returned", "void", "draft"].includes(doc.status);
+    !["returned", "void", "draft"].includes(doc.status) &&
+    !withinVoidWindow;
 
   // ── WhatsApp ───────────────────────────────────────────────
   function openWhatsApp() {
@@ -912,15 +913,17 @@ export default function DocumentDetail() {
       {/* ── Action buttons row ── */}
       <div className="flex flex-wrap gap-2">
         {(() => {
+          const terminalStatus = ["void", "returned", "converted"].includes(doc?.status ?? "");
           const ageMs = doc?.createdAt ? Date.now() - new Date(doc.createdAt).getTime() : 0;
           const expired = ageMs > 48 * 3_600_000;
+          const blocked = terminalStatus || expired;
           return (
             <Button
               variant="outline"
               size="sm"
               className="gap-1.5"
-              disabled={expired}
-              title={expired ? "Edit window expired (2 days)" : undefined}
+              disabled={blocked}
+              title={terminalStatus ? `Cannot edit — ${doc?.status}` : expired ? "Edit window expired (2 days)" : undefined}
               onClick={() => nav(`/documents/${id}/edit`)}
             >
               <Pencil className="w-3.5 h-3.5" /> Edit
@@ -939,8 +942,8 @@ export default function DocumentDetail() {
           <MessageCircle className="w-3.5 h-3.5" /> WhatsApp
         </Button>
 
-        {/* INV only: Record Payment — hide when fully paid (status or actual balance) */}
-        {doc.type === "INV" && doc.status !== "paid" && doc.status !== "void" && remaining > 0.005 && (
+        {/* INV only: Record Payment — hide when fully paid or terminal status */}
+        {doc.type === "INV" && doc.status !== "paid" && doc.status !== "void" && doc.status !== "returned" && doc.status !== "partial_return" && remaining > 0.005 && (
           <Button
             size="sm"
             className="gap-1.5 bg-green-600 hover:bg-green-700 text-white"

@@ -6,6 +6,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -52,12 +53,23 @@ interface Props {
   onCustomerUpgraded?: () => void;
   /** Invoice Type toggle (INV only): "cash" = full non-PDC payment required; "credit" = anything. */
   invoiceMode?: "cash" | "credit";
+  /** Current user's role. A non-boss over the credit limit gets a "Request approval" flow
+   *  instead of the (server-stripped) inline override checkbox. Undefined → boss behaviour. */
+  currentUserRole?: string;
+  /** Send the over-limit sale to a manager as an async approval request (the parent builds
+   *  the invoice payload and POSTs /api/approvals). Provided → the request flow is offered. */
+  onRequestApproval?: (intercept: InterceptorResult, reason: string) => Promise<void> | void;
+  /** Pending state for the request button. */
+  requestingApproval?: boolean;
+  /** On edit: the additional amount due (total − already paid). When set, the modal
+   *  collects payment for this balance only, not the full invoice total. */
+  editBalance?: number;
 }
 
 const METHODS: TenderMethod[] = ["Cash", "Card", "Online Transfer", "PDC", "Credit"];
 const isDeferred = (m: TenderMethod) => m === "PDC" || m === "Credit"; // not collected now
 
-export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded, invoiceMode, invoiceDate }: Props) {
+export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabel, total, saving, creditRemaining, customer, onCustomerUpgraded, invoiceMode, invoiceDate, currentUserRole, onRequestApproval, requestingApproval, editBalance }: Props) {
   // Date helpers for the credit due date + PDC 45-day timeline check.
   const baseDate = invoiceDate || new Date().toISOString().slice(0, 10);
   const addDays = (iso: string, n: number) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
@@ -66,6 +78,7 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   const [transactionMode, setTransactionMode] = useState<TransactionMode>("real");
   const [lines, setLines] = useState<TenderLine[]>([{ method: "Cash", amount: total }]);
   const [override, setOverride] = useState(false);
+  const [approvalReason, setApprovalReason] = useState(""); // note sent with an over-limit approval request
   const [upgraded, setUpgraded] = useState(false);   // Cash account promoted to Credit this session
   const [newLimit, setNewLimit] = useState("");
   const [upgrading, setUpgrading] = useState(false);
@@ -81,16 +94,19 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
     ...(Array.isArray(bizSettings?.creditTerms) && bizSettings.creditTerms.length > 0 ? bizSettings.creditTerms : [30, 60, 90]),
   ])).sort((a, b) => a - b);
 
+  const effectiveTotal = editBalance != null && editBalance > 0 ? editBalance : total;
+
   useEffect(() => {
     if (open) {
       setTransactionMode("real");
-      setLines([{ method: "Cash", amount: Number(total.toFixed(2)) }]);
+      setLines([{ method: "Cash", amount: Number(effectiveTotal.toFixed(2)) }]);
       setOverride(false);
+      setApprovalReason("");
       setUpgraded(false);
       setNewLimit("");
       setUpgrading(false);
     }
-  }, [open, total]);
+  }, [open, effectiveTotal]);
 
   const cashOnly = invoiceMode === "cash";
   const availableMethods: TenderMethod[] = cashOnly ? ["Cash", "Card", "Online Transfer"] : METHODS;
@@ -98,8 +114,7 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   const setLine = (i: number, patch: Partial<TenderLine>) =>
     setLines((prev) => prev.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const addLine = () => {
-    const remaining = Math.max(0, total - tendered);
-    // Cash Invoice: extra tender lines are collected-now methods, never a deferred Credit line.
+    const remaining = Math.max(0, effectiveTotal - tendered);
     setLines((prev) => cashOnly
       ? [...prev, { method: "Cash", amount: Number(remaining.toFixed(2)) }]
       : [...prev, { method: "Credit", amount: Number(remaining.toFixed(2)), creditTerm: 30 }]);
@@ -107,7 +122,7 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   const removeLine = (i: number) => setLines((prev) => (prev.length > 1 ? prev.filter((_, idx) => idx !== i) : prev));
 
   const tendered = lines.reduce((s, l) => s + (Number(l.amount) || 0), 0);
-  const remaining = Number((total - tendered).toFixed(2));
+  const remaining = Number((effectiveTotal - tendered).toFixed(2));
   const creditPortion = lines.filter((l) => isDeferred(l.method)).reduce((s, l) => s + (Number(l.amount) || 0), 0);
   const exceedsLimit = creditRemaining !== undefined && creditPortion > creditRemaining + 0.005;
 
@@ -149,8 +164,13 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   const cashHasDeferred = cashOnly && lines.some((l) => isDeferred(l.method) && Number(l.amount) > 0);
   const cashViolation = cashOnly && (!balanced || cashHasDeferred);
 
-  const canConfirm = linesValid && balanced && (!exceedsLimit || override) && !cashNeedsUpgrade && !cashViolation &&
+  const baseValid = linesValid && balanced && !cashNeedsUpgrade && !cashViolation &&
     (transactionMode === "real" || transactionMode === "demo");
+  // A non-boss over the credit limit can't self-override (the server strips it) — they send
+  // an async approval request instead. A boss (or unknown role) keeps the inline override.
+  const isBoss = currentUserRole ? ["admin", "manager"].includes(currentUserRole) : true;
+  const canRequestApproval = exceedsLimit && !isBoss && !!onRequestApproval;
+  const canConfirm = baseValid && (!exceedsLimit || (isBoss && override));
 
   const derivedLabel = (): string => {
     if (lines.length === 1) return lines[0].method;
@@ -164,9 +184,19 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   // PDC cheques whose clear date is more than 45 days out — warn (does not block).
   const pdcBeyond45 = lines.filter((l) => l.method === "PDC" && l.chequeDate && daysBetween(l.chequeDate, baseDate) > PDC_MAX_DAYS);
 
+  const buildResult = (): InterceptorResult =>
+    ({ transactionMode, payments: lines, paymentType: derivedLabel(), dueDate });
+
   const confirm = () => {
     if (!canConfirm) return;
-    onConfirm({ transactionMode, payments: lines, paymentType: derivedLabel(), creditOverride: exceedsLimit ? override : undefined, dueDate });
+    onConfirm({ ...buildResult(), creditOverride: exceedsLimit ? override : undefined });
+  };
+
+  // Non-boss over the limit → hand the assembled sale to the parent, which POSTs it as a
+  // credit_limit approval request. The invoice is created only once a manager approves.
+  const submitApprovalRequest = () => {
+    if (!baseValid || !onRequestApproval) return;
+    onRequestApproval(buildResult(), approvalReason.trim());
   };
 
   return (
@@ -178,7 +208,9 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
             Confirm before saving
           </DialogTitle>
           <DialogDescription>
-            Record how this {docLabel} (QAR {total.toFixed(2)}) is paid — one method or a split.
+            {editBalance != null && editBalance > 0
+              ? <>Additional payment required: <strong>QAR {editBalance.toFixed(2)}</strong> (invoice total QAR {total.toFixed(2)}, already paid QAR {(total - editBalance).toFixed(2)}).</>
+              : <>Record how this {docLabel} (QAR {total.toFixed(2)}) is paid — one method or a split.</>}
           </DialogDescription>
         </DialogHeader>
 
@@ -313,10 +345,29 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
                 <div className="mt-2 text-[12px] bg-red-50 border border-red-200 text-red-700 rounded p-2">
                   <div className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="w-4 h-4" /> Credit limit exceeded</div>
                   <p className="mt-0.5">Credit/PDC portion QAR {creditPortion.toFixed(2)} exceeds remaining limit QAR {creditRemaining!.toFixed(2)}.</p>
-                  <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
-                    <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
-                    <span className="font-semibold">Admin override — proceed anyway</span>
-                  </label>
+                  {canRequestApproval ? (
+                    <div className="mt-2 space-y-1.5">
+                      <Textarea
+                        value={approvalReason}
+                        onChange={(e) => setApprovalReason(e.target.value)}
+                        placeholder="Add a note for the manager (optional)…"
+                        rows={2}
+                        className="text-[12px] bg-white"
+                      />
+                      <Button type="button" size="sm" onClick={submitApprovalRequest}
+                        disabled={!baseValid || requestingApproval}
+                        className="h-8 bg-[#1e2a3a] text-white text-xs gap-1.5">
+                        {requestingApproval ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                        Request manager approval
+                      </Button>
+                      <p className="text-[11px] text-red-600/80">A manager decides in Approvals — the invoice is created once approved.</p>
+                    </div>
+                  ) : (
+                    <label className="flex items-center gap-2 mt-1.5 cursor-pointer">
+                      <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+                      <span className="font-semibold">Admin override — proceed anyway</span>
+                    </label>
+                  )}
                 </div>
               )}
             </section>

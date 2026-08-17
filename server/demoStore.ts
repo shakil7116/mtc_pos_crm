@@ -408,6 +408,11 @@ export const demo = {
     returnsReport: (start?: string, end?: string) => {
       const inRange = (d: string) => (!start || d >= start) && (!end || d <= end);
       const rows = returns.filter((r) => inRange(r.date));
+      const byStatusMap: Record<string, number> = {};
+      rows.forEach((r) => {
+        const s = r.status || "unknown";
+        byStatusMap[s] = (byStatusMap[s] || 0) + 1;
+      });
       const byTypeMap: Record<string, { count: number; amount: number }> = {};
       rows.forEach((r) => {
         const type = r.type || "unknown";
@@ -420,12 +425,29 @@ export const demo = {
         count: stats.count,
         amount: stats.amount,
       }));
+      const totalAmount = rows.reduce((s, r) => s + Number(r.refundAmount || r.total || 0), 0);
       const invoiceCount = documents.filter((d) => d.type === "INV" && inRange(d.date)).length;
+      const approvedCount = rows.filter((r) => r.status === "approved").length;
+      const returnRows = rows.map((r) => ({
+        id: r.id,
+        voucherNumber: r.voucherNumber ?? null,
+        date: r.date,
+        customerName: r.customerName ?? null,
+        originalInvoiceNumber: r.originalInvoiceNumber ?? null,
+        type: r.type,
+        status: r.status,
+        reason: r.reason ?? null,
+        refundAmount: Number(r.refundAmount || r.total || 0),
+      })).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
       return {
         total: rows.length,
-        rate: invoiceCount > 0 ? (rows.length / invoiceCount) * 100 : 0,
+        totalAmount,
+        rate: invoiceCount > 0 ? (approvedCount / invoiceCount) * 100 : 0,
+        byStatus: byStatusMap,
         byType: byType ?? [],
         topProducts: [] as { name: string; count: number; amount: number }[],
+        returnRows,
+        invoiceCount,
       };
     },
   },

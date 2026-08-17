@@ -1208,7 +1208,7 @@ function AllStockTab({
       </div>
 
       {/* Table */}
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -1345,7 +1345,7 @@ function LowStockTab({
   suppliers: Supplier[];
   initialFilter?: "out-of-stock";
 }) {
-  const [showOnly, setShowOnly] = useState<"all" | "out-of-stock">(initialFilter ?? "all");
+  const [showOnly, setShowOnly] = useState<"all" | "out-of-stock" | "low-stock">(initialFilter ?? "all");
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjPrefill, setAdjPrefill] = useState<{
     productId?: number;
@@ -1478,7 +1478,7 @@ function LowStockTab({
           ))}
         </div>
       ) : enriched.length === 0 ? (
-        <div className="bg-white rounded-2xl border border-border/40 shadow-sm py-20 text-center">
+        <div className="section-card py-20 text-center">
           <Check className="w-12 h-12 text-green-500 mx-auto mb-3" />
           <p className="text-lg font-semibold text-foreground">All stock levels are OK</p>
           <p className="text-sm text-muted-foreground mt-1">
@@ -1487,19 +1487,31 @@ function LowStockTab({
         </div>
       ) : (
         <>
-          <div className="flex items-center gap-2 flex-wrap">
-            <AlertTriangle className="w-5 h-5 text-orange-500" />
-            <p className="text-sm font-medium text-orange-700">
-              {enriched.length} product{enriched.length !== 1 ? "s" : ""} need
-              restocking
-            </p>
-            <div className="flex gap-1 ml-auto">
-              <Button size="sm" variant={showOnly === "all" ? "default" : "outline"} onClick={() => setShowOnly("all")} className="h-7 text-xs">All</Button>
-              <Button size="sm" variant={showOnly === "out-of-stock" ? "default" : "outline"} onClick={() => setShowOnly("out-of-stock")} className="h-7 text-xs">Out of Stock Only</Button>
-            </div>
-          </div>
+          {(() => {
+            const outCount = enriched.filter(r => r.qty <= 0).length;
+            const lowCount = enriched.filter(r => r.qty > 0).length;
+            return (
+              <div className="flex items-center gap-2 flex-wrap">
+                <AlertTriangle className="w-5 h-5 text-orange-500" />
+                <p className="text-sm font-medium text-orange-700">
+                  {enriched.length} product{enriched.length !== 1 ? "s" : ""} need restocking
+                </p>
+                <div className="flex gap-1 ml-auto rounded-lg border border-border/60 p-0.5 bg-muted/30">
+                  <Button size="sm" variant={showOnly === "all" ? "default" : "ghost"} onClick={() => setShowOnly("all")} className="h-7 text-xs rounded-md px-3">
+                    All ({enriched.length})
+                  </Button>
+                  <Button size="sm" variant={showOnly === "out-of-stock" ? "default" : "ghost"} onClick={() => setShowOnly("out-of-stock")} className={cn("h-7 text-xs rounded-md px-3", showOnly === "out-of-stock" ? "bg-red-600 hover:bg-red-700 text-white" : "text-red-600 hover:text-red-700")}>
+                    Out of Stock ({outCount})
+                  </Button>
+                  <Button size="sm" variant={showOnly === "low-stock" ? "default" : "ghost"} onClick={() => setShowOnly("low-stock")} className={cn("h-7 text-xs rounded-md px-3", showOnly === "low-stock" ? "bg-orange-500 hover:bg-orange-600 text-white" : "text-orange-600 hover:text-orange-700")}>
+                    Low Stock ({lowCount})
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
 
-          <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+          <div className="section-card !p-0 overflow-hidden">
             <div className="overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -1515,7 +1527,7 @@ function LowStockTab({
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {enriched.filter((row) => showOnly === "all" || row.qty <= 0).map((row) => (
+                  {enriched.filter((row) => showOnly === "all" ? true : showOnly === "out-of-stock" ? row.qty <= 0 : row.qty > 0).map((row) => (
                     <TableRow
                       key={row.id}
                       className={cn(rowBg(row.qty, row.minStockQty))}
@@ -1720,7 +1732,7 @@ function ProductsTab({
         </div>
       </div>
 
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -1926,7 +1938,7 @@ function AdjustmentsTab({
 
   return (
     <div className="space-y-4">
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
@@ -2125,7 +2137,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         <Button variant="outline" onClick={exportTransfersCsv} disabled={transfers.length === 0} className="gap-2"><FileText className="w-4 h-4" /> Export CSV</Button>
         <Button onClick={onNew} className="gap-2"><ArrowLeftRight className="w-4 h-4" /> New Transfer</Button>
       </div>
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         {isLoading ? (
           <p className="text-sm text-muted-foreground text-center py-12">Loading…</p>
         ) : transfers.length === 0 ? (
@@ -2338,30 +2350,32 @@ export default function Inventory() {
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="page-header">
         <div>
-          <div className="flex items-center gap-2">
-            <Package className="w-6 h-6 text-primary" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-50 to-orange-50 flex items-center justify-center">
+              <Package className="w-5 h-5 text-amber-600" />
+            </div>
             <h1 className="text-2xl font-bold tracking-tight">Inventory</h1>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-[13px] text-muted-foreground mt-0.5">
             {products.filter((p) => p.active !== false).length} active products
             across {stores.length} locations
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
-          <Button variant="outline" onClick={exportCsv} className="gap-2">
+          <Button variant="outline" onClick={exportCsv} className="gap-2 rounded-lg">
             <FileText className="w-4 h-4" />
             Export CSV
           </Button>
-          <Button variant="outline" onClick={() => { setTransferPrefill(undefined); setTransferOpen(true); }} className="gap-2">
+          <Button variant="outline" onClick={() => { setTransferPrefill(undefined); setTransferOpen(true); }} className="gap-2 rounded-lg">
             <ArrowLeftRight className="w-4 h-4" />
             Transfer
           </Button>
-          <Button onClick={() => setAdjOpen(true)} className="gap-2">
+          <button onClick={() => setAdjOpen(true)} className="btn-primary-action">
             <Plus className="w-4 h-4" />
             Stock Adjustment
-          </Button>
+          </button>
         </div>
       </div>
 

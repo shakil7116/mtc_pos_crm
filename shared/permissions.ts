@@ -12,7 +12,7 @@ export function normalizeRole(r?: string | null): Role {
 export type NavKey =
   | "dashboard" | "documents" | "customers" | "inventory" | "suppliers"
   | "reports" | "messages" | "settings"
-  | "deliveries" | "expenses" | "finance" | "maintenance" | "pdc" | "approvals";
+  | "deliveries" | "expenses" | "finance" | "maintenance" | "approvals";
 
 // Which roles may access each module. Per MTC_MASTER_SPEC Module 10.
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
@@ -27,11 +27,14 @@ export const NAV_ACCESS: Record<NavKey, Role[]> = {
   messages:    ["admin", "manager"],
   settings:    ["admin"],
   deliveries:  ["admin", "manager", "warehouse", "warehouse_manager", "driver"],
-  expenses:    ["admin", "manager"],
+  expenses:    ["admin", "manager", "salesman", "salesman_helper"],
   finance:     ["admin", "manager"],
   maintenance: ["admin", "manager", "warehouse", "warehouse_manager"],
-  pdc:         ["admin", "manager"],
-  approvals:   ["admin", "manager"],
+
+  // Admin/manager decide; salesman/helper/warehouse_manager reach the page to
+  // RAISE requests and track their own (the page renders the right view by role,
+  // and approve/reject stay server-gated to admin/manager).
+  approvals:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
 };
 
 export function canAccess(role: Role, key: NavKey): boolean {
@@ -57,8 +60,7 @@ const PATH_NAV: { prefix: string; key: NavKey }[] = [
   { prefix: "/deliveries", key: "deliveries" },
   { prefix: "/expenses", key: "expenses" },
   { prefix: "/maintenance", key: "maintenance" },
-  { prefix: "/pdc", key: "pdc" },
-  { prefix: "/cheques", key: "pdc" },
+  { prefix: "/cheques", key: "finance" },
   { prefix: "/approvals", key: "approvals" },
 ];
 

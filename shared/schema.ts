@@ -323,6 +323,12 @@ export const cheques = pgTable("cheques", {
   clearedDate: date("cleared_date"),
   bouncedDate: date("bounced_date"),
   photoUrl: text("photo_url"), // scanned cheque image (base64 data URL)
+  depositProofUrl: text("deposit_proof_url"), // bank deposit slip photo (base64 data URL)
+  depositedToAccount: text("deposited_to_account"), // which company bank account the cheque was deposited into
+  clearanceProofUrl: text("clearance_proof_url"), // bank clearance confirmation (base64 data URL)
+  recoveryStatus: text("recovery_status"), // bounced cheque recovery: replacement_requested | replacement_received | cash_requested | cash_received | written_off
+  recoveryNotes: text("recovery_notes"),
+  replacementChequeId: integer("replacement_cheque_id"), // new cheque that replaced a bounced one
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -332,9 +338,11 @@ export const cheques = pgTable("cheques", {
 export const returns = pgTable("returns", {
   id: serial("id").primaryKey(),
   voucherNumber: text("voucher_number").unique(), // own serial: RV-xxxxxx
-  originalInvoiceId: integer("original_invoice_id").notNull().references(() => documents.id),
+  originalInvoiceId: integer("original_invoice_id").references(() => documents.id), // nullable for manual/multi-invoice returns
   originalInvoiceNumber: text("original_invoice_number"), // denormalized for audit display
-  creditNoteId: integer("credit_note_id").references(() => documents.id), // legacy, unused going forward
+  sourceInvoices: jsonb("source_invoices").default([]), // [{invoiceId, invoiceNumber}] for multi-invoice returns
+  isManual: boolean("is_manual").default(false), // true = ad-hoc return without invoice
+  creditNoteId: integer("credit_note_id").references(() => documents.id),
   date: date("date"),
   customerId: integer("customer_id").references(() => customers.id),
   customerName: text("customer_name"),
@@ -366,6 +374,33 @@ export const returnItems = pgTable("return_items", {
   amount: numeric("amount"),
   condition: text("condition").default("original"), // original | damaged
   damageDescription: text("damage_description"),
+});
+
+// ─── Approval Requests (generic override/approval inbox) ─────────────────────
+// One row per override that needs a manager/admin decision: an over-limit sale,
+// an invoice void, a discount/price change, or a free-form request a salesman
+// raises. Returns keep their own `returns` table but surface in the same inbox
+// on the client. On approval, the held action (see `payload`) is carried out.
+export const approvalRequests = pgTable("approval_requests", {
+  id: serial("id").primaryKey(),
+  requestNumber: text("request_number").unique(),         // own serial: AR-######
+  type: text("type").notNull(),                           // credit_limit | discount | void | manual
+  status: text("status").notNull().default("pending"),    // pending | approved | rejected | cancelled
+  requestedBy: integer("requested_by").references(() => users.id),
+  requestedByName: text("requested_by_name"),             // denormalized for audit display
+  storeId: integer("store_id").references(() => stores.id),
+  title: text("title").notNull(),                         // short headline, e.g. "Credit-limit override"
+  summary: text("summary"),                               // one-line context (customer, over-by, etc.)
+  message: text("message"),                               // requester's free-form letter
+  amount: numeric("amount"),                              // money at stake (exposure / refund / discount)
+  entityType: text("entity_type"),                        // document | customer
+  entityId: integer("entity_id"),                         // source doc/customer AND/OR doc created on approval
+  payload: jsonb("payload"),                              // held action data (e.g. the full invoice draft)
+  decidedBy: integer("decided_by").references(() => users.id),
+  decidedByName: text("decided_by_name"),
+  decidedAt: timestamp("decided_at"),
+  decisionNote: text("decision_note"),                    // approver's note / rejection reason
+  createdAt: timestamp("created_at").defaultNow(),
 });
 
 // ─── Edit Log ────────────────────────────────────────────────────────────────
@@ -557,6 +592,8 @@ export const ownerLoans = pgTable("owner_loans", {
   method: text("method").notNull().default("Cash"), // Cash | Bank Transfer
   date: date("date").notNull(),
   note: text("note"),
+  proofUrl: text("proof_url"),
+  refInjectionId: integer("ref_injection_id"),
   createdBy: integer("created_by").references(() => users.id),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -747,6 +784,7 @@ export const insertPaymentSchema = createInsertSchema(payments).omit({ id: true,
 export const insertChequeSchema = createInsertSchema(cheques).omit({ id: true, createdAt: true });
 export const insertReturnSchema = createInsertSchema(returns).omit({ id: true, createdAt: true });
 export const insertReturnItemSchema = createInsertSchema(returnItems).omit({ id: true });
+export const insertApprovalRequestSchema = createInsertSchema(approvalRequests).omit({ id: true, createdAt: true });
 export const insertEditLogSchema = createInsertSchema(editLog).omit({ id: true, createdAt: true });
 export const insertMessagesLogSchema = createInsertSchema(messagesLog).omit({ id: true, sentAt: true });
 export const insertStockAdjustmentSchema = createInsertSchema(stockAdjustments).omit({ id: true, createdAt: true });
@@ -795,6 +833,8 @@ export type Cheque = typeof cheques.$inferSelect;
 export type InsertCheque = z.infer<typeof insertChequeSchema>;
 export type Return = typeof returns.$inferSelect;
 export type ReturnItem = typeof returnItems.$inferSelect;
+export type ApprovalRequest = typeof approvalRequests.$inferSelect;
+export type InsertApprovalRequest = z.infer<typeof insertApprovalRequestSchema>;
 export type EditLog = typeof editLog.$inferSelect;
 export type MessagesLog = typeof messagesLog.$inferSelect;
 export type StockAdjustment = typeof stockAdjustments.$inferSelect;

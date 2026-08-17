@@ -23,9 +23,9 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  ArrowLeft, DollarSign, FileText, Upload, Camera, Package,
+  ArrowLeft, DollarSign, FileText, Camera, Package,
   Plus, Loader2, Receipt, CreditCard, Banknote, Building2,
-  TrendingDown, TrendingUp, Wallet, Eye, ScanLine, RotateCcw,
+  TrendingDown, TrendingUp, Wallet, Eye, RotateCcw,
   CheckCircle2, Clock, ArrowDownLeft,
 } from "lucide-react";
 
@@ -97,12 +97,14 @@ export default function SupplierLedger() {
   const [invoiceViewUrl, setInvoiceViewUrl] = useState<string | null>(null);
   const [payForm, setPayForm] = useState({
     amount: "", method: "Cash", date: new Date().toISOString().slice(0, 10),
-    reference: "", supplierInvoiceNumber: "", bankName: "", notes: "",
-    supplierInvoiceUrl: "", receiptUrl: "", poId: "",
+    reference: "", bankName: "", notes: "",
+    receiptUrl: "",
   });
+  // Per-invoice allocation for split payments
+  type InvoiceAlloc = { poId: number; invoiceNum: string; invoiceTotal: number; paid: number; remaining: number; allocate: number };
+  const [allocations, setAllocations] = useState<InvoiceAlloc[]>([]);
 
   const receiptRef = useRef<HTMLInputElement>(null);
-  const invoiceRef = useRef<HTMLInputElement>(null);
 
   const { data: supplier } = useQuery<Supplier>({
     queryKey: ["/api/suppliers", supplierId],
@@ -116,37 +118,126 @@ export default function SupplierLedger() {
     enabled: !!supplierId,
   });
 
+  // Per-PO payment totals
+  function poPaidMap(): Record<number, number> {
+    const map: Record<number, number> = {};
+    for (const p of ledger?.payments || []) {
+      if (p.poId) map[p.poId] = (map[p.poId] || 0) + Number(p.amount || 0);
+    }
+    return map;
+  }
+
+  function poInvoiceTotal(o: SupplierOrder): number {
+    if (o.supplierInvoiceAmount) return Number(o.supplierInvoiceAmount);
+    const items = Array.isArray(o.items) ? (o.items as any[]) : [];
+    return items.reduce((s: number, it: any) => s + (Number(it.receivedQty || it.qty || 0) * Number(it.cost || it.price || 0)), 0);
+  }
+
+  function openPayDialog() {
+    const paid = poPaidMap();
+    const allocs: InvoiceAlloc[] = [];
+    for (const o of ledger?.orders || []) {
+      if (o.status === "cancelled" || o.status === "draft") continue;
+      const total = poInvoiceTotal(o);
+      if (total <= 0) continue;
+      const paidAmt = paid[o.id] || 0;
+      const remaining = Math.max(0, total - paidAmt);
+      if (remaining <= 0) continue;
+      allocs.push({
+        poId: o.id,
+        invoiceNum: o.supplierInvoiceNumber || o.poNumber || `PO-${o.id}`,
+        invoiceTotal: total,
+        paid: paidAmt,
+        remaining: Number(remaining.toFixed(2)),
+        allocate: 0,
+      });
+    }
+    setAllocations(allocs);
+    setPayForm({
+      amount: "", method: "Cash", date: new Date().toISOString().slice(0, 10),
+      reference: "", bankName: "", notes: "", receiptUrl: "",
+    });
+    setPayOpen(true);
+  }
+
+  function autoAllocate(total: number) {
+    let left = total;
+    setAllocations((prev) =>
+      prev.map((a) => {
+        const take = Math.min(left, a.remaining);
+        left -= take;
+        return { ...a, allocate: Number(take.toFixed(2)) };
+      })
+    );
+  }
+
+  const totalAllocated = allocations.reduce((s, a) => s + a.allocate, 0);
+  const payTotal = Number(payForm.amount) || 0;
+  const unallocated = Number((payTotal - totalAllocated).toFixed(2));
+
   const payMut = useMutation({
     mutationFn: async () => {
-      const res = await fetch("/api/supplier-payments", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          supplierId,
-          poId: payForm.poId ? Number(payForm.poId) : null,
-          amount: Number(payForm.amount),
-          method: payForm.method,
-          date: payForm.date,
-          reference: payForm.reference || null,
-          supplierInvoiceNumber: payForm.supplierInvoiceNumber || null,
-          supplierInvoiceUrl: payForm.supplierInvoiceUrl || null,
-          receiptUrl: payForm.receiptUrl || null,
-          bankName: payForm.bankName || null,
-          notes: payForm.notes || null,
-        }),
-      });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Failed");
-      return res.json();
+      const allocated = allocations.filter((a) => a.allocate > 0);
+      if (allocated.length > 0) {
+        // Create one payment per invoice allocation
+        for (const a of allocated) {
+          const res = await fetch("/api/supplier-payments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              supplierId,
+              poId: a.poId,
+              amount: a.allocate,
+              method: payForm.method,
+              date: payForm.date,
+              reference: payForm.reference || null,
+              supplierInvoiceNumber: a.invoiceNum || null,
+              receiptUrl: payForm.receiptUrl || null,
+              bankName: payForm.bankName || null,
+              notes: payForm.notes || null,
+            }),
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Failed");
+        }
+        // Unallocated remainder as general payment
+        if (unallocated > 0.01) {
+          const res = await fetch("/api/supplier-payments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              supplierId, poId: null,
+              amount: unallocated,
+              method: payForm.method, date: payForm.date,
+              reference: payForm.reference || null,
+              receiptUrl: payForm.receiptUrl || null,
+              bankName: payForm.bankName || null,
+              notes: payForm.notes ? `${payForm.notes} (unallocated)` : "Unallocated payment",
+            }),
+          });
+          if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Failed");
+        }
+      } else {
+        // No allocations — general payment
+        const res = await fetch("/api/supplier-payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supplierId, poId: null,
+            amount: payTotal,
+            method: payForm.method, date: payForm.date,
+            reference: payForm.reference || null,
+            receiptUrl: payForm.receiptUrl || null,
+            bankName: payForm.bankName || null,
+            notes: payForm.notes || null,
+          }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.message || "Failed");
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/suppliers", supplierId, "ledger"] });
       toast({ title: "Payment recorded" });
       setPayOpen(false);
-      setPayForm({
-        amount: "", method: "Cash", date: new Date().toISOString().slice(0, 10),
-        reference: "", supplierInvoiceNumber: "", bankName: "", notes: "",
-        supplierInvoiceUrl: "", receiptUrl: "", poId: "",
-      });
     },
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
@@ -168,18 +259,6 @@ export default function SupplierLedger() {
     onError: (e: Error) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
-  const handleFileUpload = (type: "receipt" | "invoice") => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      if (type === "receipt") setPayForm(f => ({ ...f, receiptUrl: base64 }));
-      else setPayForm(f => ({ ...f, supplierInvoiceUrl: base64 }));
-    };
-    reader.readAsDataURL(file);
-  };
-
   const s = ledger?.summary;
   const isAdmin = user?.role === "admin" || user?.role === "manager";
 
@@ -189,63 +268,47 @@ export default function SupplierLedger() {
     <div className="min-h-screen bg-background">
       <div className="max-w-5xl mx-auto px-4 py-6 space-y-6">
         {/* Header */}
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => nav("/suppliers")}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
-          <div className="flex-1">
-            <h1 className="text-2xl font-bold flex items-center gap-2">
-              <Building2 className="w-6 h-6 text-[#d4a017]" />
-              {supplier?.name || "Supplier"}
-            </h1>
-            <p className="text-sm text-muted-foreground">
-              {supplier?.company || "Supplier Ledger"} · {supplier?.paymentMode === "cash" ? "Cash Supplier" : `Credit ${supplier?.creditDays || 0} days`}
-            </p>
+        <div className="page-header">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => nav("/suppliers")}>
+              <ArrowLeft className="w-5 h-5" />
+            </Button>
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-50 to-emerald-50 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-teal-600" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">{supplier?.name || "Supplier"}</h1>
+              <p className="text-[13px] text-muted-foreground">
+                {supplier?.company || "Supplier Ledger"} · {supplier?.paymentMode === "cash" ? "Cash Supplier" : `Credit ${supplier?.creditDays || 0} days`}
+              </p>
+            </div>
           </div>
           {isAdmin && (
-            <Button onClick={() => setPayOpen(true)} className="bg-[#1e2a3a] text-white">
-              <Plus size={16} className="mr-2" /> Record Payment
-            </Button>
+            <button onClick={openPayDialog} className="btn-primary-action">
+              <Plus size={16} /> Record Payment
+            </button>
           )}
         </div>
 
         {/* Summary Cards */}
         {s && (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Package size={14} /> Total Ordered
-                </div>
-                <div className="text-lg font-bold font-mono">{fmtMoney(s.totalOrdered)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <TrendingDown size={14} /> Returns
-                </div>
-                <div className="text-lg font-bold font-mono text-amber-600">{fmtMoney(s.totalReturned)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <TrendingUp size={14} /> Total Paid
-                </div>
-                <div className="text-lg font-bold font-mono text-green-600">{fmtMoney(s.totalPaid)}</div>
-              </CardContent>
-            </Card>
-            <Card className={s.balance > 0 ? "border-red-200 dark:border-red-800" : "border-green-200 dark:border-green-800"}>
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-                  <Wallet size={14} /> Balance Due
-                </div>
-                <div className={`text-xl font-bold font-mono ${s.balance > 0 ? "text-red-600" : "text-green-600"}`}>
-                  {fmtMoney(s.balance)}
-                </div>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 stagger-children">
+            <div className="stat-card bg-gradient-to-br from-blue-50/50 to-transparent">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold flex items-center gap-1.5"><Package size={12} /> Total Ordered</p>
+              <p className="font-mono font-bold text-lg mt-1 tracking-tight">{fmtMoney(s.totalOrdered)}</p>
+            </div>
+            <div className="stat-card bg-gradient-to-br from-amber-50/50 to-transparent">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold flex items-center gap-1.5"><TrendingDown size={12} /> Returns</p>
+              <p className="font-mono font-bold text-lg text-amber-600 mt-1 tracking-tight">{fmtMoney(s.totalReturned)}</p>
+            </div>
+            <div className="stat-card bg-gradient-to-br from-emerald-50/50 to-transparent">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold flex items-center gap-1.5"><TrendingUp size={12} /> Total Paid</p>
+              <p className="font-mono font-bold text-lg text-green-600 mt-1 tracking-tight">{fmtMoney(s.totalPaid)}</p>
+            </div>
+            <div className={`hero-card ${s.balance > 0 ? "bg-gradient-to-br from-red-50 to-white border border-red-100" : "bg-gradient-to-br from-emerald-50 to-white border border-emerald-100"}`}>
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold flex items-center gap-1.5"><Wallet size={12} /> Balance Due</p>
+              <p className={`font-mono font-bold text-xl mt-1 tracking-tight ${s.balance > 0 ? "text-red-600" : "text-green-600"}`}>{fmtMoney(s.balance)}</p>
+            </div>
           </div>
         )}
 
@@ -253,17 +316,17 @@ export default function SupplierLedger() {
           <div className="flex justify-center py-20"><Loader2 className="animate-spin w-8 h-8 text-muted-foreground" /></div>
         ) : (
           <Tabs defaultValue="payments">
-            <TabsList>
-              <TabsTrigger value="payments">
+            <TabsList className="bg-muted/40 p-1.5 rounded-xl border border-border/30">
+              <TabsTrigger value="payments" className="rounded-lg data-[state=active]:border data-[state=active]:border-border/40">
                 <Receipt size={14} className="mr-1.5" /> Payments ({ledger?.payments?.length || 0})
               </TabsTrigger>
-              <TabsTrigger value="orders">
+              <TabsTrigger value="orders" className="rounded-lg data-[state=active]:border data-[state=active]:border-border/40">
                 <Package size={14} className="mr-1.5" /> Purchase Orders ({ledger?.orders?.length || 0})
               </TabsTrigger>
-              <TabsTrigger value="returns">
+              <TabsTrigger value="returns" className="rounded-lg data-[state=active]:border data-[state=active]:border-border/40">
                 <RotateCcw size={14} className="mr-1.5" /> Returns ({ledger?.returns?.length || 0})
               </TabsTrigger>
-              <TabsTrigger value="timeline">
+              <TabsTrigger value="timeline" className="rounded-lg data-[state=active]:border data-[state=active]:border-border/40">
                 <FileText size={14} className="mr-1.5" /> Timeline
               </TabsTrigger>
             </TabsList>
@@ -274,7 +337,7 @@ export default function SupplierLedger() {
                 <div className="text-center py-12 text-muted-foreground">
                   <Receipt size={40} className="mx-auto mb-3 opacity-30" />
                   <p>No payments recorded yet</p>
-                  {isAdmin && <Button variant="outline" className="mt-3" onClick={() => setPayOpen(true)}>
+                  {isAdmin && <Button variant="outline" className="mt-3" onClick={openPayDialog}>
                     <Plus size={14} className="mr-1.5" /> Record First Payment
                   </Button>}
                 </div>
@@ -335,9 +398,12 @@ export default function SupplierLedger() {
                 <div className="space-y-3">
                   {ledger.orders.map((o) => {
                     const items = Array.isArray(o.items) ? o.items : [];
-                    const orderTotal = items.reduce((s: number, it: any) =>
-                      s + (Number(it.receivedQty || 0) * Number(it.cost || it.price || 0)), 0);
-                    const isDue = o.paymentDueDate && new Date(o.paymentDueDate) <= new Date();
+                    const orderTotal = poInvoiceTotal(o);
+                    const paid = poPaidMap();
+                    const paidAmt = paid[o.id] || 0;
+                    const remaining = Math.max(0, orderTotal - paidAmt);
+                    const isDue = o.paymentDueDate && new Date(o.paymentDueDate) <= new Date() && remaining > 0;
+                    const payStatus = orderTotal <= 0 ? "no-invoice" : remaining <= 0 ? "paid" : paidAmt > 0 ? "partial" : "unpaid";
                     return (
                       <Card key={o.id} className={isDue ? "border-red-200 dark:border-red-800" : ""}>
                         <CardContent className="py-4">
@@ -346,9 +412,36 @@ export default function SupplierLedger() {
                               <span className="font-semibold">{o.poNumber || `PO-${o.id}`}</span>
                               <Badge className={statusColor(o.status)}>{o.status}</Badge>
                               {isDue && <Badge variant="destructive" className="text-[10px]">OVERDUE</Badge>}
+                              {payStatus === "paid" && (
+                                <Badge className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 text-[10px]">
+                                  <CheckCircle2 size={10} className="mr-0.5" /> PAID
+                                </Badge>
+                              )}
+                              {payStatus === "partial" && (
+                                <Badge className="bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 text-[10px]">
+                                  PARTIAL
+                                </Badge>
+                              )}
                             </div>
                             <span className="font-mono font-bold">{fmtMoney(orderTotal)}</span>
                           </div>
+
+                          {/* Payment progress */}
+                          {orderTotal > 0 && (
+                            <div className="mb-2">
+                              <div className="flex justify-between text-xs mb-1">
+                                <span className="text-green-600">Paid: {fmtMoney(paidAmt)}</span>
+                                {remaining > 0 && <span className="text-red-600">Remaining: {fmtMoney(remaining)}</span>}
+                              </div>
+                              <div className="h-1.5 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                                <div
+                                  className={`h-full rounded-full transition-all ${remaining <= 0 ? "bg-green-500" : "bg-amber-500"}`}
+                                  style={{ width: `${Math.min(100, (paidAmt / orderTotal) * 100)}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs text-muted-foreground">
                             <div>Sent: {fmtDate(o.sentAt)}</div>
                             <div>Received: {fmtDate(o.receivedAt)}</div>
@@ -372,6 +465,15 @@ export default function SupplierLedger() {
                           <div className="mt-2 text-xs text-muted-foreground">
                             {items.length} items: {items.map((it: any) => `${it.name || it.description} x${it.receivedQty || it.qty}`).join(", ")}
                           </div>
+
+                          {/* Quick pay button */}
+                          {isAdmin && remaining > 0 && (
+                            <div className="mt-3 flex justify-end">
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={openPayDialog}>
+                                <DollarSign size={12} /> Pay
+                              </Button>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     );
@@ -522,27 +624,101 @@ export default function SupplierLedger() {
 
       {/* Record Payment Dialog */}
       <Dialog open={payOpen} onOpenChange={setPayOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <DollarSign size={20} className="text-[#d4a017]" /> Record Payment to {supplier?.name}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Amount + Date */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Amount *</Label>
+                <Label>Total Amount *</Label>
                 <Input type="number" min={0} step="0.01" value={payForm.amount}
-                  onChange={e => setPayForm(f => ({ ...f, amount: e.target.value }))}
-                  placeholder="0.00" className="font-mono" />
+                  onChange={e => {
+                    const v = e.target.value;
+                    setPayForm(f => ({ ...f, amount: v }));
+                    if (Number(v) > 0) autoAllocate(Number(v));
+                  }}
+                  placeholder="0.00" className="font-mono text-lg h-11" />
               </div>
               <div className="space-y-1.5">
                 <Label>Date *</Label>
                 <Input type="date" value={payForm.date}
-                  onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))} />
+                  onChange={e => setPayForm(f => ({ ...f, date: e.target.value }))} className="h-11" />
               </div>
             </div>
 
+            {/* Invoice allocation */}
+            {allocations.length > 0 && (
+              <>
+                <Separator />
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                      Allocate to Invoices
+                    </h4>
+                    {payTotal > 0 && (
+                      <Button variant="ghost" size="sm" className="h-6 text-xs"
+                        onClick={() => autoAllocate(payTotal)}>
+                        Auto-split
+                      </Button>
+                    )}
+                  </div>
+                  <div className="space-y-1.5">
+                    {allocations.map((a, idx) => (
+                      <div key={a.poId} className="flex items-center gap-3 p-2.5 rounded-lg border bg-muted/20">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <FileText size={14} className="text-muted-foreground shrink-0" />
+                            <span className="text-sm font-medium">{a.invoiceNum}</span>
+                          </div>
+                          <div className="flex gap-3 text-xs text-muted-foreground mt-0.5">
+                            <span>Total: {fmtMoney(a.invoiceTotal)}</span>
+                            <span className="text-green-600">Paid: {fmtMoney(a.paid)}</span>
+                            <span className="text-red-600 font-semibold">Due: {fmtMoney(a.remaining)}</span>
+                          </div>
+                        </div>
+                        <div className="w-28 shrink-0">
+                          <Input
+                            type="number"
+                            min={0}
+                            max={a.remaining}
+                            step="0.01"
+                            value={a.allocate || ""}
+                            onChange={e => {
+                              const val = Math.min(Number(e.target.value) || 0, a.remaining);
+                              setAllocations(prev => prev.map((x, i) => i === idx ? { ...x, allocate: val } : x));
+                            }}
+                            className="h-8 text-sm font-mono text-right"
+                            placeholder="0.00"
+                          />
+                        </div>
+                        <Button variant="ghost" size="sm" className="h-7 text-xs px-2"
+                          onClick={() => setAllocations(prev => prev.map((x, i) => i === idx ? { ...x, allocate: x.remaining } : x))}>
+                          Full
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Allocation summary */}
+                  {payTotal > 0 && (
+                    <div className="flex justify-between text-sm px-1 pt-1">
+                      <span className="text-muted-foreground">Allocated: <span className="font-mono font-semibold text-foreground">{fmtMoney(totalAllocated)}</span></span>
+                      {unallocated > 0.01 && (
+                        <span className="text-amber-600">Unallocated: <span className="font-mono font-semibold">{fmtMoney(unallocated)}</span></span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+
+            <Separator />
+
+            {/* Method + Reference */}
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Method</Label>
@@ -575,59 +751,25 @@ export default function SupplierLedger() {
 
             <Separator />
 
-            <div className="space-y-1.5">
-              <Label>Supplier Invoice #</Label>
-              <Input value={payForm.supplierInvoiceNumber}
-                onChange={e => setPayForm(f => ({ ...f, supplierInvoiceNumber: e.target.value }))}
-                placeholder="Invoice number from supplier" />
-            </div>
-
-            {ledger?.orders && ledger.orders.length > 0 && (
-              <div className="space-y-1.5">
-                <Label>Against PO (optional)</Label>
-                <Select value={payForm.poId} onValueChange={v => setPayForm(f => ({ ...f, poId: v }))}>
-                  <SelectTrigger><SelectValue placeholder="Select PO…" /></SelectTrigger>
-                  <SelectContent>
-                    {ledger.orders.map(o => (
-                      <SelectItem key={o.id} value={String(o.id)}>
-                        {o.poNumber || `PO-${o.id}`} ({o.status})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-
-            <Separator />
-
-            {/* Upload buttons */}
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label className="text-xs mb-1.5 block">Upload Cash Receipt</Label>
-                <input ref={receiptRef} type="file" accept="image/*" className="hidden"
-                  onChange={handleFileUpload("receipt")} />
-                <Button variant="outline" className="w-full" type="button"
-                  onClick={() => receiptRef.current?.click()}>
-                  <Camera size={14} className="mr-1.5" />
-                  {payForm.receiptUrl ? "Receipt Attached" : "Upload Receipt"}
-                </Button>
-                {payForm.receiptUrl && (
-                  <img src={payForm.receiptUrl} className="mt-2 w-full h-20 object-cover rounded border" alt="Receipt" />
-                )}
-              </div>
-              <div>
-                <Label className="text-xs mb-1.5 block">Upload Supplier Invoice</Label>
-                <input ref={invoiceRef} type="file" accept="image/*,.pdf" className="hidden"
-                  onChange={handleFileUpload("invoice")} />
-                <Button variant="outline" className="w-full" type="button"
-                  onClick={() => invoiceRef.current?.click()}>
-                  <FileText size={14} className="mr-1.5" />
-                  {payForm.supplierInvoiceUrl ? "Invoice Attached" : "Upload Invoice"}
-                </Button>
-                {payForm.supplierInvoiceUrl && (
-                  <img src={payForm.supplierInvoiceUrl} className="mt-2 w-full h-20 object-cover rounded border" alt="Invoice" />
-                )}
-              </div>
+            {/* Upload receipt */}
+            <div>
+              <Label className="text-xs mb-1.5 block">Upload Payment Receipt</Label>
+              <input ref={receiptRef} type="file" accept="image/*" className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = () => setPayForm(f => ({ ...f, receiptUrl: reader.result as string }));
+                  reader.readAsDataURL(file);
+                }} />
+              <Button variant="outline" className="w-full" type="button"
+                onClick={() => receiptRef.current?.click()}>
+                <Camera size={14} className="mr-1.5" />
+                {payForm.receiptUrl ? "Receipt Attached" : "Upload Receipt"}
+              </Button>
+              {payForm.receiptUrl && (
+                <img src={payForm.receiptUrl} className="mt-2 w-full h-20 object-cover rounded border" alt="Receipt" />
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -641,9 +783,9 @@ export default function SupplierLedger() {
             <Button variant="outline" onClick={() => setPayOpen(false)}>Cancel</Button>
             <Button className="bg-[#1e2a3a] text-white"
               onClick={() => payMut.mutate()}
-              disabled={payMut.isPending || !payForm.amount || Number(payForm.amount) <= 0}>
+              disabled={payMut.isPending || payTotal <= 0}>
               {payMut.isPending ? <Loader2 size={16} className="mr-2 animate-spin" /> : <DollarSign size={16} className="mr-2" />}
-              Record Payment
+              Record Payment — {fmtMoney(payTotal)}
             </Button>
           </DialogFooter>
         </DialogContent>

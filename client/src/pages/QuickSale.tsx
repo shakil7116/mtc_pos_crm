@@ -134,6 +134,62 @@ export default function QuickSale() {
     return stockByProduct;
   }, [inventory, relevantStoreIds]);
 
+  // Credit-limit awareness: fetch the customer's running balance so the interceptor can gate.
+  const { data: customerBalance } = useQuery<{ balance: number; creditLimit: number }>({
+    queryKey: ["customer-balance", customer?.id],
+    queryFn: () => fetch(`/api/customers/${customer!.id}/balance`).then((r) => r.json()),
+    enabled: Boolean(customer?.id),
+  });
+  const creditRemaining = customerBalance && Number(customerBalance.creditLimit || 0) > 0
+    ? Math.max(0, Number(customerBalance.creditLimit) - Number(customerBalance.balance || 0))
+    : undefined;
+
+  // Credit-limit async approval: a salesman over the limit sends the sale to a manager.
+  const requestApprovalMutation = useMutation({
+    mutationFn: async ({ intercept, reason }: { intercept: any; reason: string }) => {
+      const today = new Date().toISOString().slice(0, 10);
+      const payments = intercept?.payments ?? [{ method: "Cash", amount: total }];
+      const docPayload: any = {
+        type: docType, date: today, customerId: customer?.id ?? null, customerName: customer?.name ?? "Cash Customer",
+        storeId, transactionMode: intercept?.transactionMode ?? "real",
+        paymentType: intercept?.paymentType ?? "Cash",
+        deliveryMethod, deliveryAddress: deliveryMethod === "deliver_site" ? (deliveryAddress.trim() || null) : null,
+        creditOverride: false, dueDate: intercept?.dueDate ?? null,
+        discountType: "QAR", discountAmount: 0, subtotal: total, taxRate: 0, taxAmount: 0, total,
+        payments,
+        items: cart.map((l) => ({
+          productId: l.productId, sku: l.sku, description: l.name, qty: l.qty, unit: l.unit,
+          price: l.price, discountType: "QAR", discountAmount: 0, amount: l.price * l.qty,
+          locationStoreId: l.locationStoreId ?? storeId,
+        })),
+        createdBy: user?.id ?? null,
+      };
+      const deferred = (payments as any[])
+        .filter((p: any) => p.method === "Credit" || p.method === "PDC")
+        .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      const over = Math.max(0, deferred - (creditRemaining ?? 0));
+      const body = {
+        type: "credit_limit",
+        title: "Credit-limit override",
+        summary: `${customer?.name || "Customer"} · over limit by QAR ${over.toFixed(2)} (invoice QAR ${total.toFixed(2)})`,
+        message: reason || undefined,
+        amount: deferred,
+        entityType: "customer",
+        entityId: customer?.id ?? undefined,
+        payload: docPayload,
+      };
+      const res = await fetch("/api/approvals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Could not send the request");
+      return res.json();
+    },
+    onSuccess: (ar: any) => {
+      setInterceptorOpen(false);
+      toast({ title: "Approval request sent", description: `${ar?.requestNumber || "Request"} is with a manager — the invoice is created once approved.` });
+      nav("/approvals");
+    },
+    onError: (e: any) => toast({ title: "Could not send request", description: String(e?.message || ""), variant: "destructive" }),
+  });
+
   useEffect(() => { searchRef.current?.focus(); }, []);
 
   // Default the Invoice Type from the selected customer's Financial Status (creditLimit>0 = Credit),
@@ -234,10 +290,12 @@ export default function QuickSale() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      <div className="flex items-center gap-2 mb-4">
-        <Zap className="w-6 h-6 text-amber-500" />
+      <div className="flex items-center gap-2.5 mb-4">
+        <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-amber-50 to-yellow-50 flex items-center justify-center">
+          <Zap className="w-5 h-5 text-amber-500" />
+        </div>
         <h1 className="text-2xl font-bold tracking-tight">Quick Sale</h1>
-        <span className="text-xs text-muted-foreground ml-auto">
+        <span className="text-[13px] text-muted-foreground ml-auto">
           {stores.find((s: any) => s.id === storeId)?.nameEn ?? "—"} · Cash
         </span>
         {!offlineStatus.online && (
@@ -456,6 +514,10 @@ export default function QuickSale() {
         invoiceDate={new Date().toISOString().slice(0, 10)}
         invoiceMode={invoiceMode}
         customer={customer ? { id: customer.id, name: customer.name, creditLimit: customer.creditLimit } : undefined}
+        creditRemaining={creditRemaining}
+        currentUserRole={user?.role}
+        onRequestApproval={(intercept, reason) => requestApprovalMutation.mutate({ intercept, reason })}
+        requestingApproval={requestApprovalMutation.isPending}
         onCustomerUpgraded={() => {
           qc.invalidateQueries({ queryKey: ["/api/customers"] });
           if (customer) setCustomer({ ...customer, creditLimit: Math.max(customer.creditLimit, 1) });

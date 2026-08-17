@@ -3,7 +3,7 @@ import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import {
   settings, stores, users, customers, products, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
-  returnItems, editLog, messagesLog, stockAdjustments, supplierOrders,
+  returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
   documentCounters, damageClaims,
   supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
@@ -21,6 +21,7 @@ import {
   type Payment, type InsertPayment,
   type Cheque, type InsertCheque,
   type Return, type ReturnItem,
+  type ApprovalRequest, type InsertApprovalRequest,
   type EditLog,
   type MessagesLog,
   type StockAdjustment,
@@ -218,7 +219,7 @@ export async function deleteTask(id: number): Promise<void> {
 
 // ─── Document Counters ───────────────────────────────────────────────────────
 const DOC_COUNTER_DEFAULTS: Record<string, number> = {
-  INV: 100360, QT: 197235, DN: 297333, CN: 100001, PO: 100001, RV: 500001,
+  INV: 100360, QT: 197235, DN: 297333, CN: 100001, PO: 100001, RV: 500001, AR: 900001,
 };
 
 function defaultCounterStart(type: string): number {
@@ -409,6 +410,20 @@ export async function getCustomers(): Promise<Customer[]> {
   return db.select().from(customers).where(eq(customers.active, true)).orderBy(asc(customers.name));
 }
 
+export async function searchCustomers(query: string): Promise<Customer[]> {
+  const pattern = `%${query}%`;
+  return db.select().from(customers).where(
+    and(
+      eq(customers.active, true),
+      or(
+        sql`${customers.name} ILIKE ${pattern}`,
+        sql`${customers.phone} ILIKE ${pattern}`,
+        sql`${customers.address} ILIKE ${pattern}`,
+      ),
+    ),
+  ).orderBy(asc(customers.name)).limit(30);
+}
+
 export async function getCustomer(id: number): Promise<Customer | undefined> {
   const [row] = await db.select().from(customers).where(eq(customers.id, id));
   return row;
@@ -463,6 +478,20 @@ export async function getCustomerBalance(customerId: number): Promise<number> {
 // ─── Products ────────────────────────────────────────────────────────────────
 export async function getProducts(): Promise<Product[]> {
   return db.select().from(products).where(eq(products.active, true)).orderBy(asc(products.name));
+}
+
+export async function searchProducts(query: string): Promise<Product[]> {
+  const pattern = `%${query}%`;
+  return db.select().from(products).where(
+    and(
+      eq(products.active, true),
+      or(
+        sql`${products.name} ILIKE ${pattern}`,
+        sql`${products.sku} ILIKE ${pattern}`,
+        sql`${products.category} ILIKE ${pattern}`,
+      ),
+    ),
+  ).orderBy(asc(products.name)).limit(30);
 }
 
 export async function getProduct(id: number): Promise<Product | undefined> {
@@ -957,12 +986,20 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     if (footerDisc || lineReduced) {
       const actor = req.createdBy ? await getUser(req.createdBy) : null;
       const isBoss = actor ? ["admin", "manager"].includes(String(actor.role)) : false;
+      // A manager approving this action (e.g. an over-limit sale replayed from the
+      // Approvals inbox) authorizes any bundled discount too — no PIN needed then.
+      const authorizer = (req as any).authorizedBy ? await getUser(Number((req as any).authorizedBy)) : null;
+      const authorizerIsBoss = authorizer ? ["admin", "manager"].includes(String(authorizer.role)) : false;
       if (!isBoss) {
-        const approver = await getManagerByPin(String((req as any).pricingOverridePin || ""));
-        if (!approver) {
-          throw new PricingApprovalRequiredError("A discount or price change needs a manager's approval — ask a manager to enter their PIN.");
+        if (authorizerIsBoss) {
+          pricingApprovedBy = authorizer!.id;
+        } else {
+          const approver = await getManagerByPin(String((req as any).pricingOverridePin || ""));
+          if (!approver) {
+            throw new PricingApprovalRequiredError("A discount or price change needs a manager's approval — ask a manager to enter their PIN.");
+          }
+          pricingApprovedBy = approver.id;
         }
-        pricingApprovedBy = approver.id;
       }
     }
   }
@@ -1605,7 +1642,7 @@ export async function getCashPosition(filterStoreId?: number | null): Promise<{
     const amt = Number(r.amount || 0) * (r.direction === "in" ? 1 : -1);
     if (/bank transfer|online|cheque|card/i.test(r.notes || "")) bank += amt; else cashInHand += amt;
   }
-  const pend = await db.select().from(cheques).where(eq(cheques.status, "pending"));
+  const pend = await db.select().from(cheques).where(inArray(cheques.status, ["pending", "deposited"]));
   const pdcPending = pend.filter((c: any) => c.type !== "payable").reduce((s, c) => s + Number(c.amount || 0), 0);
   const pdcPayable = pend.filter((c: any) => c.type === "payable").reduce((s, c) => s + Number(c.amount || 0), 0);
   return {
@@ -1683,7 +1720,7 @@ export async function ensureFunds(opts: {
 // Pending → Deposited → Cleared | Bounced. Clearing books the money movement
 // (in for receivable, out for payable). Bouncing flags the customer/supplier
 // record (customData bag — dynamic, no migration) and alerts the admin.
-export async function setChequeStatus(id: number, status: string, userId?: number, fundsOverride?: { override?: boolean; overrideReason?: string }): Promise<Cheque> {
+export async function setChequeStatus(id: number, status: string, userId?: number, fundsOverride?: { override?: boolean; overrideReason?: string }, extras?: { depositProofUrl?: string; depositedToAccount?: string; clearanceProofUrl?: string }): Promise<Cheque> {
   const [chq]: any[] = await db.select().from(cheques).where(eq(cheques.id, id));
   if (!chq) throw new Error("Cheque not found");
   const ALLOWED = ["pending", "deposited", "cleared", "bounced", "cancelled"];
@@ -1692,10 +1729,18 @@ export async function setChequeStatus(id: number, status: string, userId?: numbe
   if (["cleared", "bounced", "cancelled"].includes(chq.status))
     throw new Error(`Cheque is already ${chq.status} — terminal state.`);
 
-  // Clearing a PAYABLE cheque is the moment its money actually leaves the bank — this
-  // is the single point a cheque expense is booked. Guard it against overdraw here
-  // (admin may override with a reason). Check BEFORE marking cleared so a block leaves
-  // no half-cleared cheque.
+  const today = new Date().toISOString().slice(0, 10);
+
+  // PDC banking rule: cannot deposit or clear a cheque before its written date.
+  if ((status === "deposited" || status === "cleared") && chq.chequeDate > today) {
+    throw new Error(`Cannot ${status === "deposited" ? "deposit" : "clear"} before the cheque date (${chq.chequeDate}). PDC cheques can only be deposited on or after their written date.`);
+  }
+
+  // Clearing requires the cheque to have been deposited first.
+  if (status === "cleared" && chq.status !== "deposited") {
+    throw new Error("Cheque must be deposited before it can be cleared. Mark it as deposited first.");
+  }
+
   if (status === "cleared" && chq.type === "payable") {
     await ensureFunds({
       instrument: "bank",
@@ -1705,10 +1750,16 @@ export async function setChequeStatus(id: number, status: string, userId?: numbe
     });
   }
 
-  const today = new Date().toISOString().slice(0, 10);
   const patch: any = { status };
-  if (status === "deposited") patch.depositedDate = today;
-  if (status === "cleared") patch.clearedDate = today;
+  if (status === "deposited") {
+    patch.depositedDate = today;
+    if (extras?.depositProofUrl) patch.depositProofUrl = extras.depositProofUrl;
+    if (extras?.depositedToAccount) patch.depositedToAccount = extras.depositedToAccount;
+  }
+  if (status === "cleared") {
+    patch.clearedDate = today;
+    if (extras?.clearanceProofUrl) patch.clearanceProofUrl = extras.clearanceProofUrl;
+  }
   if (status === "bounced") patch.bouncedDate = today;
   const [row] = await db.update(cheques).set(patch).where(eq(cheques.id, id)).returning();
 
@@ -1720,7 +1771,7 @@ export async function setChequeStatus(id: number, status: string, userId?: numbe
       category: chq.type === "payable" ? "PDC Payment Issued" : "PDC Cleared",
       amount: Number(chq.amount || 0), refType: "cheque", refId: chq.id,
       storeId: doc?.storeId ?? undefined,
-      notes: `Cheque ${chq.chequeNumber} cleared (${chq.bankName})`, createdBy: userId,
+      notes: `Cheque ${chq.chequeNumber} cleared (${chq.bankName})${chq.depositedToAccount || extras?.depositedToAccount ? ` → ${chq.depositedToAccount || extras?.depositedToAccount}` : ""}`, createdBy: userId,
     });
   }
 
@@ -1749,6 +1800,43 @@ export async function setChequeStatus(id: number, status: string, userId?: numbe
   return row;
 }
 
+// PDC Swap: customer pays cash or bank transfer, takes their cheque back.
+// Cancels the cheque and books the payment as cash/bank inflow.
+export async function swapChequeToPayment(id: number, method: "cash" | "bank_transfer", notes: string, userId?: number): Promise<Cheque> {
+  const [chq]: any[] = await db.select().from(cheques).where(eq(cheques.id, id));
+  if (!chq) throw new Error("Cheque not found");
+  if (!["pending", "deposited"].includes(chq.status))
+    throw new Error(`Cannot swap — cheque is already ${chq.status}.`);
+  if (chq.type !== "receivable")
+    throw new Error("Swap is only for receivable cheques (customer PDCs).");
+
+  const today = new Date().toISOString().slice(0, 10);
+  const [row] = await db.update(cheques).set({
+    status: "cancelled",
+    recoveryNotes: `Swapped to ${method === "cash" ? "cash" : "bank transfer"} on ${today}. ${notes || ""}`.trim(),
+  }).where(eq(cheques.id, id)).returning();
+
+  const doc: any = chq.documentId ? await getDocument(chq.documentId).catch(() => null) : null;
+  const methodLabel = method === "cash" ? "Cash" : "Bank Transfer";
+  await logCashflow({
+    direction: "in",
+    category: `PDC Swap — ${methodLabel}`,
+    amount: Number(chq.amount || 0),
+    refType: "cheque", refId: chq.id,
+    storeId: doc?.storeId ?? undefined,
+    notes: `Cheque ${chq.chequeNumber} swapped to ${methodLabel.toLowerCase()} (${chq.bankName}, ${chq.who || "unknown"})${notes ? ` — ${notes}` : ""}`,
+    createdBy: userId,
+  });
+
+  await createNotification({
+    targetRole: "admin", type: "pdc_swap", title: "PDC swapped to " + methodLabel.toLowerCase(),
+    message: `Cheque ${chq.chequeNumber} (${chq.bankName}) QAR ${Number(chq.amount || 0).toFixed(2)} from ${chq.who || "unknown"} swapped to ${methodLabel.toLowerCase()}.`,
+    link: "/pdc", entityType: "cheque", entityId: chq.id, createdBy: userId,
+  });
+
+  return row;
+}
+
 // Cheque detail bundle: the cheque, its linked document (invoice/PO/expense) and a
 // status timeline built from the cheque's own dates + any logged corrections.
 export async function getChequeDetail(id: number) {
@@ -1757,13 +1845,24 @@ export async function getChequeDetail(id: number) {
   const linkedDoc = chq.documentId ? await getDocument(chq.documentId).catch(() => null) : null;
   const history: { at: string; label: string; note?: string }[] = [];
   if (chq.createdAt) history.push({ at: new Date(chq.createdAt).toISOString().slice(0, 10), label: "Recorded" });
-  if (chq.depositedDate) history.push({ at: chq.depositedDate, label: "Deposited" });
-  if (chq.clearedDate) history.push({ at: chq.clearedDate, label: "Cleared" });
+  if (chq.depositedDate) history.push({ at: chq.depositedDate, label: `Deposited${chq.depositedToAccount ? ` → ${chq.depositedToAccount}` : ""}` });
+  if (chq.clearedDate) history.push({ at: chq.clearedDate, label: "Cleared — funds credited" });
   if (chq.bouncedDate) history.push({ at: chq.bouncedDate, label: "Bounced" });
+  if (chq.recoveryStatus) history.push({ at: chq.bouncedDate || new Date().toISOString().slice(0, 10), label: `Recovery: ${chq.recoveryStatus.replace(/_/g, " ")}`, note: chq.recoveryNotes });
   const corr = await getCorrections("cheque", id);
   for (const c of corr as any[]) history.push({ at: new Date(c.createdAt).toISOString().slice(0, 10), label: `Corrected: ${c.oldValue} → ${c.newValue}`, note: c.reason });
   history.sort((a, b) => (a.at || "").localeCompare(b.at || ""));
-  return { ...chq, linkedDoc, history };
+  // Replacement cheque link (if bounced and replaced)
+  let replacementCheque: any = null;
+  if (chq.replacementChequeId) {
+    const [rep]: any[] = await db.select().from(cheques).where(eq(cheques.id, chq.replacementChequeId));
+    if (rep) replacementCheque = { id: rep.id, chequeNumber: rep.chequeNumber, amount: rep.amount, status: rep.status };
+  }
+  // If this cheque IS a replacement, find the original bounced cheque
+  let originalBouncedCheque: any = null;
+  const [origBounced]: any[] = await db.select().from(cheques).where(eq(cheques.replacementChequeId, id));
+  if (origBounced) originalBouncedCheque = { id: origBounced.id, chequeNumber: origBounced.chequeNumber, amount: origBounced.amount };
+  return { ...chq, linkedDoc, history, replacementCheque, originalBouncedCheque };
 }
 
 // Attach/replace a scanned cheque image (base64 data URL, validated + size-capped).
@@ -1794,6 +1893,121 @@ export async function checkPdcAlerts(): Promise<number> {
     created++;
   }
   return created;
+}
+
+// Upload / replace a deposit proof slip (bank receipt showing the cheque was deposited).
+export async function setChequeDepositProof(id: number, depositProofUrl: string): Promise<Cheque> {
+  if (!/^data:image\/(png|jpe?g|webp);base64,/.test(depositProofUrl)) throw new Error("Deposit proof must be a PNG/JPG/WebP image.");
+  if (depositProofUrl.length > 6_000_000) throw new Error("Image too large — keep it under ~4 MB.");
+  const [chq]: any[] = await db.select().from(cheques).where(eq(cheques.id, id));
+  if (!chq) throw new Error("Cheque not found");
+  if (!["deposited", "cleared"].includes(chq.status)) throw new Error("Cheque must be deposited or cleared to attach proof.");
+  const [row] = await db.update(cheques).set({ depositProofUrl }).where(eq(cheques.id, id)).returning();
+  return row;
+}
+
+// Upload / replace clearance proof (bank statement or confirmation showing the cheque cleared).
+export async function setChequeClearanceProof(id: number, clearanceProofUrl: string): Promise<Cheque> {
+  if (!/^data:image\/(png|jpe?g|webp);base64,/.test(clearanceProofUrl)) throw new Error("Clearance proof must be a PNG/JPG/WebP image.");
+  if (clearanceProofUrl.length > 6_000_000) throw new Error("Image too large — keep it under ~4 MB.");
+  const [chq]: any[] = await db.select().from(cheques).where(eq(cheques.id, id));
+  if (!chq) throw new Error("Cheque not found");
+  if (chq.status !== "cleared") throw new Error("Cheque must be cleared to attach clearance proof.");
+  const [row] = await db.update(cheques).set({ clearanceProofUrl }).where(eq(cheques.id, id)).returning();
+  return row;
+}
+
+// Bounced cheque recovery workflow: track what action is being taken to recover the amount.
+const RECOVERY_STATUSES = ["replacement_requested", "replacement_received", "cash_requested", "cash_received", "written_off"] as const;
+export async function setChequeRecovery(id: number, recoveryStatus: string, recoveryNotes: string, userId?: number): Promise<Cheque> {
+  const [chq]: any[] = await db.select().from(cheques).where(eq(cheques.id, id));
+  if (!chq) throw new Error("Cheque not found");
+  if (chq.status !== "bounced") throw new Error("Only bounced cheques have a recovery workflow.");
+  if (!RECOVERY_STATUSES.includes(recoveryStatus as any)) throw new Error(`Invalid recovery status: ${recoveryStatus}`);
+  const [row] = await db.update(cheques).set({ recoveryStatus, recoveryNotes: recoveryNotes || null }).where(eq(cheques.id, id)).returning();
+
+  // When cash is received for a bounced cheque, book the money in.
+  if (recoveryStatus === "cash_received") {
+    const doc: any = chq.documentId ? await getDocument(chq.documentId).catch(() => null) : null;
+    await logCashflow({
+      direction: "in",
+      category: "Bounced cheque — cash recovered",
+      amount: Number(chq.amount || 0), refType: "cheque", refId: chq.id,
+      storeId: doc?.storeId ?? undefined,
+      notes: `Cash recovery for bounced cheque ${chq.chequeNumber} (${chq.bankName})`,
+      createdBy: userId,
+    });
+  }
+
+  // Notify admin of recovery updates
+  await createNotification({
+    targetRole: "admin", type: "cheque_recovery",
+    title: `Cheque recovery: ${recoveryStatus.replace(/_/g, " ")}`,
+    message: `Bounced cheque ${chq.chequeNumber} (QAR ${Number(chq.amount || 0).toFixed(2)}) — ${recoveryStatus.replace(/_/g, " ")}.${recoveryNotes ? " Notes: " + recoveryNotes.slice(0, 120) : ""}`,
+    link: `/cheques/${chq.id}`, entityType: "cheque", entityId: chq.id, createdBy: userId,
+  });
+  return row;
+}
+
+// Create a replacement cheque for a bounced one. The new cheque is linked back
+// via replacementChequeId on the original, and the original's recovery status
+// is set to replacement_received.
+export async function createReplacementCheque(
+  bouncedId: number,
+  data: { chequeNumber: string; bankName: string; amount: string; chequeDate: string },
+  userId?: number,
+): Promise<Cheque> {
+  const [orig]: any[] = await db.select().from(cheques).where(eq(cheques.id, bouncedId));
+  if (!orig) throw new Error("Original cheque not found");
+  if (orig.status !== "bounced") throw new Error("Only bounced cheques can be replaced.");
+
+  const [replacement] = await db.insert(cheques).values({
+    customerId: orig.customerId,
+    supplierId: orig.supplierId,
+    documentId: orig.documentId,
+    type: orig.type,
+    chequeNumber: data.chequeNumber,
+    bankName: data.bankName,
+    amount: data.amount,
+    chequeDate: data.chequeDate,
+    who: orig.who,
+    status: "pending",
+  }).returning();
+
+  // Link the original to the replacement and mark recovery complete
+  await db.update(cheques).set({
+    replacementChequeId: replacement.id,
+    recoveryStatus: "replacement_received",
+    recoveryNotes: `Replaced by cheque #${data.chequeNumber}`,
+  }).where(eq(cheques.id, bouncedId));
+
+  await createNotification({
+    targetRole: "admin", type: "cheque_recovery",
+    title: "Replacement cheque received",
+    message: `Bounced cheque ${orig.chequeNumber} replaced by new cheque #${data.chequeNumber} (QAR ${Number(data.amount || 0).toFixed(2)}).`,
+    link: `/cheques/${replacement.id}`, entityType: "cheque", entityId: replacement.id, createdBy: userId,
+  });
+  return replacement;
+}
+
+// PDC action summary: counts of cheques needing attention.
+export async function getPdcActionSummary(): Promise<{
+  dueToday: number; overdue: number; depositedAwaitingClear: number;
+  bouncedAwaitingRecovery: number; dueSoon: number;
+}> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { pdcAlertDays } = await getBusinessRules();
+  const horizon = new Date(); horizon.setDate(horizon.getDate() + pdcAlertDays);
+  const horizonStr = horizon.toISOString().slice(0, 10);
+
+  const all = await db.select().from(cheques);
+  return {
+    dueToday: all.filter((c: any) => c.status === "pending" && c.chequeDate === today).length,
+    overdue: all.filter((c: any) => c.status === "pending" && c.chequeDate < today).length,
+    depositedAwaitingClear: all.filter((c: any) => c.status === "deposited").length,
+    bouncedAwaitingRecovery: all.filter((c: any) => c.status === "bounced" && !["cash_received", "replacement_received", "written_off"].includes(c.recoveryStatus)).length,
+    dueSoon: all.filter((c: any) => c.status === "pending" && c.chequeDate > today && c.chequeDate <= horizonStr).length,
+  };
 }
 
 // ─── Expenses (Module 5) ─────────────────────────────────────────────────────
@@ -2086,7 +2300,7 @@ export async function reverseReturnApproval(id: number, reason: string, userId?:
     for (const it of (ret.items || []) as any[]) {
       if (it.productId) {
         await adjustStock(Number(it.productId), Number(ret.storeId), -Number(it.qty || 0),
-          "correction", `Return ${ret.voucherNumber} approval reversed`, ret.originalInvoiceId, userId);
+          "correction", `Return ${ret.voucherNumber} approval reversed`, ret.originalInvoiceId ?? undefined, userId);
       }
     }
   }
@@ -2172,8 +2386,10 @@ export async function getEditLog(documentId: number): Promise<EditLog[]> {
 
 // ─── Returns ─────────────────────────────────────────────────────────────────
 export async function createReturn(data: {
-  originalInvoiceId: number;
+  originalInvoiceId?: number | null;
   originalInvoiceNumber?: string;
+  sourceInvoices?: { invoiceId: number; invoiceNumber: string }[];
+  isManual?: boolean;
   customerId?: number | null;
   customerName?: string | null;
   storeId?: number | null;
@@ -2189,15 +2405,19 @@ export async function createReturn(data: {
   submittedBy?: number;
   processedBy?: number;
 }): Promise<Return> {
-  // Own serial counter — Return Vouchers are an independent ledger.
   const voucherNumber = await getNextDocNumber("RV");
   const total = data.items.reduce((s, i) => s + Number(i.amount || 0), 0);
 
-  // Created PENDING. Nothing moves (no stock, no refund) until admin/manager approves.
+  const sourceInvoices = data.sourceInvoices ?? [];
+  const primaryInvoiceId = data.originalInvoiceId ?? (sourceInvoices.length > 0 ? sourceInvoices[0].invoiceId : null);
+  const primaryInvoiceNumber = data.originalInvoiceNumber ?? (sourceInvoices.length > 0 ? sourceInvoices[0].invoiceNumber : undefined);
+
   const [ret] = await db.insert(returnsTable).values({
     voucherNumber,
-    originalInvoiceId: data.originalInvoiceId,
-    originalInvoiceNumber: data.originalInvoiceNumber,
+    originalInvoiceId: primaryInvoiceId ?? undefined,
+    originalInvoiceNumber: primaryInvoiceNumber,
+    sourceInvoices: sourceInvoices.length > 0 ? sourceInvoices : undefined,
+    isManual: data.isManual ?? false,
     date: new Date().toISOString().slice(0, 10),
     customerId: data.customerId ?? undefined,
     customerName: data.customerName ?? undefined,
@@ -2228,12 +2448,12 @@ export async function createReturn(data: {
     );
   }
 
-  // Notify admin + manager — they can approve from any device.
+  const invoiceLabel = primaryInvoiceNumber || (data.isManual ? "manual return" : "invoice");
   await createNotification({
     targetRole: "admin",
     type: "return_approval",
     title: "Return awaiting approval",
-    message: `${voucherNumber} vs ${data.originalInvoiceNumber || "invoice"} — QAR ${total.toFixed(2)}${data.reason ? ` (${data.reason})` : ""}`,
+    message: `${voucherNumber} vs ${invoiceLabel}${sourceInvoices.length > 1 ? ` (+${sourceInvoices.length - 1} more)` : ""} — QAR ${total.toFixed(2)}${data.reason ? ` (${data.reason})` : ""}`,
     link: "/approvals",
     entityType: "return",
     entityId: ret.id,
@@ -2243,7 +2463,7 @@ export async function createReturn(data: {
     targetRole: "manager",
     type: "return_approval",
     title: "Return awaiting approval",
-    message: `${voucherNumber} vs ${data.originalInvoiceNumber || "invoice"} — QAR ${total.toFixed(2)}`,
+    message: `${voucherNumber} vs ${invoiceLabel}${sourceInvoices.length > 1 ? ` (+${sourceInvoices.length - 1} more)` : ""} — QAR ${total.toFixed(2)}`,
     link: "/approvals",
     entityType: "return",
     entityId: ret.id,
@@ -2270,8 +2490,8 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
       if (it.productId) {
         await adjustStock(
           Number(it.productId), Number(storeId), Number(it.qty || 0),
-          "return", `Return ${ret.voucherNumber} approved vs ${ret.originalInvoiceNumber}`,
-          ret.originalInvoiceId, userId,
+          "return", `Return ${ret.voucherNumber} approved${ret.originalInvoiceNumber ? ` vs ${ret.originalInvoiceNumber}` : ""}`,
+          ret.originalInvoiceId ?? undefined, userId,
         );
       }
     }
@@ -2333,7 +2553,7 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
       linkedDocId: ret.originalInvoiceId ?? null,
       subtotal: String(rvTotal),
       total: String(refundAmt || rvTotal),
-      notes: `Credit note for return ${ret.voucherNumber} vs ${ret.originalInvoiceNumber}. Refund ${appliedMethod}.`,
+      notes: `Credit note for return ${ret.voucherNumber}${ret.originalInvoiceNumber ? ` vs ${ret.originalInvoiceNumber}` : (ret as any).isManual ? " (manual return)" : ""}. Refund ${appliedMethod}.`,
       createdBy: userId ?? null,
     }).returning();
     creditNoteId = rvDoc.id;
@@ -2369,7 +2589,7 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
       type: "return_approved",
       title: "Return approved",
       message: `${ret.voucherNumber} approved. Stock reversed${refundAmt > 0 ? `, refund ${appliedMethod} QAR ${refundAmt.toFixed(2)}` : ""}.`,
-      link: `/documents/${ret.originalInvoiceId}`,
+      link: ret.originalInvoiceId ? `/documents/${ret.originalInvoiceId}` : "/approvals",
       entityType: "return", entityId: ret.id, createdBy: userId,
     });
   }
@@ -2393,7 +2613,7 @@ export async function rejectReturn(id: number, userId?: number, reason?: string)
       type: "return_rejected",
       title: "Return rejected",
       message: `${ret.voucherNumber} was rejected${reason ? `: ${reason}` : ""}. Nothing changed.`,
-      link: `/documents/${ret.originalInvoiceId}`,
+      link: ret.originalInvoiceId ? `/documents/${ret.originalInvoiceId}` : "/approvals",
       entityType: "return", entityId: ret.id, createdBy: userId,
     });
   }
@@ -2639,6 +2859,212 @@ export async function getReturn(id: number): Promise<(Return & { items: any[] })
   if (!ret) return undefined;
   const items = await db.select().from(returnItems).where(eq(returnItems.returnId, id));
   return { ...ret, items };
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// APPROVAL REQUESTS — generic override inbox
+// A single queue for any decision a manager/admin must make: an over-limit sale
+// (credit_limit), an invoice void, a discount/price change, or a free-form
+// request (manual). On approval the held action in `payload` is carried out.
+// Returns keep their own `returns` table but are merged into the same inbox
+// on the client, so they are NOT duplicated here.
+// ═══════════════════════════════════════════════════════════════════════════
+export const APPROVAL_APPROVERS = ["admin", "manager"] as const;
+
+export function approvalTypeLabel(type: string): string {
+  switch (type) {
+    case "credit_limit": return "Credit-limit override";
+    case "discount": return "Discount / price change";
+    case "void": return "Invoice void";
+    case "manual": return "Approval request";
+    default: return "Approval request";
+  }
+}
+
+export async function createApprovalRequest(data: {
+  type: string;
+  requestedBy?: number;
+  storeId?: number | null;
+  title?: string;
+  summary?: string;
+  message?: string;
+  amount?: number | null;
+  entityType?: string | null;
+  entityId?: number | null;
+  payload?: any;
+}): Promise<ApprovalRequest> {
+  const requestNumber = await getNextDocNumber("AR");
+  const requester = data.requestedBy ? await getUser(data.requestedBy) : null;
+  const title = data.title || approvalTypeLabel(data.type);
+
+  const [row] = await db.insert(approvalRequests).values({
+    requestNumber,
+    type: data.type,
+    status: "pending",
+    requestedBy: data.requestedBy ?? undefined,
+    requestedByName: requester?.name ?? undefined,
+    storeId: data.storeId ?? undefined,
+    title,
+    summary: data.summary ?? undefined,
+    message: data.message ?? undefined,
+    amount: data.amount != null ? String(data.amount) : undefined,
+    entityType: data.entityType ?? undefined,
+    entityId: data.entityId ?? undefined,
+    payload: data.payload ?? undefined,
+  }).returning();
+
+  // Notify the approvers (admin + manager) — same pattern as returns.
+  const notifyMsg = `${requestNumber} · ${title}${data.summary ? ` — ${data.summary}` : ""}${requester?.name ? ` (by ${requester.name})` : ""}`;
+  for (const role of APPROVAL_APPROVERS) {
+    await createNotification({
+      targetRole: role,
+      type: "approval_request",
+      title: "Approval requested",
+      message: notifyMsg,
+      link: "/approvals",
+      entityType: "approval_request",
+      entityId: row.id,
+      createdBy: data.requestedBy,
+    });
+  }
+  return row;
+}
+
+export async function getApprovalRequests(opts: { role?: string; userId?: number; mine?: boolean }): Promise<ApprovalRequest[]> {
+  // Approvers see everything; a requester sees only their own.
+  const isApprover = !!opts.role && (APPROVAL_APPROVERS as readonly string[]).includes(opts.role);
+  if (!isApprover || opts.mine) {
+    if (!opts.userId) return [];
+    return db.select().from(approvalRequests)
+      .where(eq(approvalRequests.requestedBy, opts.userId))
+      .orderBy(desc(approvalRequests.id));
+  }
+  return db.select().from(approvalRequests).orderBy(desc(approvalRequests.id));
+}
+
+export async function getApprovalRequest(id: number): Promise<ApprovalRequest | undefined> {
+  const [row] = await db.select().from(approvalRequests).where(eq(approvalRequests.id, id));
+  return row;
+}
+
+// Approve → carry out the held action, stamp the decider, notify the requester.
+export async function approveApprovalRequest(id: number, deciderId?: number, note?: string): Promise<ApprovalRequest> {
+  const reqRow = await getApprovalRequest(id);
+  if (!reqRow) throw new Error("Approval request not found");
+  if (reqRow.status === "approved") return reqRow;                              // idempotent
+  if (reqRow.status !== "pending") throw new Error(`This request was already ${reqRow.status}.`);
+
+  const decider = deciderId ? await getUser(deciderId) : null;
+  let resultEntityId: number | null = reqRow.entityId ?? null;
+  let resultNote = note;
+
+  if (reqRow.type === "credit_limit") {
+    // Replay the held invoice now, with the credit gate overridden and the
+    // approving manager as the authorizer (also clears any bundled discount gate).
+    const payload = (reqRow.payload || {}) as any;
+    const doc = await createDocument({ ...payload, creditOverride: true, authorizedBy: deciderId } as any);
+    resultEntityId = doc?.id ?? resultEntityId;
+    resultNote = note || `Invoice ${doc?.number ?? ""} created on approval.`.trim();
+  } else if (reqRow.type === "void") {
+    if (!reqRow.entityId) throw new Error("This void request has no linked invoice.");
+    const r = await voidDocument(reqRow.entityId, deciderId);
+    if (!r.ok) throw new Error(r.message || "Void failed");
+    resultNote = note || "Invoice voided on approval.";
+  } else if (reqRow.type === "discount") {
+    const payload = (reqRow.payload || {}) as any;
+    if (payload && payload.items && !reqRow.entityId) {
+      // Async discount: replay the held invoice with the approving manager as authorizer.
+      const doc = await createDocument({ ...payload, authorizedBy: deciderId } as any);
+      resultEntityId = doc?.id ?? resultEntityId;
+      resultNote = note || `Invoice ${doc?.number ?? ""} created on approval.`.trim();
+    } else if (reqRow.entityId) {
+      await db.update(documents).set({ pricingApprovedBy: deciderId ?? null } as any).where(eq(documents.id, reqRow.entityId));
+    }
+  }
+  // "manual" → decision recorded only (informational authorization).
+
+  const [row] = await db.update(approvalRequests).set({
+    status: "approved",
+    decidedBy: deciderId ?? undefined,
+    decidedByName: decider?.name ?? undefined,
+    decidedAt: new Date(),
+    decisionNote: resultNote ?? undefined,
+    entityId: resultEntityId ?? undefined,
+  }).where(eq(approvalRequests.id, id)).returning();
+
+  if (reqRow.requestedBy) {
+    const notifLink = ((reqRow.type === "credit_limit" || reqRow.type === "discount") && resultEntityId) ? `/documents/${resultEntityId}`
+      : (reqRow.type === "void" && reqRow.entityId) ? `/documents/${reqRow.entityId}`
+      : "/approvals";
+    await createNotification({
+      targetUserId: reqRow.requestedBy,
+      type: "approval_approved",
+      title: "Request approved",
+      message: `${reqRow.requestNumber} · ${reqRow.title} — approved${decider?.name ? ` by ${decider.name}` : ""}.${resultNote ? ` ${resultNote}` : ""}`,
+      link: notifLink,
+      entityType: "approval_request",
+      entityId: id,
+      createdBy: deciderId,
+    });
+  }
+  return row;
+}
+
+export async function rejectApprovalRequest(id: number, deciderId?: number, note?: string): Promise<ApprovalRequest> {
+  const reqRow = await getApprovalRequest(id);
+  if (!reqRow) throw new Error("Approval request not found");
+  if (reqRow.status === "rejected") return reqRow;
+  if (reqRow.status !== "pending") throw new Error(`This request was already ${reqRow.status}.`);
+  const decider = deciderId ? await getUser(deciderId) : null;
+
+  const [row] = await db.update(approvalRequests).set({
+    status: "rejected",
+    decidedBy: deciderId ?? undefined,
+    decidedByName: decider?.name ?? undefined,
+    decidedAt: new Date(),
+    decisionNote: note ?? undefined,
+  }).where(eq(approvalRequests.id, id)).returning();
+
+  if (reqRow.requestedBy) {
+    await createNotification({
+      targetUserId: reqRow.requestedBy,
+      type: "approval_rejected",
+      title: "Request rejected",
+      message: `${reqRow.requestNumber} · ${reqRow.title} — rejected${decider?.name ? ` by ${decider.name}` : ""}${note ? `: ${note}` : ""}.`,
+      link: "/approvals",
+      entityType: "approval_request",
+      entityId: id,
+      createdBy: deciderId,
+    });
+  }
+  return row;
+}
+
+// A requester withdraws their own still-pending request.
+export async function cancelApprovalRequest(id: number, userId?: number): Promise<ApprovalRequest> {
+  const reqRow = await getApprovalRequest(id);
+  if (!reqRow) throw new Error("Approval request not found");
+  if (reqRow.status !== "pending") throw new Error("Only a pending request can be cancelled.");
+  if (userId && reqRow.requestedBy && reqRow.requestedBy !== userId) {
+    throw new Error("You can only cancel your own request.");
+  }
+  const [row] = await db.update(approvalRequests).set({
+    status: "cancelled",
+    decidedAt: new Date(),
+  }).where(eq(approvalRequests.id, id)).returning();
+  return row;
+}
+
+export async function completeApprovalRequest(id: number, userId?: number): Promise<ApprovalRequest> {
+  const reqRow = await getApprovalRequest(id);
+  if (!reqRow) throw new Error("Approval request not found");
+  if (reqRow.status !== "approved") throw new Error("Only an approved request can be marked done.");
+  if (userId && reqRow.requestedBy && reqRow.requestedBy !== userId) {
+    throw new Error("Only the requester can mark their request as done.");
+  }
+  const [row] = await db.update(approvalRequests).set({ status: "completed" } as any)
+    .where(eq(approvalRequests.id, id)).returning();
+  return row;
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────
@@ -2926,47 +3352,200 @@ export async function getSupplierLedger(supplierId: number) {
 
 // ─── Reports ─────────────────────────────────────────────────────────────────
 // ─── Owner Loans / Cash Injections ───────────────────────────────────────────
+// ── Owner-loan movement taxonomy ──────────────────────────────────────────────
+// The `ownerLoans` table is a small two-sided financing ledger, keyed on `type`:
+//   money IN  : injection (capital we receive), collection (a lent-out returns)
+//   money OUT : repayment (we settle an injection), lend_out (we lend, expect it
+//               back), profit_withdrawal (owner draws profit — not coming back)
+// `refInjectionId` is the generic "parent" link: repayment→injection, collection
+// →lend_out. Reusing the column avoids a migration; getOwnerLoans keys the pair
+// off the child's type. Profit withdrawals are terminal (no parent, never a loan).
+export const LOAN_OUT_TYPES = new Set(["repayment", "lend_out", "profit_withdrawal"]);
+export const LOAN_TYPES = new Set(["injection", "repayment", "lend_out", "collection", "profit_withdrawal"]);
+// A settlement (child) is capped at its parent's remaining balance.
+const LOAN_SETTLEMENT: Record<string, { parent: string; missing: string; noun: string }> = {
+  repayment:  { parent: "injection", missing: "The loan being repaid was not found.",            noun: "repayment" },
+  collection: { parent: "lend_out",  missing: "The money-lent-out record being collected was not found.", noun: "collection" },
+};
+const LOAN_CATEGORY: Record<string, string> = {
+  injection: "Owner Contribution", repayment: "Loan Repayment", lend_out: "Money Lent Out",
+  collection: "Loan Collected", profit_withdrawal: "Profit Withdrawal",
+};
+const LOAN_VERB: Record<string, string> = {
+  injection: "Cash injection", repayment: "Loan repayment", lend_out: "Money lent out",
+  collection: "Loan collected", profit_withdrawal: "Profit withdrawal",
+};
+
 export async function createOwnerLoan(data: {
-  type: string; amount: number; source?: string; method?: string; date: string; note?: string; createdBy?: number;
+  type: string; amount: number; source?: string; method?: string; date: string; note?: string; proofUrl?: string;
+  refInjectionId?: number; createdBy?: number;
   override?: boolean; overrideReason?: string;
 }) {
   const method = data.method === "Bank Transfer" ? "Bank Transfer" : "Cash";
-  // Guard: a repayment is money OUT — block if it exceeds the instrument's balance.
-  if (data.type === "repayment") {
+  const type = data.type;
+
+  // ── Linked settlements (repayment→injection, collection→lend_out) MUST name
+  //    their parent and can never exceed its remaining balance. This is what
+  //    keeps outstanding/receivable honest: no orphan money-out that reconciles
+  //    to nothing, no over-payment that silently vanishes.
+  const settle = LOAN_SETTLEMENT[type];
+  if (settle) {
+    if (!data.refInjectionId) {
+      throw new Error(`A ${settle.noun} must be linked to the specific ${settle.parent === "injection" ? "loan" : "lent-out record"} it settles.`);
+    }
+    const [parent] = await db.select().from(ownerLoans).where(eq(ownerLoans.id, data.refInjectionId));
+    if (!parent || parent.type !== settle.parent) throw new Error(settle.missing);
+    const priors = await db.select().from(ownerLoans)
+      .where(and(eq(ownerLoans.type, type), eq(ownerLoans.refInjectionId, data.refInjectionId)));
+    const already = priors.reduce((s, r) => s + Number(r.amount || 0), 0);
+    const remaining = Number(parent.amount || 0) - already;
+    if (Number(data.amount) > remaining + 0.005) {
+      throw new Error(`This ${settle.noun} exceeds the remaining balance (remaining QAR ${remaining.toFixed(2)}).`);
+    }
+  }
+
+  // ── Every money-OUT movement (repay / lend / profit draw) checks funds. ──
+  if (LOAN_OUT_TYPES.has(type)) {
     await ensureFunds({
       instrument: methodInstrument(method),
       amount: Number(data.amount),
       override: data.override, overrideReason: data.overrideReason, userId: data.createdBy,
-      context: `Loan repayment — ${data.source || "Owner"}`,
+      context: `${LOAN_VERB[type] || "Cash out"} — ${data.source || "Owner"}`,
     });
   }
+
   const [row] = await db.insert(ownerLoans).values({
-    type: data.type, amount: String(data.amount), source: data.source ?? null,
-    method, date: data.date, note: data.note ?? null, createdBy: data.createdBy ?? null,
+    type, amount: String(data.amount), source: data.source ?? null,
+    method, date: data.date, note: data.note ?? null, proofUrl: data.proofUrl ?? null,
+    refInjectionId: data.refInjectionId ?? null,
+    createdBy: data.createdBy ?? null,
   }).returning();
-  // Reflect in the cash ledger. Note tags the method so cash-vs-bank splits correctly.
   await logCashflow({
-    direction: data.type === "injection" ? "in" : "out",
-    category: data.type === "injection" ? "Owner Contribution" : "Loan Repayment",
+    direction: LOAN_OUT_TYPES.has(type) ? "out" : "in",
+    category: LOAN_CATEGORY[type] || "Owner Contribution",
     amount: data.amount, refType: "owner_loan", refId: row.id,
-    notes: `${data.type === "injection" ? "Cash injection" : "Loan repayment"} — ${data.source || "Owner"} (${method})`,
+    notes: `${LOAN_VERB[type] || "Cash movement"} — ${data.source || "Owner"} (${method})`,
     createdBy: data.createdBy,
   });
   return row;
 }
 
+export async function updateOwnerLoan(id: number, data: {
+  amount?: number; source?: string; method?: string; date?: string; note?: string; proofUrl?: string;
+  updatedBy?: number;
+}) {
+  const [existing] = await db.select().from(ownerLoans).where(eq(ownerLoans.id, id));
+  if (!existing) throw new Error("Record not found");
+  const method = data.method === "Bank Transfer" ? "Bank Transfer" : (data.method === "Cash" ? "Cash" : existing.method);
+  const newAmount = data.amount ?? Number(existing.amount);
+  // Editing a settlement (repayment or collection) can't push it past its
+  // parent's remaining balance (parent amount − every OTHER child of that parent).
+  if (LOAN_SETTLEMENT[existing.type] && existing.refInjectionId && data.amount != null) {
+    const [parent] = await db.select().from(ownerLoans).where(eq(ownerLoans.id, existing.refInjectionId));
+    if (parent) {
+      const linked = await db.select().from(ownerLoans)
+        .where(and(eq(ownerLoans.type, existing.type), eq(ownerLoans.refInjectionId, existing.refInjectionId)));
+      const otherSum = linked.filter((r) => r.id !== id).reduce((s, r) => s + Number(r.amount || 0), 0);
+      const remaining = Number(parent.amount || 0) - otherSum;
+      if (newAmount > remaining + 0.005) {
+        throw new Error(`This ${LOAN_SETTLEMENT[existing.type].noun} exceeds the remaining balance (max QAR ${remaining.toFixed(2)}).`);
+      }
+    }
+  }
+  const [row] = await db.update(ownerLoans).set({
+    amount: String(newAmount),
+    source: data.source ?? existing.source,
+    method,
+    date: data.date ?? existing.date,
+    note: data.note ?? existing.note,
+    proofUrl: data.proofUrl !== undefined ? (data.proofUrl || null) : existing.proofUrl,
+  }).where(eq(ownerLoans.id, id)).returning();
+  // Sync the linked cashflow entry — amount, notes (method drives the hand/bank
+  // split in getCashPosition), and date must all stay in lockstep.
+  const newSource = data.source ?? existing.source;
+  const newDate = data.date ?? existing.date;
+  const cfPatch: Record<string, any> = {};
+  if (newAmount !== Number(existing.amount)) cfPatch.amount = String(newAmount);
+  if (method !== existing.method || newSource !== existing.source) {
+    cfPatch.notes = `${LOAN_VERB[existing.type] || "Cash movement"} — ${newSource || "Owner"} (${method})`;
+  }
+  if (newDate !== existing.date) cfPatch.date = newDate;
+  if (Object.keys(cfPatch).length) {
+    await db.update(cashflow).set(cfPatch)
+      .where(and(eq(cashflow.refType, "owner_loan"), eq(cashflow.refId, id)));
+  }
+  return row;
+}
+
 export async function getOwnerLoans() {
   const rows = await db.select().from(ownerLoans).orderBy(desc(ownerLoans.id));
-  const injected = rows.filter((r) => r.type === "injection").reduce((s, r) => s + Number(r.amount || 0), 0);
-  const repaid = rows.filter((r) => r.type === "repayment").reduce((s, r) => s + Number(r.amount || 0), 0);
+  const r2 = (n: number) => Number((n || 0).toFixed(2));
+
+  // Sum each child (settlement) against its parent id, keyed by child type.
+  // repayment→injection, collection→lend_out. This per-parent total is the
+  // single source of truth for remaining balances and the whole summary.
+  const settledByParent: Record<string, Record<number, number>> = { repayment: {}, collection: {} };
+  for (const r of rows) {
+    if ((r.type === "repayment" || r.type === "collection") && r.refInjectionId) {
+      const bucket = settledByParent[r.type];
+      bucket[r.refInjectionId] = (bucket[r.refInjectionId] || 0) + Number(r.amount || 0);
+    }
+  }
+
+  // Enrich each parent (injection / lend_out) with settled + remaining. Capping
+  // at the parent size means a stray over-settlement can't drive remaining < 0.
+  const enriched = rows.map((r) => {
+    const childType = r.type === "injection" ? "repayment" : r.type === "lend_out" ? "collection" : null;
+    if (!childType) return r;
+    const settledRaw = settledByParent[childType][r.id] || 0;
+    const settled = Math.min(settledRaw, Number(r.amount || 0));
+    const remaining = Math.max(0, Number(r.amount || 0) - settled);
+    // `repaidAmount` kept for backward-compat (frontend + injections); `settledAmount`
+    // is the generic name that also covers collections on lent-out money.
+    return { ...r, repaidAmount: r2(settled), settledAmount: r2(settled), remainingAmount: r2(remaining) };
+  });
+
+  const injections = enriched.filter((r) => r.type === "injection") as any[];
+  const lendOuts   = enriched.filter((r) => r.type === "lend_out") as any[];
+
+  // We owe (borrowed capital): outstanding = Σ each loan's real remaining. Derive
+  // repaid from injected − outstanding so the tiles always reconcile and the
+  // headline can never contradict a still-showing REPAY row.
+  const injected    = injections.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const outstanding = injections.reduce((s, r) => s + Number(r.remainingAmount || 0), 0);
+  const repaid      = injected - outstanding;
+
+  // Owed to us (money we lent out): receivable = Σ each lent-out's remaining.
+  const lentOut    = lendOuts.reduce((s, r) => s + Number(r.amount || 0), 0);
+  const receivable = lendOuts.reduce((s, r) => s + Number(r.remainingAmount || 0), 0);
+  const collected  = lentOut - receivable;
+
+  // Profit drawn by the owner — a terminal cash-out. Tracked here so the Profit
+  // tab can show "kept in business"; it never touches earned-profit maths.
+  const profitTaken = rows.filter((r) => r.type === "profit_withdrawal").reduce((s, r) => s + Number(r.amount || 0), 0);
+
+  // Legacy / imported junk: settlements not linked to a parent, or beyond its
+  // balance. They moved real cash but settle nothing, so they're excluded from
+  // repaid/collected above — surfaced here to reconcile, not silently hidden.
+  const totalRepayments  = rows.filter((r) => r.type === "repayment").reduce((s, r) => s + Number(r.amount || 0), 0);
+  const totalCollections = rows.filter((r) => r.type === "collection").reduce((s, r) => s + Number(r.amount || 0), 0);
+  const unlinkedRepaid    = Math.max(0, totalRepayments - repaid);
+  const unlinkedCollected = Math.max(0, totalCollections - collected);
+
   return {
-    rows,
-    summary: { injected: Number(injected.toFixed(2)), repaid: Number(repaid.toFixed(2)), outstanding: Number((injected - repaid).toFixed(2)) },
+    rows: enriched,
+    summary: {
+      injected: r2(injected), repaid: r2(repaid), outstanding: r2(outstanding),
+      lentOut: r2(lentOut), collected: r2(collected), receivable: r2(receivable),
+      profitTaken: r2(profitTaken),
+      unlinkedRepaid: r2(unlinkedRepaid), unlinkedCollected: r2(unlinkedCollected),
+    },
   };
 }
 
 export async function getDailySalesSummary(startDate: string, endDate: string, storeId?: number) {
-  const conditions = [
+  const r2 = (n: number) => Number((n || 0).toFixed(2));
+  const conditions: any[] = [
     eq(documents.type, "INV"),
     gte(documents.date, startDate),
     lte(documents.date, endDate),
@@ -2975,92 +3554,120 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
   if (storeId) conditions.push(eq(documents.storeId, storeId));
 
   const docs = await db.select().from(documents).where(and(...conditions));
-  const payRows = await db.select({ amount: payments.amount, method: payments.method, date: payments.date })
-    .from(payments)
-    .innerJoin(documents, eq(payments.documentId, documents.id))
-    .where(and(
-      eq(documents.type, "INV"),
-      ne(documents.status, "void"),
-      gte(documents.date, startDate),
-      lte(documents.date, endDate),
-      storeId ? eq(documents.storeId, storeId) : undefined,
-    ));
-
-  const totalRevenue = docs.reduce((s, d) => s + parseFloat(d.total || "0"), 0);
-  const cashSales = payRows.filter(p => p.method === "Cash").reduce((s, p) => s + parseFloat(p.amount || "0"), 0);
-  const creditSales = totalRevenue - cashSales;
-
-  // COGS: join document_items → products.costPrice, same as getProfitDetail
   const ids = docs.map((d: any) => d.id);
+
+  // ── Payments (cash vs credit split) ──
+  const payRows = await db.select({
+    documentId: payments.documentId, amount: payments.amount,
+    method: payments.method, isRefund: payments.isRefund,
+  }).from(payments).where(ids.length ? inArray(payments.documentId, ids) : sql`false`);
+  const paidByDoc: Record<number, number> = {};
+  let cashCollected = 0;
+  for (const p of payRows as any[]) {
+    const amt = parseFloat(p.amount || "0") * (p.isRefund ? -1 : 1);
+    paidByDoc[p.documentId] = (paidByDoc[p.documentId] || 0) + amt;
+    if (!p.isRefund && p.method === "Cash") cashCollected += parseFloat(p.amount || "0");
+  }
+
+  // ── Items: profit, COGS, product agg, category agg — IDENTICAL formula to business-summary ──
+  const profitByDoc: Record<number, number> = {};
   const cogsByDoc: Record<number, number> = {};
-  let bestProduct: { name: string; qty: number } | null = null;
+  const productAgg: Record<string, { name: string; qty: number; revenue: number; profit: number }> = {};
+  const categoryAgg: Record<string, number> = {};
   if (ids.length) {
     const items = await db.select({
-      documentId: documentItems.documentId,
-      description: documentItems.description,
-      qty: documentItems.qty,
-      cost: products.costPrice,
+      documentId: documentItems.documentId, description: documentItems.description,
+      qty: documentItems.qty, amount: documentItems.amount,
+      cost: products.costPrice, category: products.category,
     }).from(documentItems)
       .leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
 
-    const byProduct: Record<string, number> = {};
     for (const it of items as any[]) {
-      const c = Number(it.cost || 0) * Number(it.qty || 0);
-      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + c;
-      byProduct[it.description] = (byProduct[it.description] || 0) + Number(it.qty || 0);
+      const itemCost = parseFloat(it.cost || "0") * parseFloat(it.qty || "0");
+      const itemRev = parseFloat(it.amount || "0");
+      const itemProfit = itemRev - itemCost;
+      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
+      profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + itemProfit;
+      const key = it.description || "Unknown";
+      const pa = productAgg[key] || { name: key, qty: 0, revenue: 0, profit: 0 };
+      pa.qty += Number(it.qty || 0); pa.revenue += itemRev; pa.profit += itemProfit;
+      productAgg[key] = pa;
+      const cat = it.category || "Other";
+      categoryAgg[cat] = (categoryAgg[cat] || 0) + itemRev;
     }
-    const bpEntry = Object.entries(byProduct).sort((a, b) => b[1] - a[1])[0];
-    if (bpEntry) bestProduct = { name: bpEntry[0], qty: Number(bpEntry[1]) };
   }
 
-  let totalCogs = 0;
-  const dailyMap: Record<string, { revenue: number; invoiceCount: number; cogs: number }> = {};
-  for (const d of docs as any[]) {
-    const date = d.date;
+  // ── Per-invoice detail + aggregation ──
+  let totalRevenue = 0, totalCogs = 0, grossProfit = 0, realProfit = 0;
+  const customerAgg: Record<string, { name: string; customerId: number | null; total: number; invoiceCount: number }> = {};
+  const dailyMap: Record<string, { revenue: number; invoiceCount: number; cogs: number; profit: number }> = {};
+
+  const invoices = docs.map((d: any) => {
     const total = parseFloat(d.total || "0");
     const cogs = cogsByDoc[d.id] || 0;
-    totalCogs += cogs;
-    if (!dailyMap[date]) dailyMap[date] = { revenue: 0, invoiceCount: 0, cogs: 0 };
-    dailyMap[date].revenue += total;
-    dailyMap[date].invoiceCount += 1;
-    dailyMap[date].cogs += cogs;
-  }
+    const profit = profitByDoc[d.id] || 0;
+    const paid = paidByDoc[d.id] || 0;
+    totalRevenue += total; totalCogs += cogs; grossProfit += profit;
+    if (d.status === "paid") realProfit += profit;
+
+    const date = d.date;
+    if (!dailyMap[date]) dailyMap[date] = { revenue: 0, invoiceCount: 0, cogs: 0, profit: 0 };
+    dailyMap[date].revenue += total; dailyMap[date].invoiceCount += 1;
+    dailyMap[date].cogs += cogs; dailyMap[date].profit += profit;
+
+    const custKey = d.customerName || "Walk-in";
+    const ca = customerAgg[custKey] || { name: custKey, customerId: d.customerId, total: 0, invoiceCount: 0 };
+    ca.total += total; ca.invoiceCount += 1;
+    customerAgg[custKey] = ca;
+
+    return {
+      id: d.id, number: d.number, date, status: d.status,
+      customerName: d.customerName || "Walk-in", customerId: d.customerId,
+      total: r2(total), paid: r2(paid), cogs: r2(cogs), profit: r2(profit),
+    };
+  }).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
+
+  const creditSales = totalRevenue - cashCollected;
+  const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+
   const rows = Object.entries(dailyMap)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, v]) => ({
-      date,
-      revenue: Number(v.revenue.toFixed(2)),
-      invoiceCount: v.invoiceCount,
-      cogs: Number(v.cogs.toFixed(2)),
-      profit: Number((v.revenue - v.cogs).toFixed(2)),
+      date, revenue: r2(v.revenue), invoiceCount: v.invoiceCount,
+      cogs: r2(v.cogs), profit: r2(v.profit),
     }));
 
-  const grossProfit = totalRevenue - totalCogs;
-  const marginPct = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
+  // ── Returns ──
+  const retConds: any[] = [eq(returnsTable.status, "approved")];
+  if (startDate) retConds.push(gte(returnsTable.date, startDate));
+  if (endDate) retConds.push(lte(returnsTable.date, endDate));
+  if (storeId) retConds.push(eq(returnsTable.storeId, storeId));
+  const retRows = await db.select().from(returnsTable).where(and(...retConds));
+  const returnsTotal = retRows.reduce((s, r: any) => s + parseFloat(r.total || "0"), 0);
 
-  // Best customer (by spend)
-  const byCustomer: Record<string, number> = {};
-  for (const d of docs as any[]) {
-    const name = d.customerName || "Walk-in Customer";
-    byCustomer[name] = (byCustomer[name] || 0) + parseFloat(d.total || "0");
-  }
-  const bcEntry = Object.entries(byCustomer).sort((a, b) => b[1] - a[1])[0];
-  const bestCustomer = bcEntry ? { name: bcEntry[0], total: Number(bcEntry[1].toFixed(2)) } : null;
+  // ── Top products / customers / categories ──
+  const topProducts = Object.values(productAgg).sort((a, b) => b.revenue - a.revenue).slice(0, 10)
+    .map(p => ({ name: p.name, qty: r2(p.qty), revenue: r2(p.revenue), profit: r2(p.profit) }));
+  const topCustomers = Object.values(customerAgg).sort((a, b) => b.total - a.total).slice(0, 10)
+    .map(c => ({ name: c.name, customerId: c.customerId, total: r2(c.total), invoiceCount: c.invoiceCount }));
+  const salesByCategory = Object.entries(categoryAgg)
+    .map(([category, total]) => ({ category, total: r2(total as number) }))
+    .sort((a, b) => b.total - a.total);
 
   return {
-    rows,
-    totalRevenue,
+    rows, invoices,
+    totalRevenue: r2(totalRevenue),
     invoiceCount: docs.length,
-    avgInvoiceValue: docs.length > 0 ? totalRevenue / docs.length : 0,
-    cashSales,
-    creditSales,
-    returnsTotal: 0,
-    cogs: Number(totalCogs.toFixed(2)),
-    grossProfit: Number(grossProfit.toFixed(2)),
-    marginPct: Number(marginPct.toFixed(1)),
-    bestCustomer,
-    bestProduct,
+    avgInvoiceValue: r2(docs.length > 0 ? totalRevenue / docs.length : 0),
+    cashSales: r2(cashCollected),
+    creditSales: r2(creditSales),
+    returnsTotal: r2(returnsTotal),
+    cogs: r2(totalCogs),
+    grossProfit: r2(grossProfit),
+    realProfit: r2(realProfit),
+    marginPct: r2(marginPct),
+    topProducts, topCustomers, salesByCategory,
   };
 }
 
@@ -3070,6 +3677,7 @@ export async function getUnpaidInvoices(opts?: { start?: string; end?: string })
     ne(documents.status, "paid"),
     ne(documents.status, "returned"),
     ne(documents.status, "void"),
+    ne(documents.transactionMode, "demo"),
   ];
   if (opts?.start) conditions.push(gte(documents.date, opts.start));
   if (opts?.end) conditions.push(lte(documents.date, opts.end));
@@ -3116,10 +3724,62 @@ export async function getUnpaidInvoices(opts?: { start?: string; end?: string })
 
 // ─── Profit detail (dashboard "Profit Today" drill-down) ─────────────────────
 // Profit = Sell − Cost only (expenses are NOT part of gross profit).
+// ══════════════════════════════════════════════════════════════════════════════
+// CANONICAL GROSS-PROFIT MODEL — single source of truth for every profit surface
+// (Finance → Profit, Reports → Business Summary, Dashboard → Profit Today).
+//
+//   Gross profit per invoice = Σ( item.amount − item.cost × item.qty )   (item-level)
+//   • REAL profit     = summed over PAID invoices only  (money actually collected)
+//   • EXPECTED profit = summed over ALL non-void invoices (paid + credit + PDC)
+//                       — what we earn once every credit/PDC invoice is collected.
+//                       (Historically called "imaginary" profit.)
+//
+// Any page that computes profit differently WILL drift from these numbers, so all
+// of them read the aggregates produced here. `expectedProfit` and `imaginaryProfit`
+// are the same value under two names (back-compat).
+// ══════════════════════════════════════════════════════════════════════════════
+export type ProfitAgg = {
+  realProfit: number; expectedProfit: number; imaginaryProfit: number;
+  realSales: number; totalSales: number;
+  realCogs: number; totalCogs: number;
+  realCount: number; invoiceCount: number;
+  realMargin: number; expectedMargin: number;
+};
+
+/** Fold per-document profit/COGS + paid status into the canonical real/expected
+    aggregates. `profitByDoc` should be the item-level sum; when a doc has no items
+    it falls back to (total − cogs) so nothing is silently dropped. */
+function aggregateInvoiceProfit(
+  docs: Array<{ id: number; total: any; status: any }>,
+  profitByDoc: Record<number, number>,
+  cogsByDoc: Record<number, number>,
+): ProfitAgg {
+  let realProfit = 0, expectedProfit = 0, realSales = 0, totalSales = 0, realCogs = 0, totalCogs = 0, realCount = 0;
+  for (const d of docs) {
+    const total = Number(d.total || 0);
+    const cogs = cogsByDoc[d.id] || 0;
+    const profit = profitByDoc[d.id] ?? (total - cogs);
+    expectedProfit += profit; totalSales += total; totalCogs += cogs;
+    if (d.status === "paid") { realProfit += profit; realSales += total; realCogs += cogs; realCount++; }
+  }
+  const r2 = (n: number) => Number((n || 0).toFixed(2));
+  return {
+    realProfit: r2(realProfit), expectedProfit: r2(expectedProfit), imaginaryProfit: r2(expectedProfit),
+    realSales: r2(realSales), totalSales: r2(totalSales),
+    realCogs: r2(realCogs), totalCogs: r2(totalCogs),
+    realCount, invoiceCount: docs.length,
+    realMargin: realSales > 0 ? r2((realProfit / realSales) * 100) : 0,
+    expectedMargin: totalSales > 0 ? r2((expectedProfit / totalSales) * 100) : 0,
+  };
+}
+
 export async function getProfitDetail(start: string, end: string, storeId?: number) {
   const conds: any[] = [eq(documents.type, "INV"), gte(documents.date, start), lte(documents.date, end), ne(documents.status, "void")];
   if (storeId) conds.push(eq(documents.storeId, storeId));
-  const docs = await db.select().from(documents).where(and(...conds));
+  // Exclude demo/test transactions so Finance matches Reports (business-summary does
+  // the same). NULL/"real" both count; only "demo" is dropped (matches JS !== "demo").
+  const docs = (await db.select().from(documents).where(and(...conds)))
+    .filter((d: any) => d.transactionMode !== "demo");
   const ids = docs.map((d) => d.id);
   const cogsByDoc: Record<number, number> = {};
   const itemsByDoc: Record<number, any[]> = {};
@@ -3139,21 +3799,45 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
       });
     }
   }
-  let realProfit = 0, imaginaryProfit = 0, realSales = 0, totalSales = 0;
+  // Item-level profit: sum(item.amount - item.cost×qty) per doc — the canonical formula.
+  const profitByDoc: Record<number, number> = {};
+  for (const [docId, items] of Object.entries(itemsByDoc)) {
+    profitByDoc[Number(docId)] = items.reduce((s: number, it: any) => s + it.profit, 0);
+  }
   const invoices = docs.map((d: any) => {
-    const total = Number(d.total || 0), cogs = cogsByDoc[d.id] || 0, profit = total - cogs;
-    imaginaryProfit += profit; totalSales += total;
-    if (d.status === "paid") { realProfit += profit; realSales += total; }
+    const total = Number(d.total || 0), cogs = cogsByDoc[d.id] || 0;
+    const profit = profitByDoc[d.id] ?? (total - cogs);
     return {
       id: d.id, number: d.number, date: d.date, status: d.status, customerName: d.customerName,
       total, cogs: Number(cogs.toFixed(2)), profit: Number(profit.toFixed(2)), items: itemsByDoc[d.id] || [],
     };
   }).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
-  return {
-    invoices,
-    realProfit: Number(realProfit.toFixed(2)), imaginaryProfit: Number(imaginaryProfit.toFixed(2)),
-    realSales: Number(realSales.toFixed(2)), totalSales: Number(totalSales.toFixed(2)),
-  };
+  const agg = aggregateInvoiceProfit(docs as any[], profitByDoc, cogsByDoc);
+  return { period: { start, end }, invoices, ...agg };
+}
+
+export async function getProfitSummary() {
+  const docs = (await db.select({ id: documents.id, total: documents.total, status: documents.status, transactionMode: documents.transactionMode })
+    .from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"))))
+    .filter((d: any) => d.transactionMode !== "demo"); // match business-summary + profit-detail
+  const ids = docs.map((d) => d.id);
+  const cogsByDoc: Record<number, number> = {};
+  const profitByDoc: Record<number, number> = {};
+  if (ids.length) {
+    const items = await db.select({
+      documentId: documentItems.documentId, qty: documentItems.qty,
+      amount: documentItems.amount, cost: products.costPrice,
+    }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
+      .where(inArray(documentItems.documentId, ids));
+    for (const it of items as any[]) {
+      const itemCost = Number(it.cost || 0) * Number(it.qty || 0);
+      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
+      profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + (Number(it.amount || 0) - itemCost);
+    }
+  }
+  const agg = aggregateInvoiceProfit(docs as any[], profitByDoc, cogsByDoc);
+  // Back-compat aliases (older callers): totalProfit == expected, totalRevenue == totalSales.
+  return { ...agg, totalProfit: agg.expectedProfit, totalRevenue: agg.totalSales };
 }
 
 // ─── Location overview (per store/warehouse workflow over a date range) ──────
@@ -3173,13 +3857,18 @@ export async function getLocationOverview(start: string, end: string) {
   ));
   const invIds = invDocs.map((d) => d.id);
   const cogsByDoc: Record<number, number> = {};
+  const profitByDoc: Record<number, number> = {};
   if (invIds.length) {
     const items = await db.select({
-      documentId: documentItems.documentId, qty: documentItems.qty, cost: products.costPrice,
+      documentId: documentItems.documentId, qty: documentItems.qty,
+      amount: documentItems.amount, cost: products.costPrice,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, invIds));
     for (const it of items as any[]) {
-      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + Number(it.cost || 0) * Number(it.qty || 0);
+      const itemCost = Number(it.cost || 0) * Number(it.qty || 0);
+      const itemProfit = Number(it.amount || 0) - itemCost;
+      cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
+      profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + itemProfit;
     }
   }
 
@@ -3191,7 +3880,7 @@ export async function getLocationOverview(start: string, end: string) {
   ));
 
   type Bucket = {
-    storeId: number | null; storeName: string; revenue: number; cogs: number;
+    storeId: number | null; storeName: string; revenue: number; cogs: number; profit: number;
     invoiceCount: number; paidSales: number; creditSales: number;
     cashCollected: number; expenses: number; returns: number;
   };
@@ -3200,7 +3889,7 @@ export async function getLocationOverview(start: string, end: string) {
     const k = id ?? null;
     let b = map.get(k);
     if (!b) {
-      b = { storeId: k, storeName: storeName(k), revenue: 0, cogs: 0, invoiceCount: 0,
+      b = { storeId: k, storeName: storeName(k), revenue: 0, cogs: 0, profit: 0, invoiceCount: 0,
             paidSales: 0, creditSales: 0, cashCollected: 0, expenses: 0, returns: 0 };
       map.set(k, b);
     }
@@ -3210,8 +3899,10 @@ export async function getLocationOverview(start: string, end: string) {
   for (const d of invDocs) {
     const b = bucket(d.storeId ?? null);
     const t = Number(d.total || 0);
-    b.revenue += t; b.invoiceCount += 1; b.cogs += cogsByDoc[d.id] || 0;
-    if (d.status === "paid") b.paidSales += t; else b.creditSales += t; // partial counts as credit-side
+    b.revenue += t; b.invoiceCount += 1;
+    b.cogs += cogsByDoc[d.id] || 0;
+    b.profit += profitByDoc[d.id] || 0;
+    if (d.status === "paid") b.paidSales += t; else b.creditSales += t;
   }
   for (const r of cfRows as any[]) {
     const amt = Number(r.amount || 0);
@@ -3224,7 +3915,7 @@ export async function getLocationOverview(start: string, end: string) {
 
   const locations = Array.from(map.values()).map((b) => ({
     storeId: b.storeId, storeName: b.storeName,
-    revenue: r2(b.revenue), cogs: r2(b.cogs), profit: r2(b.revenue - b.cogs),
+    revenue: r2(b.revenue), cogs: r2(b.cogs), profit: r2(b.profit),
     invoiceCount: b.invoiceCount, paidSales: r2(b.paidSales), creditSales: r2(b.creditSales),
     cashCollected: r2(b.cashCollected), expenses: r2(b.expenses), returns: r2(b.returns),
   })).sort((a, b) => b.revenue - a.revenue);
@@ -3326,7 +4017,7 @@ export async function getCustomerOverview() {
 
   const [custs, invs, chqs] = await Promise.all([
     db.select().from(customers),
-    db.select().from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"))),
+    db.select().from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"), ne(documents.transactionMode, "demo"))),
     db.select().from(cheques),
   ]);
   const invIds = invs.map((d) => d.id);
@@ -3392,11 +4083,12 @@ export async function getCustomerOverview() {
     r.invoiceCount++;
     if (dd > r.lastPurchase) r.lastPurchase = dd;
     const remaining = total - paid;
-    if (remaining > 0.005 && dd) {
+    const isUnpaid = d.status !== "paid" && d.status !== "returned";
+    if (remaining > 0.005 && isUnpaid && dd) {
       r.amountDue += remaining;
       r.maxDaysOverdue = Math.max(r.maxDaysOverdue, Math.max(0, daysBetween(today, dd)));
       r.maxPastDue = Math.max(r.maxPastDue, Math.max(0, daysBetween(today, dueDate)));
-    } else if (remaining > 0.005) {
+    } else if (remaining > 0.005 && isUnpaid) {
       r.amountDue += remaining;
     }
     // window profit + frequency (fully-paid invoices only)
@@ -3512,6 +4204,25 @@ export async function seedDatabase(): Promise<void> {
       { name: "Store Salesman", role: "salesman", pin: "1111", storeId: 1 },
       { name: "Warehouse Keeper", role: "warehouse", pin: "2222", storeId: 2 },
     ]);
+  }
+
+  // Void orphan invoices — unpaid INVs without a customerId (walk-in/cash
+  // sales with no registered customer). These can't be chased or attributed,
+  // so void them to keep credit calculations clean.
+  const orphans = await db.select({ id: documents.id, number: documents.number })
+    .from(documents)
+    .where(and(
+      eq(documents.type, "INV"),
+      isNull(documents.customerId),
+      ne(documents.status, "void"),
+      ne(documents.status, "paid"),
+      ne(documents.status, "returned"),
+    ));
+  if (orphans.length > 0) {
+    await db.update(documents)
+      .set({ status: "void" })
+      .where(inArray(documents.id, orphans.map((o) => o.id)));
+    console.log(`Voided ${orphans.length} orphan invoice(s): ${orphans.map((o) => o.number).join(", ")}`);
   }
 }
 
@@ -3641,27 +4352,24 @@ export async function getStaffPayrollSummary(month: string) {
   const entries = await db.select().from(staffPayroll).where(eq(staffPayroll.month, month));
 
   return allUsers.map(u => {
-    const userEntries = entries.filter(e => e.userId === u.id);
+    // Day-off tracking was removed — exclude any legacy day_off rows from every
+    // computation and the log so they neither display nor deduct from salary.
+    const userEntries = entries.filter(e => e.userId === u.id && e.type !== "day_off");
     const advances = userEntries.filter(e => e.type === "advance").reduce((s, e) => s + Number(e.amount), 0);
     const deductions = userEntries.filter(e => e.type === "deduction").reduce((s, e) => s + Number(e.amount), 0);
     const bonuses = userEntries.filter(e => e.type === "bonus").reduce((s, e) => s + Number(e.amount), 0);
-    const daysOff = userEntries.filter(e => e.type === "day_off").length;
-    const dayOffDeduction = daysOff * Number(u.dayRate || 0);
     const salaryPaid = userEntries.filter(e => e.type === "salary_payment").reduce((s, e) => s + Number(e.amount), 0);
     const baseSalary = Number(u.salary || 0);
-    const netSalary = baseSalary - advances - deductions - dayOffDeduction + bonuses;
+    const netSalary = baseSalary - advances - deductions + bonuses;
 
     return {
       userId: u.id,
       name: u.name,
       role: u.role,
       baseSalary,
-      dayRate: Number(u.dayRate || 0),
       advances,
       deductions,
       bonuses,
-      daysOff,
-      dayOffDeduction,
       netSalary,
       salaryPaid,
       remaining: netSalary - salaryPaid,

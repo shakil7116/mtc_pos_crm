@@ -5,6 +5,7 @@ import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
+import { ThemeProvider } from "@/contexts/ThemeContext";
 import { canAccess, navKeyForPath, ROLE_HOME } from "@shared/permissions";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
@@ -26,7 +27,7 @@ import Messages from "@/pages/Messages";
 import Settings from "@/pages/Settings";
 import Approvals from "@/pages/Approvals";
 import Expenses from "@/pages/Expenses";
-import PdcTracker from "@/pages/PdcTracker";
+
 import ChequeDetail from "@/pages/ChequeDetail";
 import ProfitToday from "@/pages/ProfitToday";
 import CashPosition from "@/pages/CashPosition";
@@ -90,7 +91,7 @@ function ProtectedApp() {
         <Route path="/cash-position" component={() => <CashPosition />} />
         <Route path="/credit-exposure" component={CreditExposure} />
         <Route path="/cheques/:id" component={ChequeDetail} />
-        <Route path="/pdc" component={() => <PdcTracker />} />
+
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>
@@ -100,13 +101,15 @@ function ProtectedApp() {
 
 export default function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <AuthProvider>
-          <Toaster />
-          <ProtectedApp />
-        </AuthProvider>
-      </TooltipProvider>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider>
+          <AuthProvider>
+            <Toaster />
+            <ProtectedApp />
+          </AuthProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

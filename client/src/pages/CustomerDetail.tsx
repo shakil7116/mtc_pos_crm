@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format, differenceInDays, subMonths, startOfMonth } from "date-fns";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import {
   ArrowLeft,
+  ArrowDownToLine,
   Phone,
   Edit2,
   Plus,
@@ -21,6 +22,9 @@ import {
   X,
   Camera,
   Loader2,
+  Upload,
+  BarChart2 as BarChart2Icon,
+  Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,16 +58,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useSettings } from "@/hooks/use-settings";
@@ -699,6 +693,12 @@ function InvoicesTab({
     .filter((d) => d.type === "INV")
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
+  const { data: paidMap } = useQuery<Record<number, number>>({
+    queryKey: [`/api/customers/${customerId}/invoice-payments`],
+    queryFn: () => fetch(`/api/customers/${customerId}/invoice-payments`).then(r => r.json()),
+    enabled: !!customerId,
+  });
+
   // 6-month credit timeline: total invoiced to this customer per month (last 6).
   const now = new Date();
   const months = Array.from({ length: 6 }, (_, i) => {
@@ -747,6 +747,9 @@ function InvoicesTab({
 
       {invoices.map((inv) => {
         const total = toNum(inv.total);
+        const paid = paidMap ? (paidMap[inv.id!] || 0) : 0;
+        const remaining = Math.max(0, total - paid);
+        const showPartial = inv.status !== "void" && inv.status !== "paid" && inv.status !== "returned" && paid > 0;
         return (
           <Link key={inv.id} href={`/documents/${inv.id}`}>
             <div className="flex items-center gap-3 px-4 py-3 bg-white rounded-xl border border-border/40 hover:shadow-sm transition-all cursor-pointer">
@@ -754,7 +757,7 @@ function InvoicesTab({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-mono font-bold text-sm">{inv.number}</span>
                   <Badge className={cn("text-[10px] font-semibold border-0", statusColor(inv.status))}>
-                    {inv.status}
+                    {showPartial ? "partial" : inv.status}
                   </Badge>
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">
@@ -763,6 +766,18 @@ function InvoicesTab({
               </div>
               <div className="text-right shrink-0">
                 <p className="font-bold font-mono text-sm">{fmt(total)}</p>
+                {showPartial && (
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    <span className="text-green-600">Paid {fmt(paid)}</span>
+                    {" · "}
+                    <span className="text-orange-600">Due {fmt(remaining)}</span>
+                  </p>
+                )}
+                {inv.status !== "void" && inv.status !== "returned" && inv.status !== "paid" && paid === 0 && (
+                  <p className="text-[10px] text-orange-600 mt-0.5">
+                    Due {fmt(total)}
+                  </p>
+                )}
               </div>
               <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
             </div>
@@ -876,7 +891,9 @@ function PaymentsTab({ customerId }: { customerId: number }) {
 function ChequesTab({ customerId }: { customerId: number }) {
   const qc = useQueryClient();
   const { toast } = useToast();
-  const [confirmClear, setConfirmClear] = useState<number | null>(null);
+  const [depositModal, setDepositModal] = useState<{ id: number; chequeNumber: string; chequeDate: string } | null>(null);
+  const [clearModal, setClearModal] = useState<{ id: number; chequeNumber: string; depositedToAccount?: string } | null>(null);
+  const [swapModal, setSwapModal] = useState<{ id: number; chequeNumber: string; amount: string; who: string } | null>(null);
 
   const { data: rawCheques, isLoading } = useQuery<Cheque[]>({
     queryKey: [`/api/cheques`],
@@ -887,20 +904,37 @@ function ChequesTab({ customerId }: { customerId: number }) {
     .filter((c) => c.customerId === customerId)
     .sort((a, b) => new Date(b.chequeDate).getTime() - new Date(a.chequeDate).getTime());
 
-  const clearMut = useMutation({
-    mutationFn: (id: number) =>
-      fetch(`/api/cheques/${id}/clear`, { method: "PUT" }).then((r) => {
-        if (!r.ok) throw new Error();
+  const statusMut = useMutation({
+    mutationFn: ({ id, status, depositProofUrl, depositedToAccount, clearanceProofUrl }: { id: number; status: string; depositProofUrl?: string; depositedToAccount?: string; clearanceProofUrl?: string }) =>
+      fetch(`/api/cheques/${id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, depositProofUrl, depositedToAccount, clearanceProofUrl }),
+      }).then(async (r) => {
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Update failed");
         return r.json();
       }),
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["/api/cheques"] });
+      toast({ title: v.status === "deposited" ? "Cheque deposited at bank" : v.status === "cleared" ? "Cheque cleared — funds credited" : `Cheque ${v.status}` });
+    },
+    onError: (e: any) => {
+      toast({ title: "Update failed", description: String(e?.message || ""), variant: "destructive" });
+    },
+  });
+
+  const swapMut = useMutation({
+    mutationFn: ({ id, method, notes }: { id: number; method: string; notes: string }) =>
+      fetch(`/api/cheques/${id}/swap`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ method, notes }),
+      }).then(async (r) => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Failed"); return r.json(); }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/cheques"] });
-      toast({ title: "Cheque marked as cleared" });
-      setConfirmClear(null);
+      setSwapModal(null);
+      toast({ title: "PDC swapped", description: "Cheque cancelled, payment recorded." });
     },
-    onError: () => {
-      toast({ title: "Failed to clear cheque", variant: "destructive" });
-    },
+    onError: (e: any) => toast({ title: "Swap failed", description: String(e?.message || ""), variant: "destructive" }),
   });
 
   if (isLoading) {
@@ -939,6 +973,9 @@ function ChequesTab({ customerId }: { customerId: number }) {
                   <Badge className={cn("text-[10px] font-semibold border-0", statusColor(c.status))}>
                     {c.status}
                   </Badge>
+                  {(c as any).depositedToAccount && (
+                    <span className="text-[10px] text-blue-600 font-medium">{(c as any).depositedToAccount}</span>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   Due: {format(new Date(c.chequeDate), "dd MMM yyyy")}
@@ -963,42 +1000,269 @@ function ChequesTab({ customerId }: { customerId: number }) {
                 </p>
               </div>
               <p className="font-bold font-mono text-sm shrink-0">{fmt(c.amount)}</p>
-              {c.status === "pending" && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setConfirmClear(c.id)}
-                  className="shrink-0 text-green-700 border-green-300 hover:bg-green-50"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                  Clear
-                </Button>
-              )}
+              <div className="flex gap-1.5 shrink-0">
+                {c.status === "pending" && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDepositModal({ id: c.id, chequeNumber: c.chequeNumber, chequeDate: c.chequeDate })}
+                      className="text-blue-700 border-blue-300 hover:bg-blue-50"
+                    >
+                      <ArrowDownToLine className="w-3.5 h-3.5 mr-1" />
+                      Deposit
+                    </Button>
+                    {(c.type || "receivable") === "receivable" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setSwapModal({ id: c.id, chequeNumber: c.chequeNumber, amount: String(c.amount), who: (c as any).who || "Customer" })}
+                        className="text-amber-700 border-amber-300 hover:bg-amber-50"
+                      >
+                        <DollarSign className="w-3.5 h-3.5 mr-1" />
+                        Swap
+                      </Button>
+                    )}
+                  </>
+                )}
+                {c.status === "deposited" && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setClearModal({ id: c.id, chequeNumber: c.chequeNumber, depositedToAccount: (c as any).depositedToAccount })}
+                    className="text-green-700 border-green-300 hover:bg-green-50"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
+                    Clear
+                  </Button>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
 
-      <AlertDialog open={confirmClear !== null} onOpenChange={() => setConfirmClear(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Mark Cheque as Cleared?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will mark the cheque as cleared. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => { if (confirmClear) clearMut.mutate(confirmClear); }}
-              className="bg-green-600 hover:bg-green-700"
-            >
-              Mark Cleared
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {depositModal && (
+        <ChequeDepositModal
+          chequeNumber={depositModal.chequeNumber}
+          chequeDate={depositModal.chequeDate}
+          onConfirm={(proofUrl, depositedToAccount) => {
+            statusMut.mutate({ id: depositModal.id, status: "deposited", depositProofUrl: proofUrl, depositedToAccount });
+            setDepositModal(null);
+          }}
+          onClose={() => setDepositModal(null)}
+        />
+      )}
+      {clearModal && (
+        <ChequeClearModal
+          chequeNumber={clearModal.chequeNumber}
+          depositedToAccount={clearModal.depositedToAccount}
+          onConfirm={(clearanceProofUrl) => {
+            statusMut.mutate({ id: clearModal.id, status: "cleared", clearanceProofUrl });
+            setClearModal(null);
+          }}
+          onClose={() => setClearModal(null)}
+        />
+      )}
+      {swapModal && (
+        <ChequeSwapModal
+          chequeNumber={swapModal.chequeNumber}
+          amount={swapModal.amount}
+          who={swapModal.who}
+          onConfirm={(method, notes) => swapMut.mutate({ id: swapModal.id, method, notes })}
+          onClose={() => setSwapModal(null)}
+          isPending={swapMut.isPending}
+        />
+      )}
     </>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Cheque Deposit Modal (Customer Detail)
+───────────────────────────────────────── */
+function ChequeDepositModal({ chequeNumber, chequeDate, onConfirm, onClose }: {
+  chequeNumber: string;
+  chequeDate: string;
+  onConfirm: (proofUrl?: string, depositedToAccount?: string) => void;
+  onClose: () => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
+  const [bankAccount, setBankAccount] = useState("");
+  const [reading, setReading] = useState(false);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const tooEarly = chequeDate > today;
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
+    if (file.size > 4_000_000) return;
+    setReading(true);
+    const reader = new FileReader();
+    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
+    reader.onerror = () => setReading(false);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-lg">Deposit Cheque #{chequeNumber}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        {tooEarly ? (
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+            <p className="font-semibold flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Cannot deposit yet</p>
+            <p className="mt-1">This is a post-dated cheque dated <strong>{chequeDate}</strong>. Banks will not accept it before that date.</p>
+          </div>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Mark this cheque as deposited. Specify the bank account and optionally attach the deposit slip.
+            </p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-medium">Deposited to bank account *</label>
+                <Input value={bankAccount} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setBankAccount(e.target.value)} placeholder="e.g. QNB Current A/C" className="mt-1" />
+              </div>
+              <div className="space-y-2">
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onPick} />
+                <Button variant="outline" size="sm" className="gap-1.5 w-full" disabled={reading} onClick={() => fileRef.current?.click()}>
+                  <Upload className="w-4 h-4" /> {proofUrl ? "Replace deposit slip" : "Upload deposit slip (optional)"}
+                </Button>
+                {proofUrl && (
+                  <div className="relative">
+                    <img src={proofUrl} alt="Deposit slip" className="w-full max-h-48 object-contain rounded-lg border bg-slate-50" />
+                    <button onClick={() => setProofUrl(null)} className="absolute top-1 right-1 bg-white rounded-full p-0.5 shadow"><X className="w-3.5 h-3.5" /></button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          {!tooEarly && (
+            <Button size="sm" disabled={!bankAccount.trim()} onClick={() => onConfirm(proofUrl || undefined, bankAccount.trim())} className="gap-1.5">
+              <ArrowDownToLine className="w-4 h-4" /> Confirm Deposit
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Cheque Clear Modal (Customer Detail)
+───────────────────────────────────────── */
+function ChequeClearModal({ chequeNumber, depositedToAccount, onConfirm, onClose }: {
+  chequeNumber: string;
+  depositedToAccount?: string;
+  onConfirm: (clearanceProofUrl?: string) => void;
+  onClose: () => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [proofUrl, setProofUrl] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+
+  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
+    if (file.size > 4_000_000) return;
+    setReading(true);
+    const reader = new FileReader();
+    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
+    reader.onerror = () => setReading(false);
+    reader.readAsDataURL(file);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-lg">Clear Cheque #{chequeNumber}</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+          <p>Funds have been credited to your bank account.</p>
+          {depositedToAccount && <p className="mt-1 font-medium">Account: {depositedToAccount}</p>}
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Upload a bank statement screenshot as proof of clearance (recommended).
+        </p>
+        <div className="space-y-2">
+          <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={onPick} />
+          <Button variant="outline" size="sm" className="gap-1.5 w-full" disabled={reading} onClick={() => fileRef.current?.click()}>
+            <Upload className="w-4 h-4" /> {proofUrl ? "Replace clearance proof" : "Upload clearance proof (recommended)"}
+          </Button>
+          {proofUrl && (
+            <div className="relative">
+              <img src={proofUrl} alt="Clearance proof" className="w-full max-h-48 object-contain rounded-lg border bg-green-50" />
+              <button onClick={() => setProofUrl(null)} className="absolute top-1 right-1 bg-white rounded-full p-0.5 shadow"><X className="w-3.5 h-3.5" /></button>
+            </div>
+          )}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => onConfirm(proofUrl || undefined)} className="gap-1.5 bg-green-600 hover:bg-green-700">
+            <CheckCircle2 className="w-4 h-4" /> Confirm Cleared
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Cheque Swap Modal (Customer Detail)
+───────────────────────────────────────── */
+function ChequeSwapModal({ chequeNumber, amount, who, onConfirm, onClose, isPending }: {
+  chequeNumber: string; amount: string; who: string;
+  onConfirm: (method: string, notes: string) => void;
+  onClose: () => void;
+  isPending: boolean;
+}) {
+  const [notes, setNotes] = useState("");
+  const fmt = (v: any) => `QAR ${(Number(v) || 0).toFixed(2)}`;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-card rounded-2xl shadow-xl max-w-md w-full p-5 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h3 className="font-bold text-lg">Swap PDC to Payment</h3>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="rounded-xl bg-amber-50 border border-amber-200 p-3 text-sm">
+          <p className="font-semibold text-amber-800">Cheque #{chequeNumber}</p>
+          <p className="text-amber-700">{fmt(amount)} from {who}</p>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Customer pays cash or bank transfer instead. Cheque is cancelled and returned.
+        </p>
+        <div>
+          <label className="text-xs font-medium">Notes (optional)</label>
+          <Input value={notes} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNotes(e.target.value)} placeholder="e.g. Customer paid cash at counter" className="mt-1" />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Button variant="outline" className="gap-1.5 h-auto py-2.5" disabled={isPending}
+            onClick={() => onConfirm("cash", notes)}>
+            <DollarSign className="w-4 h-4 text-green-600" />
+            Cash
+          </Button>
+          <Button variant="outline" className="gap-1.5 h-auto py-2.5" disabled={isPending}
+            onClick={() => onConfirm("bank_transfer", notes)}>
+            <CreditCard className="w-4 h-4 text-blue-600" />
+            Bank Transfer
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1159,6 +1423,195 @@ function MessagesTab({ customerId }: { customerId: number }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────
+   Analytics Tab (top products, profit, promo suggestions)
+───────────────────────────────────────── */
+type AnalyticsData = {
+  topProducts: {
+    productId: number | null; description: string; sku: string | null; unit: string | null;
+    category: string | null; totalQty: number; totalRevenue: number; totalCost: number;
+    totalProfit: number; purchaseCount: number; avgPrice: number; marginPct: number;
+    costPrice: number; currentSalePrice: number; currentWholesalePrice: number;
+  }[];
+  totalProfit: number; totalRevenue: number; totalCost: number;
+  invoiceCount: number; paidInvoices: number;
+  promotions: {
+    productId: number; description: string; sku: string | null; category: string | null;
+    reason: string; currentAvgPrice: number; costPrice: number; currentProfit: number;
+    suggestedPrice: number; suggestedDiscount: number; newMarginPct: number;
+    totalQtyBought: number; purchaseCount: number; message: string;
+  }[];
+};
+
+function AnalyticsTab({ customerId }: { customerId: number }) {
+  const { data, isLoading } = useQuery<AnalyticsData>({
+    queryKey: [`/api/customers/${customerId}/analytics`],
+    queryFn: () => fetch(`/api/customers/${customerId}/analytics`).then((r) => r.json()),
+    enabled: !!customerId,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-20 rounded-xl bg-muted animate-pulse" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!data || !data.topProducts?.length) {
+    return (
+      <div className="py-12 text-center">
+        <BarChart2Icon className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
+        <p className="text-muted-foreground">No purchase data yet</p>
+      </div>
+    );
+  }
+
+  const overallMargin = data.totalRevenue > 0
+    ? Math.round((data.totalProfit / data.totalRevenue) * 1000) / 10
+    : 0;
+
+  return (
+    <div className="space-y-4">
+      {/* Profit summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <div className="bg-white rounded-xl border border-border/40 shadow-sm p-4">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total Revenue</p>
+          <p className="text-lg font-bold font-mono text-foreground mt-1">{fmt(data.totalRevenue)}</p>
+        </div>
+        <div className="bg-white rounded-xl border border-border/40 shadow-sm p-4">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Total Profit</p>
+          <p className={cn("text-lg font-bold font-mono mt-1", data.totalProfit >= 0 ? "text-green-700" : "text-red-600")}>
+            {fmt(data.totalProfit)}
+          </p>
+        </div>
+        <div className="bg-white rounded-xl border border-border/40 shadow-sm p-4">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Margin</p>
+          <p className="text-lg font-bold font-mono text-foreground mt-1">{overallMargin}%</p>
+        </div>
+        <div className="bg-white rounded-xl border border-border/40 shadow-sm p-4">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Invoices</p>
+          <p className="text-lg font-bold font-mono text-foreground mt-1">{data.invoiceCount}</p>
+          <p className="text-[10px] text-muted-foreground">{data.paidInvoices} paid</p>
+        </div>
+      </div>
+
+      {/* Smart Promotions */}
+      {data.promotions.length > 0 && (
+        <div className="bg-gradient-to-br from-amber-50 to-orange-50 rounded-xl border border-amber-200/60 shadow-sm p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <Zap className="w-4 h-4 text-amber-600" />
+            <p className="text-xs font-bold text-amber-800 uppercase tracking-wider">
+              Smart Promotion Suggestions <span className="font-normal normal-case text-amber-600">(based on cash purchases)</span>
+            </p>
+          </div>
+          <div className="space-y-3">
+            {data.promotions.map((promo, i) => (
+              <div key={i} className="bg-white/80 rounded-lg border border-amber-200/40 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-semibold text-sm text-foreground">{promo.description}</span>
+                      {promo.sku && (
+                        <span className="text-[10px] font-mono text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
+                          {promo.sku}
+                        </span>
+                      )}
+                      <Badge className={cn("text-[10px] border-0 font-semibold",
+                        promo.reason === "frequent_buyer"
+                          ? "bg-blue-100 text-blue-700"
+                          : "bg-purple-100 text-purple-700"
+                      )}>
+                        {promo.reason === "frequent_buyer" ? "Frequent Buyer" : "High Volume"}
+                      </Badge>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{promo.message}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-4 mt-2 text-xs">
+                  <span className="text-muted-foreground">
+                    Avg price: <span className="font-mono font-semibold text-foreground">{fmt(promo.currentAvgPrice)}</span>
+                  </span>
+                  <span className="text-green-700 font-semibold">
+                    Suggested: <span className="font-mono">{fmt(promo.suggestedPrice)}</span>
+                  </span>
+                  <span className="text-muted-foreground">
+                    Save: <span className="font-mono font-semibold text-amber-700">{fmt(promo.suggestedDiscount)}/unit</span>
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Top Products table */}
+      <div className="bg-white rounded-xl border border-border/40 shadow-sm">
+        <div className="px-4 py-3 border-b border-border/40">
+          <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider">
+            Top Products Purchased
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[10px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border/30">
+                <th className="px-4 py-2.5">#</th>
+                <th className="px-4 py-2.5">Product</th>
+                <th className="px-4 py-2.5 text-right">Qty</th>
+                <th className="px-4 py-2.5 text-right">Avg Price</th>
+                <th className="px-4 py-2.5 text-right">Revenue</th>
+                <th className="px-4 py-2.5 text-right">Profit</th>
+                <th className="px-4 py-2.5 text-right">Margin</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.topProducts.map((p, i) => (
+                <tr key={i} className="border-b border-border/20 last:border-0 hover:bg-muted/30 transition-colors">
+                  <td className="px-4 py-2.5 text-muted-foreground font-mono text-xs">{i + 1}</td>
+                  <td className="px-4 py-2.5">
+                    <div>
+                      <span className="font-medium text-foreground">{p.description}</span>
+                      {p.category && (
+                        <span className="ml-2 text-[10px] text-muted-foreground">{p.category}</span>
+                      )}
+                    </div>
+                    {p.sku && (
+                      <span className="text-[10px] font-mono text-muted-foreground">{p.sku}</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono">
+                    {p.totalQty} <span className="text-[10px] text-muted-foreground">{p.unit || ""}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(p.avgPrice)}</td>
+                  <td className="px-4 py-2.5 text-right font-mono">{fmt(p.totalRevenue)}</td>
+                  <td className={cn("px-4 py-2.5 text-right font-mono font-semibold",
+                    p.totalProfit >= 0 ? "text-green-700" : "text-red-600"
+                  )}>
+                    {fmt(p.totalProfit)}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <span className={cn(
+                      "text-xs font-semibold px-1.5 py-0.5 rounded",
+                      p.marginPct >= 20 ? "bg-green-100 text-green-700" :
+                      p.marginPct >= 10 ? "bg-yellow-100 text-yellow-700" :
+                      "bg-red-100 text-red-600"
+                    )}>
+                      {p.marginPct}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1394,7 +1847,7 @@ export default function CustomerDetail() {
       </button>
 
       {/* ── Header card ── */}
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-5">
+      <div className="section-card">
         <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
           {/* Left: name + info */}
           <div className="flex items-start gap-4">
@@ -1564,6 +2017,9 @@ export default function CustomerDetail() {
           <TabsTrigger value="messages" className="flex-1 text-xs font-semibold min-w-[80px]">
             Messages
           </TabsTrigger>
+          <TabsTrigger value="analytics" className="flex-1 text-xs font-semibold min-w-[80px]">
+            Analytics
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="invoices" className="mt-4">
@@ -1583,6 +2039,9 @@ export default function CustomerDetail() {
         </TabsContent>
         <TabsContent value="messages" className="mt-4">
           <MessagesTab customerId={customerId} />
+        </TabsContent>
+        <TabsContent value="analytics" className="mt-4">
+          <AnalyticsTab customerId={customerId} />
         </TabsContent>
       </Tabs>
 

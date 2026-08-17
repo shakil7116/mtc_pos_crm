@@ -8,6 +8,10 @@ import LocationHierarchySettings from "@/components/LocationHierarchySettings";
 import ManagedListsSettings from "@/components/ManagedListsSettings";
 import CustomFieldsSettings from "@/components/CustomFieldsSettings";
 import { flushSyncQueue } from "@/lib/offline";
+import { motion } from "framer-motion";
+import { cn } from "@/lib/utils";
+import { Progress } from "@/components/ui/progress";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 
 import {
   Accordion,
@@ -62,9 +66,13 @@ import {
   Eye,
   EyeOff,
   Wallet,
-  CalendarOff,
   Banknote,
   ArrowDownCircle,
+  Cog,
+  CircleDollarSign,
+  Clock,
+  TrendingDown,
+  CalendarCheck,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -154,6 +162,24 @@ function SectionSaveBtn({
   );
 }
 
+function SettingsGroup({ label, index, children }: { label: string; index: number; children: React.ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.06 * index }}
+    >
+      <div className="flex items-center gap-3 mb-3 px-1">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground/70 select-none">
+          {label}
+        </span>
+        <div className="flex-1 h-px bg-gradient-to-r from-border/60 to-transparent" />
+      </div>
+      {children}
+    </motion.div>
+  );
+}
+
 /* ─────────────────────────────────────────────────────────────────────
    Main page
 ───────────────────────────────────────────────────────────────────── */
@@ -178,46 +204,69 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
-        <p className="text-muted-foreground text-sm mt-0.5">
-          System configuration for MTC POS+CRM
-        </p>
-      </div>
+    <div className="max-w-4xl mx-auto px-4 py-6 space-y-8">
+      {/* ── Page Header ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="flex items-center gap-4"
+      >
+        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#d4a017] to-[#b8860b] flex items-center justify-center shadow-lg shadow-[#d4a017]/20">
+          <Cog className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold text-foreground tracking-tight">Settings</h1>
+          <p className="text-muted-foreground text-sm">
+            System configuration for MTC POS+CRM
+          </p>
+        </div>
+      </motion.div>
 
-      <Accordion type="multiple" className="space-y-3">
-        {/* S1 — Company Info */}
-        <Section1 toast={toast} qc={qc} />
-        {/* S2 — Stores */}
-        <Section2 toast={toast} qc={qc} />
-        {/* S3 — Staff */}
-        <Section3 toast={toast} qc={qc} currentUserId={user.id} />
-        {/* S3b — Staff Payroll */}
-        <StaffPayrollSection toast={toast} qc={qc} />
-        {/* S4 — Document Settings */}
-        <Section4 toast={toast} qc={qc} />
-        {/* S4b — Document Numbering (Phase 3 Step 1) */}
-        <DocumentNumberingSettings />
-        {/* S4c — Business Rules (Phase 4, spec 11A) */}
-        <BusinessRulesSettings />
-        {/* S4d — Location Hierarchy (Phase 5, spec rule 22/23) */}
-        <LocationHierarchySettings />
-        {/* S4e — Lists & Categories (Phase 6, spec 11B) */}
-        <ManagedListsSettings />
-        {/* S4f — Custom Fields (Phase 7, spec 11C) */}
-        <CustomFieldsSettings />
-        {/* S5 — Brands */}
-        <Section5 toast={toast} qc={qc} />
-        {/* S6 — Social Media */}
-        <Section6 toast={toast} qc={qc} />
-        {/* S7 — Messaging */}
-        <Section7 toast={toast} qc={qc} />
-        {/* S8 — Data */}
-        <Section8 toast={toast} />
-        {/* S9 — About */}
-        <Section9 toast={toast} />
-      </Accordion>
+      {/* ── General ── */}
+      <SettingsGroup label="General" index={0}>
+        <Accordion type="multiple" className="space-y-2.5">
+          <Section1 toast={toast} qc={qc} />
+          <Section2 toast={toast} qc={qc} />
+        </Accordion>
+      </SettingsGroup>
+
+      {/* ── People ── */}
+      <SettingsGroup label="People" index={1}>
+        <Accordion type="multiple" className="space-y-2.5">
+          <Section3 toast={toast} qc={qc} currentUserId={user.id} />
+          <StaffPayrollSection toast={toast} qc={qc} />
+        </Accordion>
+      </SettingsGroup>
+
+      {/* ── Documents & Rules ── */}
+      <SettingsGroup label="Documents & Rules" index={2}>
+        <Accordion type="multiple" className="space-y-2.5">
+          <Section4 toast={toast} qc={qc} />
+          <DocumentNumberingSettings />
+          <BusinessRulesSettings />
+          <LocationHierarchySettings />
+          <ManagedListsSettings />
+          <CustomFieldsSettings />
+        </Accordion>
+      </SettingsGroup>
+
+      {/* ── Brand & Social ── */}
+      <SettingsGroup label="Brand & Social" index={3}>
+        <Accordion type="multiple" className="space-y-2.5">
+          <Section5 toast={toast} qc={qc} />
+          <Section6 toast={toast} qc={qc} />
+          <Section7 toast={toast} qc={qc} />
+        </Accordion>
+      </SettingsGroup>
+
+      {/* ── System ── */}
+      <SettingsGroup label="System" index={4}>
+        <Accordion type="multiple" className="space-y-2.5">
+          <Section8 toast={toast} />
+          <Section9 toast={toast} />
+        </Accordion>
+      </SettingsGroup>
     </div>
   );
 }
@@ -233,9 +282,11 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
 
   const [form, setForm] = useState<Partial<Settings>>({});
   const [logoPreview, setLogoPreview] = useState<string>("");
+  const initialized = useRef(false);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !initialized.current) {
+      initialized.current = true;
       setForm(settings);
       setLogoPreview(settings.logoUrl || "");
     }
@@ -249,6 +300,7 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
         body: JSON.stringify(body),
       }).then((r) => r.json()),
     onSuccess: () => {
+      initialized.current = false;
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Company info saved" });
     },
@@ -272,12 +324,17 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
     setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
-    <AccordionItem value="company" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Building2 className="w-4 h-4 text-[#d4a017]" />
-          Company Information
-        </span>
+    <AccordionItem value="company" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center shrink-0">
+            <Building2 className="w-[18px] h-[18px] text-[#d4a017]" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Company Information</span>
+            <span className="text-xs text-muted-foreground font-normal">Name, address, contact details, logo</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         {isLoading ? (
@@ -371,7 +428,10 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
             </div>
 
             <div className="flex justify-end">
-              <SectionSaveBtn loading={mut.isPending} onClick={() => mut.mutate(form)} />
+              <SectionSaveBtn loading={mut.isPending} onClick={() => {
+                const { storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl } = form;
+                mut.mutate({ storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl });
+              }} />
             </div>
           </div>
         )}
@@ -434,12 +494,17 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
   };
 
   return (
-    <AccordionItem value="stores" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Store className="w-4 h-4 text-[#d4a017]" />
-          Stores & Warehouses
-        </span>
+    <AccordionItem value="stores" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center shrink-0">
+            <Store className="w-[18px] h-[18px] text-blue-600 dark:text-blue-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Stores & Warehouses</span>
+            <span className="text-xs text-muted-foreground font-normal">Manage locations and warehouse assignments</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         <div className="space-y-4 pt-2 pb-4">
@@ -509,7 +574,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                               <SelectTrigger><SelectValue /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="common">Common (shared)</SelectItem>
-                                {stores.filter((s) => s.type === "store").map((s) => (
+                                {stores.filter((s) => s.type === "store" && s.active).map((s) => (
                                   <SelectItem key={s.id} value={String(s.id)}>{s.nameEn}</SelectItem>
                                 ))}
                               </SelectContent>
@@ -645,7 +710,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="common">Common (shared)</SelectItem>
-                      {stores.filter((s) => s.type === "store").map((s) => (
+                      {stores.filter((s) => s.type === "store" && s.active).map((s) => (
                         <SelectItem key={s.id} value={String(s.id)}>{s.nameEn}</SelectItem>
                       ))}
                     </SelectContent>
@@ -811,12 +876,17 @@ function Section3({
   };
 
   return (
-    <AccordionItem value="staff" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Users className="w-4 h-4 text-[#d4a017]" />
-          Staff Management
-        </span>
+    <AccordionItem value="staff" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-violet-50 dark:bg-violet-950/40 flex items-center justify-center shrink-0">
+            <Users className="w-[18px] h-[18px] text-violet-600 dark:text-violet-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Staff Management</span>
+            <span className="text-xs text-muted-foreground font-normal">Users, roles, PINs, login credentials</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         <div className="space-y-4 pt-2 pb-4">
@@ -983,7 +1053,7 @@ function Section3({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All stores</SelectItem>
-                    {stores.map((s) => (
+                    {stores.filter((s) => s.active).map((s) => (
                       <SelectItem key={s.id} value={String(s.id)}>
                         {s.nameEn}
                       </SelectItem>
@@ -1173,12 +1243,9 @@ type PayrollSummary = {
   name: string;
   role: string;
   baseSalary: number;
-  dayRate: number;
   advances: number;
   deductions: number;
   bonuses: number;
-  daysOff: number;
-  dayOffDeduction: number;
   netSalary: number;
   salaryPaid: number;
   remaining: number;
@@ -1199,7 +1266,7 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
     queryFn: () => fetch(`/api/staff-payroll/summary?month=${month}`).then((r) => r.json()),
   });
 
-  const [salaryDialog, setSalaryDialog] = useState<{ userId: number; name: string; salary: string; dayRate: string } | null>(null);
+  const [salaryDialog, setSalaryDialog] = useState<{ userId: number; name: string; salary: string } | null>(null);
   const [entryDialog, setEntryDialog] = useState<{
     userId: number;
     name: string;
@@ -1216,7 +1283,7 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
       return fetch(`/api/users/${salaryDialog.userId}/salary`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ salary: salaryDialog.salary, dayRate: salaryDialog.dayRate }),
+        body: JSON.stringify({ salary: salaryDialog.salary }),
       }).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
     },
     onSuccess: () => {
@@ -1229,27 +1296,36 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
   });
 
   const addEntryMut = useMutation({
-    mutationFn: () => {
-      if (!entryDialog) return Promise.resolve();
-      return fetch("/api/staff-payroll", {
+    mutationFn: async () => {
+      if (!entryDialog) return;
+      const res = await fetch("/api/staff-payroll", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           userId: entryDialog.userId,
           type: entryDialog.type,
-          amount: entryDialog.type === "day_off" ? "0" : entryDialog.amount,
+          amount: entryDialog.amount,
           date: entryDialog.date,
           month,
           note: entryDialog.note || null,
         }),
-      }).then((r) => { if (!r.ok) throw new Error(); return r.json(); });
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.message || "Failed to add entry");
+      }
+      return res.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/staff-payroll/summary"] });
+      qc.invalidateQueries({ queryKey: ["/api/expenses"] });
       setEntryDialog(null);
-      toast({ title: "Entry added" });
+      const t = entryDialog?.type;
+      const expMsg = t === "advance" || t === "salary_payment" || t === "bonus"
+        ? " (also added to expenses)" : "";
+      toast({ title: `${t === "advance" ? "Advance" : t === "salary_payment" ? "Salary payment" : t === "bonus" ? "Bonus" : "Entry"} recorded${expMsg}` });
     },
-    onError: () => toast({ title: "Failed", variant: "destructive" }),
+    onError: (err: Error) => toast({ title: err.message || "Failed", variant: "destructive" }),
   });
 
   const deleteMut = useMutation({
@@ -1268,7 +1344,6 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
   const typeLabel = (t: string) => {
     const map: Record<string, string> = {
       advance: "Advance",
-      day_off: "Day Off",
       salary_payment: "Salary Paid",
       deduction: "Deduction",
       bonus: "Bonus",
@@ -1279,7 +1354,6 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
   const typeBadgeClass = (t: string) => {
     const map: Record<string, string> = {
       advance: "text-orange-600 border-orange-200 bg-orange-50",
-      day_off: "text-red-600 border-red-200 bg-red-50",
       salary_payment: "text-green-600 border-green-200 bg-green-50",
       deduction: "text-rose-600 border-rose-200 bg-rose-50",
       bonus: "text-blue-600 border-blue-200 bg-blue-50",
@@ -1288,19 +1362,60 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
   };
 
   return (
-    <AccordionItem value="payroll" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Wallet className="w-4 h-4 text-[#d4a017]" />
-          Staff Payroll
-        </span>
+    <AccordionItem value="payroll" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+            <Wallet className="w-[18px] h-[18px] text-emerald-600 dark:text-emerald-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Staff Payroll</span>
+            <span className="text-xs text-muted-foreground font-normal">Salaries, advances, deductions, monthly summary</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
-        <div className="space-y-4 pt-2 pb-4">
+        <div className="space-y-5 pt-2 pb-4">
+          {/* Pay-date reminder */}
+          {(() => {
+            const today = new Date();
+            const dayOfMonth = today.getDate();
+            const isCurrentMonth = month === today.toISOString().slice(0, 7);
+            const daysUntilPayday = isCurrentMonth ? (dayOfMonth <= 10 ? 10 - dayOfMonth : -1) : -1;
+            if (!isCurrentMonth) return null;
+            return (
+              <div className={cn(
+                "flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-medium transition-all",
+                daysUntilPayday === 0
+                  ? "bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-950/30 dark:to-emerald-950/30 text-green-700 dark:text-green-400 border border-green-200/60 dark:border-green-800/40"
+                  : daysUntilPayday > 0
+                    ? "bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 text-amber-700 dark:text-amber-400 border border-amber-200/60 dark:border-amber-800/40"
+                    : "bg-muted/30 text-muted-foreground border border-border/40"
+              )}>
+                <div className={cn(
+                  "w-8 h-8 rounded-lg flex items-center justify-center shrink-0",
+                  daysUntilPayday === 0 ? "bg-green-100 dark:bg-green-900/40" : daysUntilPayday > 0 ? "bg-amber-100 dark:bg-amber-900/40" : "bg-muted"
+                )}>
+                  {daysUntilPayday === 0 ? <CalendarCheck className="w-4 h-4" /> : daysUntilPayday > 0 ? <Clock className="w-4 h-4" /> : <CalendarCheck className="w-4 h-4" />}
+                </div>
+                <div>
+                  <span className="block text-[13px] font-semibold">
+                    {daysUntilPayday === 0
+                      ? "Today is salary pay day"
+                      : daysUntilPayday > 0
+                        ? `Pay day in ${daysUntilPayday} day${daysUntilPayday > 1 ? "s" : ""}`
+                        : "Pay day has passed this month"}
+                  </span>
+                  <span className="block text-[11px] opacity-70 font-normal">Salaries are due on the 10th of each month</span>
+                </div>
+              </div>
+            );
+          })()}
+
           {/* Month selector */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Label className="text-sm font-medium">Month</Label>
+              <Label className="text-sm font-medium text-muted-foreground">Month</Label>
               <Input
                 type="month"
                 value={month}
@@ -1308,182 +1423,235 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
                 className="w-44 h-9"
               />
             </div>
-            <p className="text-sm text-muted-foreground">
-              {summary.length} staff with payroll
-            </p>
+            <Badge variant="secondary" className="font-mono text-xs">
+              {summary.length} staff
+            </Badge>
           </div>
 
           {isLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+            <div className="flex items-center justify-center gap-2 text-muted-foreground py-10">
+              <Loader2 className="w-5 h-5 animate-spin text-emerald-500" />
+              <span className="text-sm">Loading payroll data...</span>
             </div>
           ) : summary.length === 0 ? (
-            <div className="text-center py-8 text-muted-foreground">
-              <Wallet className="w-10 h-10 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">No staff with salary configured.</p>
-              <p className="text-xs mt-1">Set salary for staff members below.</p>
+            <div className="text-center py-10 text-muted-foreground">
+              <div className="w-14 h-14 rounded-2xl bg-muted/50 flex items-center justify-center mx-auto mb-3">
+                <Wallet className="w-7 h-7 opacity-40" />
+              </div>
+              <p className="text-sm font-medium">No staff with salary configured</p>
+              <p className="text-xs mt-1 text-muted-foreground/70">Set salary for staff members below to get started</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {summary.map((s) => (
-                <div key={s.userId} className="border rounded-xl overflow-hidden">
+              {summary.map((s, idx) => {
+                const paidPercent = s.netSalary > 0 ? Math.min(100, Math.round((s.salaryPaid / s.netSalary) * 100)) : 0;
+                const deductPercent = s.baseSalary > 0 ? Math.round(((s.advances + s.deductions) / s.baseSalary) * 100) : 0;
+                return (
+                <motion.div
+                  key={s.userId}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: idx * 0.05 }}
+                  className="border border-border/40 rounded-2xl overflow-hidden bg-gradient-to-b from-white to-muted/10 dark:from-card dark:to-muted/5 shadow-sm"
+                >
                   {/* Summary row */}
                   <div
-                    className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-muted/30 transition-colors"
+                    className="flex items-center justify-between px-4 py-3.5 cursor-pointer hover:bg-muted/20 transition-colors"
                     onClick={() => setExpandedUser(expandedUser === s.userId ? null : s.userId)}
                   >
                     <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-100 to-teal-100 dark:from-emerald-900/40 dark:to-teal-900/40 flex items-center justify-center font-semibold text-emerald-700 dark:text-emerald-400 text-sm">
+                        {s.name.charAt(0)}
+                      </div>
                       <div>
-                        <span className="font-medium text-sm">{s.name}</span>
-                        <Badge variant="outline" className="ml-2 text-xs text-slate-500 border-slate-200">{s.role}</Badge>
+                        <span className="font-semibold text-sm block">{s.name}</span>
+                        <span className="text-[11px] text-muted-foreground capitalize">{s.role} · {s.baseSalary.toLocaleString()} QAR/mo</span>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4 text-sm">
-                      <div className="text-right hidden sm:block">
-                        <span className="text-muted-foreground">Base: </span>
-                        <span className="font-mono font-medium">{s.baseSalary.toLocaleString()} QAR</span>
-                      </div>
+                    <div className="flex items-center gap-3 text-sm">
                       {s.advances > 0 && (
-                        <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50">
-                          -{s.advances.toLocaleString()} adv
-                        </Badge>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50 dark:bg-orange-950/30 dark:border-orange-800/40 dark:text-orange-400 text-[11px] font-mono">
+                                -{s.advances.toLocaleString()}
+                              </Badge>
+                            </TooltipTrigger>
+                            <TooltipContent>Advances taken this month</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
-                      {s.daysOff > 0 && (
-                        <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50">
-                          {s.daysOff}d off
-                        </Badge>
-                      )}
-                      <div className="text-right min-w-[90px]">
-                        <span className="text-muted-foreground text-xs">Remaining: </span>
-                        <span className={`font-mono font-semibold ${s.remaining > 0 ? "text-green-600" : s.remaining < 0 ? "text-red-600" : "text-slate-500"}`}>
+                      <div className="text-right min-w-[80px]">
+                        <span className={cn(
+                          "font-mono font-bold text-[15px]",
+                          s.remaining > 0 ? "text-emerald-600 dark:text-emerald-400" : s.remaining < 0 ? "text-red-600 dark:text-red-400" : "text-muted-foreground"
+                        )}>
                           {s.remaining.toLocaleString()}
                         </span>
+                        <span className="text-[10px] text-muted-foreground block">remaining</span>
                       </div>
+                    </div>
+                  </div>
+
+                  {/* Salary progress bar */}
+                  <div className="px-4 pb-3 -mt-1">
+                    <div className="h-1.5 bg-muted/60 rounded-full overflow-hidden">
+                      <div
+                        className={cn(
+                          "h-full rounded-full transition-all duration-500",
+                          paidPercent >= 100 ? "bg-emerald-500" : paidPercent > 0 ? "bg-gradient-to-r from-emerald-400 to-emerald-500" : ""
+                        )}
+                        style={{ width: `${paidPercent}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between mt-1">
+                      <span className="text-[10px] text-muted-foreground font-mono">{paidPercent}% paid</span>
+                      {deductPercent > 0 && <span className="text-[10px] text-orange-500 font-mono">{deductPercent}% deducted</span>}
                     </div>
                   </div>
 
                   {/* Expanded detail */}
                   {expandedUser === s.userId && (
-                    <div className="border-t bg-muted/10 px-4 py-3 space-y-3">
-                      {/* Summary numbers */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Base Salary</p>
-                          <p className="font-mono font-semibold text-sm">{s.baseSalary.toLocaleString()}</p>
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: "auto" }}
+                      className="border-t border-border/30 bg-muted/5 px-4 py-4 space-y-4"
+                    >
+                      {/* Salary breakdown — visual cards */}
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                        <div className="rounded-xl bg-gradient-to-br from-slate-50 to-slate-100/50 dark:from-slate-800/40 dark:to-slate-800/20 border border-slate-200/60 dark:border-slate-700/40 px-3 py-2.5">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <CircleDollarSign className="w-3 h-3 text-slate-500" />
+                            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Base</span>
+                          </div>
+                          <p className="font-mono font-bold text-sm">{s.baseSalary.toLocaleString()}</p>
                         </div>
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Day Rate</p>
-                          <p className="font-mono font-semibold text-sm">{s.dayRate.toLocaleString()}</p>
-                        </div>
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Days Off ({s.daysOff})</p>
-                          <p className="font-mono font-semibold text-sm text-red-600">-{s.dayOffDeduction.toLocaleString()}</p>
-                        </div>
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Advances</p>
-                          <p className="font-mono font-semibold text-sm text-orange-600">-{s.advances.toLocaleString()}</p>
-                        </div>
+                        {s.advances > 0 && (
+                          <div className="rounded-xl bg-gradient-to-br from-orange-50 to-orange-100/50 dark:from-orange-900/20 dark:to-orange-900/10 border border-orange-200/60 dark:border-orange-800/40 px-3 py-2.5">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <TrendingDown className="w-3 h-3 text-orange-500" />
+                              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Advances</span>
+                            </div>
+                            <p className="font-mono font-bold text-sm text-orange-600 dark:text-orange-400">-{s.advances.toLocaleString()}</p>
+                          </div>
+                        )}
                         {s.deductions > 0 && (
-                          <div className="bg-white border rounded-lg px-3 py-2">
-                            <p className="text-muted-foreground">Deductions</p>
-                            <p className="font-mono font-semibold text-sm text-rose-600">-{s.deductions.toLocaleString()}</p>
+                          <div className="rounded-xl bg-gradient-to-br from-rose-50 to-rose-100/50 dark:from-rose-900/20 dark:to-rose-900/10 border border-rose-200/60 dark:border-rose-800/40 px-3 py-2.5">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <TrendingDown className="w-3 h-3 text-rose-500" />
+                              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Deductions</span>
+                            </div>
+                            <p className="font-mono font-bold text-sm text-rose-600 dark:text-rose-400">-{s.deductions.toLocaleString()}</p>
                           </div>
                         )}
                         {s.bonuses > 0 && (
-                          <div className="bg-white border rounded-lg px-3 py-2">
-                            <p className="text-muted-foreground">Bonuses</p>
-                            <p className="font-mono font-semibold text-sm text-blue-600">+{s.bonuses.toLocaleString()}</p>
+                          <div className="rounded-xl bg-gradient-to-br from-blue-50 to-indigo-100/50 dark:from-blue-900/20 dark:to-indigo-900/10 border border-blue-200/60 dark:border-blue-800/40 px-3 py-2.5">
+                            <div className="flex items-center gap-1.5 mb-1">
+                              <Plus className="w-3 h-3 text-blue-500" />
+                              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Bonuses</span>
+                            </div>
+                            <p className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400">+{s.bonuses.toLocaleString()}</p>
                           </div>
                         )}
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Net Salary</p>
-                          <p className="font-mono font-semibold text-sm">{s.netSalary.toLocaleString()}</p>
+                        <div className="rounded-xl bg-gradient-to-br from-emerald-50 to-green-100/50 dark:from-emerald-900/20 dark:to-green-900/10 border border-emerald-200/60 dark:border-emerald-800/40 px-3 py-2.5">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <Wallet className="w-3 h-3 text-emerald-500" />
+                            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Net Salary</span>
+                          </div>
+                          <p className="font-mono font-bold text-sm">{s.netSalary.toLocaleString()}</p>
                         </div>
-                        <div className="bg-white border rounded-lg px-3 py-2">
-                          <p className="text-muted-foreground">Paid</p>
-                          <p className="font-mono font-semibold text-sm text-green-600">{s.salaryPaid.toLocaleString()}</p>
+                        <div className="rounded-xl bg-gradient-to-br from-green-50 to-emerald-100/50 dark:from-green-900/20 dark:to-emerald-900/10 border border-green-200/60 dark:border-green-800/40 px-3 py-2.5">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <CheckCircle2 className="w-3 h-3 text-green-500" />
+                            <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Paid</span>
+                          </div>
+                          <p className="font-mono font-bold text-sm text-green-600 dark:text-green-400">{s.salaryPaid.toLocaleString()}</p>
                         </div>
                       </div>
 
                       {/* Action buttons */}
                       <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 rounded-lg border-orange-200 text-orange-700 hover:bg-orange-50 dark:border-orange-800/40 dark:text-orange-400 dark:hover:bg-orange-950/30"
                           onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "advance", amount: "", date: today, note: "" })}>
-                          <ArrowDownCircle className="w-3 h-3" /> Advance
+                          <ArrowDownCircle className="w-3.5 h-3.5" /> Advance
                         </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
-                          onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "day_off", amount: "0", date: today, note: "" })}>
-                          <CalendarOff className="w-3 h-3" /> Day Off
-                        </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                        <Button size="sm" className="gap-1.5 text-xs h-8 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm"
                           onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "salary_payment", amount: String(s.remaining > 0 ? s.remaining : 0), date: today, note: "" })}>
-                          <Banknote className="w-3 h-3" /> Pay Salary
+                          <Banknote className="w-3.5 h-3.5" /> Pay Salary
                         </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 rounded-lg"
                           onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "deduction", amount: "", date: today, note: "" })}>
                           Deduction
                         </Button>
-                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-7"
+                        <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8 rounded-lg border-blue-200 text-blue-700 hover:bg-blue-50 dark:border-blue-800/40 dark:text-blue-400 dark:hover:bg-blue-950/30"
                           onClick={() => setEntryDialog({ userId: s.userId, name: s.name, type: "bonus", amount: "", date: today, note: "" })}>
                           Bonus
                         </Button>
-                        <Button size="sm" variant="ghost" className="gap-1.5 text-xs h-7 ml-auto"
-                          onClick={() => setSalaryDialog({ userId: s.userId, name: s.name, salary: String(s.baseSalary), dayRate: String(s.dayRate) })}>
-                          Edit Salary
+                        <Button size="sm" variant="ghost" className="gap-1.5 text-xs h-8 rounded-lg ml-auto text-muted-foreground hover:text-foreground"
+                          onClick={() => setSalaryDialog({ userId: s.userId, name: s.name, salary: String(s.baseSalary) })}>
+                          <Cog className="w-3.5 h-3.5" /> Edit Salary
                         </Button>
                       </div>
 
-                      {/* Entry log */}
+                      {/* Entry log — timeline style */}
                       {s.entries.length > 0 && (
-                        <div className="border rounded-lg overflow-hidden">
-                          <table className="w-full text-xs">
-                            <thead className="bg-muted/40">
-                              <tr>
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Date</th>
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground">Type</th>
-                                <th className="text-right px-3 py-2 font-medium text-muted-foreground">Amount</th>
-                                <th className="text-left px-3 py-2 font-medium text-muted-foreground hidden sm:table-cell">Note</th>
-                                <th className="px-3 py-2"></th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-border/50">
-                              {s.entries.map((e) => (
-                                <tr key={e.id}>
-                                  <td className="px-3 py-2 font-mono">{e.date}</td>
-                                  <td className="px-3 py-2">
-                                    <Badge variant="outline" className={typeBadgeClass(e.type)}>
+                        <div className="space-y-1.5">
+                          <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide px-1">Transaction Log</span>
+                          <div className="rounded-xl border border-border/30 overflow-hidden">
+                            {s.entries.map((e, eIdx) => {
+                              const colorMap: Record<string, string> = {
+                                advance: "border-l-orange-400",
+                                salary_payment: "border-l-emerald-400",
+                                deduction: "border-l-rose-400",
+                                bonus: "border-l-blue-400",
+                              };
+                              return (
+                                <div key={e.id} className={cn(
+                                  "flex items-center justify-between px-3 py-2.5 text-xs border-l-[3px] transition-colors hover:bg-muted/20",
+                                  colorMap[e.type] || "border-l-slate-300",
+                                  eIdx > 0 && "border-t border-border/20"
+                                )}>
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <span className="font-mono text-muted-foreground text-[11px] shrink-0">{e.date}</span>
+                                    <Badge variant="outline" className={cn("text-[10px] shrink-0", typeBadgeClass(e.type))}>
                                       {typeLabel(e.type)}
                                     </Badge>
-                                  </td>
-                                  <td className="px-3 py-2 text-right font-mono">
-                                    {e.type === "day_off" ? "—" : Number(e.amount).toLocaleString()}
-                                  </td>
-                                  <td className="px-3 py-2 text-muted-foreground hidden sm:table-cell">{e.note || "—"}</td>
-                                  <td className="px-3 py-2 text-right">
+                                    {e.note && <span className="text-muted-foreground truncate hidden sm:block">{e.note}</span>}
+                                  </div>
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="font-mono font-semibold">
+                                      {Number(e.amount).toLocaleString()}
+                                    </span>
                                     <button
-                                      onClick={() => deleteMut.mutate(e.id)}
-                                      className="text-muted-foreground hover:text-destructive transition-colors"
+                                      onClick={(ev) => { ev.stopPropagation(); deleteMut.mutate(e.id); }}
+                                      className="text-muted-foreground/40 hover:text-destructive transition-colors p-1 rounded-md hover:bg-destructive/10"
                                     >
-                                      <Trash2 className="w-3.5 h-3.5" />
+                                      <Trash2 className="w-3 h-3" />
                                     </button>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
                       )}
-                    </div>
+                    </motion.div>
                   )}
-                </div>
-              ))}
+                </motion.div>
+                );
+              })}
             </div>
           )}
 
           {/* Set salary for users who don't have one yet */}
           {activeUsers.filter((u: User) => !summary.find((s) => s.userId === u.id)).length > 0 && (
-            <div className="border-t pt-4 mt-4">
-              <p className="text-sm font-medium mb-2">Configure Salary</p>
+            <div className="border-t border-border/30 pt-5 mt-2">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-6 h-6 rounded-lg bg-muted/60 flex items-center justify-center">
+                  <Plus className="w-3 h-3 text-muted-foreground" />
+                </div>
+                <span className="text-sm font-semibold">Configure Salary</span>
+              </div>
               <p className="text-xs text-muted-foreground mb-3">Staff without salary configured:</p>
               <div className="flex flex-wrap gap-2">
                 {activeUsers
@@ -1493,8 +1661,8 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
                       key={u.id}
                       size="sm"
                       variant="outline"
-                      className="text-xs h-7 gap-1.5"
-                      onClick={() => setSalaryDialog({ userId: u.id, name: u.name, salary: "0", dayRate: "0" })}
+                      className="text-xs h-8 gap-1.5 rounded-lg hover:border-emerald-300 hover:text-emerald-700 hover:bg-emerald-50/50 dark:hover:border-emerald-700 dark:hover:text-emerald-400 dark:hover:bg-emerald-950/20 transition-colors"
+                      onClick={() => setSalaryDialog({ userId: u.id, name: u.name, salary: "0" })}
                     >
                       <Plus className="w-3 h-3" />
                       {u.name}
@@ -1521,18 +1689,6 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
                   placeholder="0"
                 />
               </Field>
-              <Field label="Day Rate (QAR) — deducted per day off">
-                <Input
-                  type="number"
-                  min="0"
-                  value={salaryDialog?.dayRate || ""}
-                  onChange={(e) => setSalaryDialog((d) => d ? { ...d, dayRate: e.target.value } : null)}
-                  placeholder="0"
-                />
-              </Field>
-              <div className="bg-muted/30 rounded-lg p-3 text-xs text-muted-foreground">
-                Day Rate is auto-calculated if left at 0: salary / 30.
-              </div>
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setSalaryDialog(null)}>Cancel</Button>
@@ -1564,17 +1720,23 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
                   onChange={(e) => setEntryDialog((d) => d ? { ...d, date: e.target.value } : null)}
                 />
               </Field>
-              {entryDialog?.type !== "day_off" && (
-                <Field label="Amount (QAR)">
-                  <Input
-                    type="number"
-                    min="0"
-                    value={entryDialog?.amount || ""}
-                    onChange={(e) => setEntryDialog((d) => d ? { ...d, amount: e.target.value } : null)}
-                    placeholder="0"
-                  />
-                </Field>
-              )}
+              <Field label={`Amount (QAR)${entryDialog?.type === "advance" ? " — max 500" : ""}`}>
+                <Input
+                  type="number"
+                  min="0"
+                  max={entryDialog?.type === "advance" ? 500 : undefined}
+                  value={entryDialog?.amount || ""}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (entryDialog?.type === "advance" && Number(val) > 500) return;
+                    setEntryDialog((d) => d ? { ...d, amount: val } : null);
+                  }}
+                  placeholder="0"
+                />
+                {entryDialog?.type === "advance" && (
+                  <p className="text-xs text-orange-600 mt-1">This advance will also be recorded as an expense.</p>
+                )}
+              </Field>
               <Field label="Note (optional)">
                 <Input
                   value={entryDialog?.note || ""}
@@ -1587,7 +1749,7 @@ function StaffPayrollSection({ toast, qc }: { toast: any; qc: any }) {
               <Button variant="ghost" onClick={() => setEntryDialog(null)}>Cancel</Button>
               <Button
                 onClick={() => addEntryMut.mutate()}
-                disabled={addEntryMut.isPending || (entryDialog?.type !== "day_off" && !entryDialog?.amount)}
+                disabled={addEntryMut.isPending || !entryDialog?.amount}
                 className="gap-2"
               >
                 {addEntryMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
@@ -1614,9 +1776,11 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
   const [returnPolicy, setReturnPolicy] = useState("");
   const [largeOrderThreshold, setLargeOrderThreshold] = useState<string>("");
   const [showPoField, setShowPoField] = useState<boolean>(true);
+  const initialized4 = useRef(false);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !initialized4.current) {
+      initialized4.current = true;
       setTaxRate(String(settings.taxRate ?? 0));
       setReturnPolicy(settings.returnPolicyText ?? "");
       setLargeOrderThreshold(String(settings.largeOrderThreshold ?? ""));
@@ -1632,6 +1796,7 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
         body: JSON.stringify(body),
       }).then((r) => r.json()),
     onSuccess: () => {
+      initialized4.current = false;
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Document settings saved" });
     },
@@ -1647,12 +1812,17 @@ function Section4({ toast, qc }: { toast: any; qc: any }) {
     });
 
   return (
-    <AccordionItem value="documents" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <FileText className="w-4 h-4 text-[#d4a017]" />
-          Document Settings
-        </span>
+    <AccordionItem value="documents" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-sky-50 dark:bg-sky-950/40 flex items-center justify-center shrink-0">
+            <FileText className="w-[18px] h-[18px] text-sky-600 dark:text-sky-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Document Settings</span>
+            <span className="text-xs text-muted-foreground font-normal">Tax rate, return policy, thresholds</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         {isLoading ? (
@@ -1756,10 +1926,12 @@ function Section5({ toast, qc }: { toast: any; qc: any }) {
   });
 
   const [brands, setBrands] = useState<string[]>([]);
+  const initialized5 = useRef(false);
 
   useEffect(() => {
-    if (settings?.brands) {
-      setBrands(settings.brands);
+    if (settings && !initialized5.current) {
+      initialized5.current = true;
+      setBrands(settings.brands || []);
     }
   }, [settings]);
 
@@ -1771,6 +1943,7 @@ function Section5({ toast, qc }: { toast: any; qc: any }) {
         body: JSON.stringify(body),
       }).then((r) => r.json()),
     onSuccess: () => {
+      initialized5.current = false;
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Brands saved" });
     },
@@ -1799,12 +1972,17 @@ function Section5({ toast, qc }: { toast: any; qc: any }) {
   };
 
   return (
-    <AccordionItem value="brands" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Tag className="w-4 h-4 text-[#d4a017]" />
-          Brands
-        </span>
+    <AccordionItem value="brands" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/40 flex items-center justify-center shrink-0">
+            <Tag className="w-[18px] h-[18px] text-rose-600 dark:text-rose-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Brands</span>
+            <span className="text-xs text-muted-foreground font-normal">Product brand list and ordering</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         {isLoading ? (
@@ -1883,9 +2061,11 @@ function Section6({ toast, qc }: { toast: any; qc: any }) {
   });
 
   const [form, setForm] = useState({ youtube: "", tiktok: "", instagram: "", facebook: "" });
+  const initialized6 = useRef(false);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !initialized6.current) {
+      initialized6.current = true;
       setForm({
         youtube: settings.youtube || "",
         tiktok: settings.tiktok || "",
@@ -1903,6 +2083,7 @@ function Section6({ toast, qc }: { toast: any; qc: any }) {
         body: JSON.stringify(body),
       }).then((r) => r.json()),
     onSuccess: () => {
+      initialized6.current = false;
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Social media links saved" });
     },
@@ -1920,12 +2101,17 @@ function Section6({ toast, qc }: { toast: any; qc: any }) {
   ];
 
   return (
-    <AccordionItem value="social" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Share2 className="w-4 h-4 text-[#d4a017]" />
-          Social Media
-        </span>
+    <AccordionItem value="social" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-pink-50 dark:bg-pink-950/40 flex items-center justify-center shrink-0">
+            <Share2 className="w-[18px] h-[18px] text-pink-600 dark:text-pink-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Social Media</span>
+            <span className="text-xs text-muted-foreground font-normal">YouTube, TikTok, Instagram, Facebook links</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         {isLoading ? (
@@ -1969,9 +2155,11 @@ function Section7({ toast, qc }: { toast: any; qc: any }) {
     maxMessagesPerDay: "3",
     autoQueueMessages: false,
   });
+  const initialized7 = useRef(false);
 
   useEffect(() => {
-    if (settings) {
+    if (settings && !initialized7.current) {
+      initialized7.current = true;
       setForm({
         quietHoursStart: settings.quietHoursStart ?? "22:00",
         quietHoursEnd: settings.quietHoursEnd ?? "08:00",
@@ -1989,6 +2177,7 @@ function Section7({ toast, qc }: { toast: any; qc: any }) {
         body: JSON.stringify(body),
       }).then((r) => r.json()),
     onSuccess: () => {
+      initialized7.current = false;
       qc.invalidateQueries({ queryKey: ["/api/settings"] });
       toast({ title: "Messaging settings saved" });
     },
@@ -2004,12 +2193,17 @@ function Section7({ toast, qc }: { toast: any; qc: any }) {
     });
 
   return (
-    <AccordionItem value="messaging" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <MessageSquare className="w-4 h-4 text-[#d4a017]" />
-          Messaging Settings
-        </span>
+    <AccordionItem value="messaging" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-teal-50 dark:bg-teal-950/40 flex items-center justify-center shrink-0">
+            <MessageSquare className="w-[18px] h-[18px] text-teal-600 dark:text-teal-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Messaging Settings</span>
+            <span className="text-xs text-muted-foreground font-normal">Quiet hours, rate limits, auto-queue</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         {isLoading ? (
@@ -2167,12 +2361,17 @@ function Section8({ toast }: { toast: any }) {
   };
 
   return (
-    <AccordionItem value="data" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Database className="w-4 h-4 text-[#d4a017]" />
-          Data
-        </span>
+    <AccordionItem value="data" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800/40 flex items-center justify-center shrink-0">
+            <Database className="w-[18px] h-[18px] text-slate-600 dark:text-slate-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">Data</span>
+            <span className="text-xs text-muted-foreground font-normal">Export, import, sync operations</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         <div className="space-y-6 pt-2 pb-4">
@@ -2301,12 +2500,17 @@ function Section9({ toast }: { toast: any }) {
   const buildDate = "2025-06-20";
 
   return (
-    <AccordionItem value="about" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
-      <AccordionTrigger className="hover:no-underline">
-        <span className="flex items-center gap-2 font-semibold text-base">
-          <Info className="w-4 h-4 text-[#d4a017]" />
-          About
-        </span>
+    <AccordionItem value="about" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
+      <AccordionTrigger className="hover:no-underline py-5">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 flex items-center justify-center shrink-0">
+            <Info className="w-[18px] h-[18px] text-indigo-600 dark:text-indigo-400" />
+          </div>
+          <div className="text-left">
+            <span className="font-semibold text-[15px] block leading-tight">About</span>
+            <span className="text-xs text-muted-foreground font-normal">App version, system info, connection test</span>
+          </div>
+        </div>
       </AccordionTrigger>
       <AccordionContent>
         <div className="space-y-6 pt-2 pb-4">

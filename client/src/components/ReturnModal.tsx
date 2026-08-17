@@ -48,6 +48,8 @@ interface ReturnItem {
   productId?: number;
   description: string;
   soldQty: number;
+  alreadyReturned: number;
+  maxQty: number;
   unit: string;
   price: number;
   returnQty: number;
@@ -113,19 +115,43 @@ export default function ReturnModal({
       setAdminOverride(false);
     }
 
-    // Init return items
-    setReturnItems(items.map(item => ({
-      itemId: item.id,
-      productId: item.productId,
-      description: item.description,
-      soldQty: parseFloat(String(item.qty)),
-      unit: item.unit,
-      price: parseFloat(String(item.price || 0)),
-      returnQty: parseFloat(String(item.qty)),
-      condition: "original",
-      damageDesc: "",
-      selected: true,
-    })));
+    // Init return items (maxQty will be corrected once we fetch already-returned data)
+    const initItems = items.map(item => {
+      const sold = parseFloat(String(item.qty));
+      return {
+        itemId: item.id,
+        productId: item.productId,
+        description: item.description,
+        soldQty: sold,
+        alreadyReturned: 0,
+        maxQty: sold,
+        unit: item.unit,
+        price: parseFloat(String(item.price || 0)),
+        returnQty: sold,
+        condition: "original" as const,
+        damageDesc: "",
+        selected: true,
+      };
+    });
+    setReturnItems(initItems);
+
+    // Fetch already-returned qtys for this invoice via the customer invoices-for-return endpoint
+    if (customerId) {
+      fetch(`/api/customers/${customerId}/invoices-for-return`)
+        .then(r => r.json())
+        .then((invoices: any[]) => {
+          const inv = invoices.find((i: any) => i.id === invoiceId);
+          if (!inv?.items) return;
+          const retMap: Record<number, number> = {};
+          for (const it of inv.items) retMap[it.id] = it.returnedQty || 0;
+          setReturnItems(prev => prev.map(ri => {
+            const alreadyReturned = retMap[ri.itemId] || 0;
+            const maxQty = Math.max(0, ri.soldQty - alreadyReturned);
+            return { ...ri, alreadyReturned, maxQty, returnQty: Math.min(ri.returnQty, maxQty) };
+          }));
+        })
+        .catch(() => {});
+    }
 
     // Load suppliers for damage claim
     fetch("/api/suppliers").then(r => r.json()).then(setSuppliers).catch(() => {});
@@ -225,6 +251,12 @@ export default function ReturnModal({
 
       if (!res.ok) {
         const err = await res.json();
+        if (err.code === "QTY_EXCEEDS_PURCHASED" && Array.isArray(err.violations)) {
+          const lines = err.violations.map((v: any) =>
+            `${v.description}: returning ${v.requested} but only ${v.maxReturnable} returnable (bought ${v.purchased}, already returned ${v.alreadyReturned})`
+          );
+          throw new Error(lines.join("\n"));
+        }
         throw new Error(err.message || "Return failed");
       }
 
@@ -390,16 +422,24 @@ export default function ReturnModal({
                     <thead className="bg-gray-100">
                       <tr>
                         <th className="p-2 text-left">Item</th>
-                        <th className="p-2 text-center">Sold Qty</th>
-                        <th className="p-2 text-right">Amount</th>
+                        <th className="p-2 text-center">Bought</th>
+                        <th className="p-2 text-center">Returnable</th>
+                        <th className="p-2 text-right">Return Amt</th>
                       </tr>
                     </thead>
                     <tbody>
                       {returnItems.map((item, i) => (
-                        <tr key={i} className="border-t">
+                        <tr key={i} className={`border-t ${item.maxQty <= 0 ? "opacity-50" : ""}`}>
                           <td className="p-2">{item.description}</td>
                           <td className="p-2 text-center">{item.soldQty} {item.unit}</td>
-                          <td className="p-2 text-right">QAR {(item.price * item.soldQty).toFixed(2)}</td>
+                          <td className="p-2 text-center">
+                            {item.alreadyReturned > 0 ? (
+                              <span className="text-amber-600 font-semibold">{item.maxQty} <span className="text-[10px] font-normal">({item.alreadyReturned} prev.)</span></span>
+                            ) : (
+                              <span>{item.maxQty}</span>
+                            )}
+                          </td>
+                          <td className="p-2 text-right">QAR {(item.price * item.maxQty).toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -430,23 +470,40 @@ export default function ReturnModal({
                   {returnType === "exchange" ? "Select items to return:" : "Enter return quantities:"}
                 </p>
                 <div className="space-y-2">
-                  {returnItems.map((item, i) => (
-                    <div key={i} className={`border rounded p-3 ${item.condition === "damaged" ? "opacity-50 bg-gray-50" : ""}`}>
-                      <div className="flex items-center justify-between mb-2">
+                  {returnItems.map((item, i) => {
+                    const fullyReturned = item.maxQty <= 0;
+                    return (
+                    <div key={i} className={`border rounded p-3 ${fullyReturned ? "opacity-50 bg-gray-100" : item.condition === "damaged" ? "opacity-50 bg-gray-50" : ""}`}>
+                      <div className="flex items-center justify-between mb-1">
                         <span className="font-medium text-sm">{item.description}</span>
-                        <span className="text-xs text-gray-500">Sold: {item.soldQty} {item.unit} @ QAR {item.price.toFixed(2)}</span>
+                        <span className="text-xs text-gray-500">@ QAR {item.price.toFixed(2)}/{item.unit}</span>
                       </div>
+                      <div className="flex items-center gap-3 mb-2 text-[11px] tabular-nums">
+                        <span className="text-muted-foreground">Bought: {item.soldQty}</span>
+                        {item.alreadyReturned > 0 && (
+                          <span className="text-amber-600 font-semibold">Already returned: {item.alreadyReturned}</span>
+                        )}
+                        <span className={fullyReturned ? "text-red-600 font-semibold" : "text-emerald-600 font-semibold"}>
+                          Returnable: {item.maxQty}
+                        </span>
+                      </div>
+                      {fullyReturned ? (
+                        <div className="flex items-center gap-1.5 text-xs text-red-600">
+                          <AlertTriangle className="w-3 h-3" />
+                          <span>Fully returned — cannot return more.</span>
+                        </div>
+                      ) : (
                       <div className="flex gap-3 items-center">
                         <div>
                           <Label className="text-xs">Return Qty</Label>
                           <Input
                             type="number"
                             min="0"
-                            max={item.soldQty}
+                            max={item.maxQty}
                             value={item.returnQty}
                             disabled={item.condition === "damaged"}
                             onChange={e => {
-                              const v = Math.min(parseFloat(e.target.value) || 0, item.soldQty);
+                              const v = Math.min(parseFloat(e.target.value) || 0, item.maxQty);
                               setReturnItems(ri => ri.map((r, idx) => idx === i ? { ...r, returnQty: v, selected: v > 0 } : r));
                             }}
                             className="w-20 h-8 text-sm"
@@ -473,8 +530,10 @@ export default function ReturnModal({
                           <p className="text-xs text-red-600 self-end mb-1">Cannot return damaged</p>
                         )}
                       </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
                 <div className="mt-3 bg-blue-50 border border-blue-200 rounded p-3">
                   <p className="text-sm font-semibold text-blue-800">

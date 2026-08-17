@@ -1,0 +1,1 @@
+ALTER TABLE "owner_loans" ADD COLUMN "proof_url" text;

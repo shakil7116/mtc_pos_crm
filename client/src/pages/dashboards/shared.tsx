@@ -53,7 +53,7 @@ export function Stat({ label, value, sub, href, tone = "default" }: {
 }) {
   const toneCls = tone === "green" ? "text-green-700" : tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-600" : "text-[#1e2a3a]";
   const inner = (
-    <div className="rounded-xl border bg-white p-3 hover:shadow-sm transition-shadow h-full">
+    <div className="stat-card h-full">
       <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</p>
       <p className={`font-mono font-bold text-lg ${toneCls}`}>{value}</p>
       {sub && <p className="text-[11px] text-muted-foreground truncate">{sub}</p>}

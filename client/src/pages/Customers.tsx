@@ -597,38 +597,40 @@ export default function Customers() {
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
       {/* ── Header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="page-header">
         <div>
-          <div className="flex items-center gap-2">
-            <Users className="w-6 h-6 text-primary" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-50 to-indigo-50 flex items-center justify-center">
+              <Users className="w-5 h-5 text-indigo-600" />
+            </div>
             <h1 className="text-2xl font-bold tracking-tight">Customers</h1>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {isLoading ? "Loading…" : `${totalCustomers} total customers`}
+          <p className="text-[13px] text-muted-foreground mt-0.5">
+            {isLoading ? "Loading..." : `${totalCustomers} total customers`}
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
-          <Button variant="outline" onClick={exportCsv} className="gap-2">
+          <Button variant="outline" onClick={exportCsv} className="gap-2 rounded-lg">
             <Download className="w-4 h-4" /> Export CSV
           </Button>
-          <Button onClick={() => setDialogOpen(true)} className="gap-2">
+          <button onClick={() => setDialogOpen(true)} className="btn-primary-action">
             <Plus className="w-4 h-4" />
             New Customer
-          </Button>
+          </button>
         </div>
       </div>
 
-      {/* ── Overview strip — money health at a glance (display-only KPIs) ── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {/* ── Overview strip ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 stagger-children">
         {[
-          { k: "totalDue", label: "Total Due", val: fmt(totals.totalDue), tone: "text-red-600" },
-          { k: "totalPdc", label: "PDC in hand", val: fmt(totals.totalPdc), tone: "text-amber-600" },
-          { k: "overdue", label: "Overdue", val: `${totals.overdue ?? 0} cust`, tone: "text-red-600" },
-          { k: "good", label: "Good standing", val: `${totals.goodStanding ?? 0} cust`, tone: "text-emerald-600" },
+          { k: "totalDue", label: "Total Due", val: fmt(totals.totalDue), tone: "text-red-600", bg: "from-red-50/50 to-transparent" },
+          { k: "totalPdc", label: "PDC in hand", val: fmt(totals.totalPdc), tone: "text-amber-600", bg: "from-amber-50/50 to-transparent" },
+          { k: "overdue", label: "Overdue", val: `${totals.overdue ?? 0} cust`, tone: "text-red-600", bg: "from-red-50/50 to-transparent" },
+          { k: "good", label: "Good standing", val: `${totals.goodStanding ?? 0} cust`, tone: "text-emerald-600", bg: "from-emerald-50/50 to-transparent" },
         ].map((s) => (
-          <div key={s.k} className="rounded-xl border p-3">
-            <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{s.label}</p>
-            <p className={cn("font-mono font-bold text-lg", s.tone)}>{s.val}</p>
+          <div key={s.k} className={cn("stat-card bg-gradient-to-br", s.bg)}>
+            <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">{s.label}</p>
+            <p className={cn("font-mono font-bold text-lg mt-1 tracking-tight", s.tone)}>{s.val}</p>
           </div>
         ))}
       </div>
@@ -743,7 +745,7 @@ export default function Customers() {
       </div>
 
       {/* ── Customer list ── */}
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         {isLoading ? (
           <div>
             {Array.from({ length: 8 }).map((_, i) => (

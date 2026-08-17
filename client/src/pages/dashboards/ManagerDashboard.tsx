@@ -166,7 +166,7 @@ export default function ManagerDashboard() {
 
       {/* PDC + cash position (8C shared admin/manager) */}
       <div className="grid grid-cols-2 gap-3">
-        <Link href="/pdc" className="rounded-xl border p-3 hover:shadow-sm">
+        <Link href="/finance?tab=cheques" className="rounded-xl border p-3 hover:shadow-sm">
           <p className="text-[11px] uppercase tracking-wide text-muted-foreground">PDC due (today or past)</p>
           {(() => {
             const due = cheques.filter((c) => ["pending", "deposited"].includes(c.status) && c.chequeDate <= today);

@@ -6,8 +6,8 @@ import {
   getStores, createStore, updateStore,
   getUsers, getUser, createUser, updateUser, verifyUserPin, changeOwnPin,
   createTask, getTasks, updateTask, deleteTask,
-  getCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
-  getProducts, getProduct, createProduct, updateProduct,
+  getCustomers, searchCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
+  getProducts, searchProducts, getProduct, createProduct, updateProduct,
   getInventory, adjustStock, getLowStockItems,
   createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer, getTransferSettlement,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
@@ -16,10 +16,12 @@ import {
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
+  createApprovalRequest, getApprovalRequests,
+  approveApprovalRequest, rejectApprovalRequest, cancelApprovalRequest, completeApprovalRequest,
   resolveDeliveryNote, pickDeliveryNote, authorizeDeliveryNote, markDeliveryNoteDelivered,
   signWarehouseRelease, reportDeliveryDamage,
   getProductActivity, getReorderSuggestions,
-  createOwnerLoan, getOwnerLoans, getProfitDetail, getCreditExposure, getCustomerOverview, getLocationOverview,
+  createOwnerLoan, updateOwnerLoan, getOwnerLoans, LOAN_TYPES, getProfitDetail, getProfitSummary, getCreditExposure, getCustomerOverview, getLocationOverview,
   createNotification, getNotifications, markNotificationRead, markAllNotificationsRead,
   getArrangementNote, createArrangementCorrection,
   getMessages, logMessage, getLastMessageDate,
@@ -29,7 +31,8 @@ import {
   createSupplierPayment, getSupplierPayments, getSupplierLedger,
   createExpense, getExpenses, updateExpense, deleteExpense, checkRecurringExpenses,
   createWarehouseIssue, getWarehouseIssues, updateWarehouseIssue,
-  setChequeStatus, checkPdcAlerts, getChequeDetail, setChequePhoto,
+  setChequeStatus, checkPdcAlerts, getChequeDetail, setChequePhoto, setChequeDepositProof, setChequeClearanceProof, swapChequeToPayment,
+  setChequeRecovery, createReplacementCheque, getPdcActionSummary,
   logCashflow, getCashflow, getCashPosition, InsufficientFundsError,
   logCorrection, getCorrections, reverseChequeStatus, correctPayment,
   softDeleteExpense, reverseDelivery, reverseReturnApproval,
@@ -44,6 +47,7 @@ import {
   getCustomRecords, createCustomRecord, updateCustomRecord, deleteCustomRecord,
   getDocumentCounters, setNextDocNumber, updateCounterFormat, getNumberingAudit,
   getStaffPayroll, createStaffPayrollEntry, deleteStaffPayrollEntry, updateUserSalary, getStaffPayrollSummary,
+  ensureFunds,
 } from "./storage";
 import { normalizeRole } from "@shared/schema";
 import {
@@ -303,8 +307,30 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     if (p === "/api/users") return next(); // dedicated demo-users handler
     if (p === "/api/settings") return res.json(demo.settings());
     if (p === "/api/stores") return res.json(demo.stores());
-    if (p === "/api/customers") return res.json(demo.customers());
-    if (p === "/api/products") return res.json(demo.products());
+    if (p === "/api/customers") {
+      const search = (req.query.search as string || "").trim().toLowerCase();
+      const all = demo.customers();
+      if (search.length >= 2) {
+        return res.json(all.filter((c: any) =>
+          (c.name || "").toLowerCase().includes(search) ||
+          (c.phone || "").includes(search) ||
+          (c.address || "").toLowerCase().includes(search)
+        ).slice(0, 30));
+      }
+      return res.json(all);
+    }
+    if (p === "/api/products") {
+      const search = (req.query.search as string || "").trim().toLowerCase();
+      const all = demo.products();
+      if (search.length >= 2) {
+        return res.json(all.filter((p: any) =>
+          (p.name || "").toLowerCase().includes(search) ||
+          (p.sku || "").toLowerCase().includes(search) ||
+          (p.category || "").toLowerCase().includes(search)
+        ).slice(0, 30));
+      }
+      return res.json(all);
+    }
     if (p === "/api/documents") {
       const type = req.query.type as string | undefined;
       const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
@@ -651,6 +677,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.get("/api/customers", async (req: Request, res: Response) => {
     try {
+      const search = (req.query.search as string || "").trim();
+      if (search.length >= 2) {
+        const rows = await searchCustomers(search);
+        return res.json(rows);
+      }
       const rows = await getCustomers();
       res.json(rows);
     } catch (err) {
@@ -703,13 +734,13 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const { documents, payments } = await import("@shared/schema");
       const { eq, and } = await import("drizzle-orm");
 
-      const docs = await db.select({ total: documents.total, status: documents.status })
+      const docs = await db.select({ total: documents.total, status: documents.status, transactionMode: documents.transactionMode })
         .from(documents)
         .where(and(eq(documents.customerId, customerId), eq(documents.type, "INV")));
 
-      // Void/returned invoices are not receivable — exclude from the ledger.
+      // Void/returned/demo invoices are not receivable — exclude from the ledger.
       const totalInvoiced = docs
-        .filter((d: any) => d.status !== "void" && d.status !== "returned")
+        .filter((d: any) => d.status !== "void" && d.status !== "returned" && d.transactionMode !== "demo")
         .reduce((s: number, d: any) => s + parseFloat(d.total || "0"), 0);
 
       const pays = await db.select({ amount: payments.amount, isRefund: payments.isRefund })
@@ -724,6 +755,308 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const creditLimit = parseFloat(customer.creditLimit || "0");
 
       res.json({ balance, creditLimit, totalInvoiced, totalPaid });
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Per-invoice paid totals for a customer (lightweight: {documentId → netPaid}) ──
+  app.get("/api/customers/:id/invoice-payments", async (req: Request, res: Response) => {
+    try {
+      const customerId = Number(req.params.id);
+      const { db } = await import("./db");
+      const { payments } = await import("@shared/schema");
+      const { eq, and, isNotNull } = await import("drizzle-orm");
+      const rows = await db.select({
+        documentId: payments.documentId,
+        amount: payments.amount,
+        isRefund: payments.isRefund,
+      }).from(payments).where(and(eq(payments.customerId, customerId), isNotNull(payments.documentId)));
+      const map: Record<number, number> = {};
+      for (const r of rows as any[]) {
+        if (!r.documentId) continue;
+        const amt = parseFloat(r.amount || "0");
+        map[r.documentId] = (map[r.documentId] || 0) + (r.isRefund ? -amt : amt);
+      }
+      res.json(map);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Customer invoices for return picker ──
+  app.get("/api/customers/:id/invoices-for-return", async (req: Request, res: Response) => {
+    try {
+      const customerId = Number(req.params.id);
+      const { db } = await import("./db");
+      const { documents, documentItems, returnItems: returnItemsTable, returns: returnsTable } = await import("@shared/schema");
+      const { eq, and, ne, inArray, desc } = await import("drizzle-orm");
+
+      const invs = await db.select({
+        id: documents.id,
+        number: documents.number,
+        date: documents.date,
+        total: documents.total,
+        status: documents.status,
+        storeId: documents.storeId,
+      }).from(documents)
+        .where(and(
+          eq(documents.customerId, customerId),
+          eq(documents.type, "INV"),
+          ne(documents.status, "void"),
+        ))
+        .orderBy(desc(documents.date));
+
+      if (!invs.length) return res.json([]);
+
+      const invIds = invs.map((d) => d.id);
+      const items = await db.select().from(documentItems)
+        .where(inArray(documentItems.documentId, invIds));
+
+      // Already-returned qty per document item (from approved + pending returns)
+      const allDocItemIds = items.map((it) => it.id);
+      let returnedQtyMap: Record<number, number> = {};
+      if (allDocItemIds.length > 0) {
+        const existingReturnItems = await db.select({
+          documentItemId: returnItemsTable.documentItemId,
+          qty: returnItemsTable.qty,
+          returnId: returnItemsTable.returnId,
+        }).from(returnItemsTable)
+          .where(inArray(returnItemsTable.documentItemId, allDocItemIds));
+
+        // Only count items from non-rejected returns
+        const returnIds = Array.from(new Set(existingReturnItems.map((ri) => ri.returnId)));
+        let activeReturnIds = new Set<number>();
+        if (returnIds.length > 0) {
+          const retRows = await db.select({ id: returnsTable.id, status: returnsTable.status })
+            .from(returnsTable)
+            .where(inArray(returnsTable.id, returnIds));
+          activeReturnIds = new Set(retRows.filter((r) => r.status !== "rejected").map((r) => r.id));
+        }
+
+        for (const ri of existingReturnItems) {
+          if (ri.documentItemId && activeReturnIds.has(ri.returnId)) {
+            returnedQtyMap[ri.documentItemId] = (returnedQtyMap[ri.documentItemId] || 0) + parseFloat(String(ri.qty || "0"));
+          }
+        }
+      }
+
+      const result = invs.map((inv) => ({
+        ...inv,
+        items: items
+          .filter((it) => it.documentId === inv.id)
+          .map((it) => ({
+            id: it.id,
+            productId: it.productId,
+            description: it.description,
+            qty: it.qty,
+            unit: it.unit,
+            price: it.price,
+            amount: it.amount,
+            returnedQty: returnedQtyMap[it.id] || 0,
+          })),
+      }));
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Customer Analytics (top products, profit, promo suggestions) ──
+  app.get("/api/customers/:id/analytics", async (req: Request, res: Response) => {
+    try {
+      const customerId = Number(req.params.id);
+      const customer = await getCustomer(customerId);
+      if (!customer) return res.status(404).json({ message: "Customer not found" });
+
+      const { db } = await import("./db");
+      const { documents, documentItems, products, payments } = await import("@shared/schema");
+      const { eq, and, ne, inArray } = await import("drizzle-orm");
+
+      // All non-void invoices for this customer
+      const invs = await db.select({ id: documents.id, total: documents.total, status: documents.status, date: documents.date })
+        .from(documents)
+        .where(and(eq(documents.customerId, customerId), eq(documents.type, "INV"), ne(documents.status, "void")));
+
+      if (!invs.length) {
+        return res.json({ topProducts: [], totalProfit: 0, totalRevenue: 0, totalCost: 0, invoiceCount: 0, promotions: [] });
+      }
+
+      const invIds = invs.map((d: any) => d.id);
+
+      // All line items joined with product cost
+      const items = await db.select({
+        productId: documentItems.productId,
+        description: documentItems.description,
+        qty: documentItems.qty,
+        price: documentItems.price,
+        amount: documentItems.amount,
+        sku: documentItems.sku,
+        unit: documentItems.unit,
+        costPrice: products.costPrice,
+        productName: products.name,
+        category: products.category,
+        currentSalePrice: products.salePrice,
+        currentWholesalePrice: products.wholesalePrice,
+      })
+        .from(documentItems)
+        .leftJoin(products, eq(documentItems.productId, products.id))
+        .where(inArray(documentItems.documentId, invIds));
+
+      // Aggregate by product description (fallback grouping for non-product lines)
+      const productMap = new Map<string, {
+        productId: number | null; description: string; sku: string | null; unit: string | null;
+        category: string | null; totalQty: number; totalRevenue: number; totalCost: number;
+        totalProfit: number; purchaseCount: number; avgPrice: number; prices: number[];
+        costPrice: number; currentSalePrice: number; currentWholesalePrice: number;
+      }>();
+
+      for (const it of items as any[]) {
+        const key = it.productId ? `pid:${it.productId}` : `desc:${(it.description || "").toUpperCase()}`;
+        const qty = parseFloat(it.qty || "0");
+        const amount = parseFloat(it.amount || "0");
+        const cost = parseFloat(it.costPrice || "0");
+        const unitPrice = parseFloat(it.price || "0");
+        const itemCost = qty * cost;
+        const itemProfit = amount - itemCost;
+
+        const existing = productMap.get(key);
+        if (existing) {
+          existing.totalQty += qty;
+          existing.totalRevenue += amount;
+          existing.totalCost += itemCost;
+          existing.totalProfit += itemProfit;
+          existing.purchaseCount++;
+          existing.prices.push(unitPrice);
+        } else {
+          productMap.set(key, {
+            productId: it.productId,
+            description: it.productName || it.description || "Unknown",
+            sku: it.sku,
+            unit: it.unit,
+            category: it.category,
+            totalQty: qty,
+            totalRevenue: amount,
+            totalCost: itemCost,
+            totalProfit: itemProfit,
+            purchaseCount: 1,
+            avgPrice: 0,
+            prices: [unitPrice],
+            costPrice: cost,
+            currentSalePrice: parseFloat(it.currentSalePrice || "0"),
+            currentWholesalePrice: parseFloat(it.currentWholesalePrice || "0"),
+          });
+        }
+      }
+
+      // Compute avg price and sort by qty descending
+      const topProducts = Array.from(productMap.values())
+        .map((p) => {
+          p.avgPrice = p.prices.length ? p.prices.reduce((a, b) => a + b, 0) / p.prices.length : 0;
+          const marginPct = p.totalRevenue > 0 ? (p.totalProfit / p.totalRevenue) * 100 : 0;
+          return { ...p, marginPct: Math.round(marginPct * 10) / 10, prices: undefined };
+        })
+        .sort((a, b) => b.totalQty - a.totalQty);
+
+      const totalRevenue = topProducts.reduce((s, p) => s + p.totalRevenue, 0);
+      const totalCost = topProducts.reduce((s, p) => s + p.totalCost, 0);
+      const totalProfit = totalRevenue - totalCost;
+
+      // Smart promotions — CASH ONLY: only paid invoices qualify.
+      // Credit customers already benefit from delayed payment; promos reward cash buyers.
+      const paidInvIds = invs.filter((d: any) => d.status === "paid").map((d: any) => d.id);
+      const promotions: any[] = [];
+
+      if (paidInvIds.length > 0) {
+        const cashItems = await db.select({
+          productId: documentItems.productId,
+          description: documentItems.description,
+          qty: documentItems.qty,
+          price: documentItems.price,
+          amount: documentItems.amount,
+          unit: documentItems.unit,
+          costPrice: products.costPrice,
+          productName: products.name,
+          sku: documentItems.sku,
+          category: products.category,
+        })
+          .from(documentItems)
+          .leftJoin(products, eq(documentItems.productId, products.id))
+          .where(inArray(documentItems.documentId, paidInvIds));
+
+        const cashMap = new Map<string, { productId: number | null; description: string; sku: string | null; unit: string | null; category: string | null; totalQty: number; purchaseCount: number; prices: number[]; costPrice: number; avgPrice: number }>();
+        for (const it of cashItems as any[]) {
+          if (!it.productId || parseFloat(it.costPrice || "0") <= 0) continue;
+          const key = `pid:${it.productId}`;
+          const qty = parseFloat(it.qty || "0");
+          const unitPrice = parseFloat(it.price || "0");
+          const existing = cashMap.get(key);
+          if (existing) {
+            existing.totalQty += qty;
+            existing.purchaseCount++;
+            existing.prices.push(unitPrice);
+          } else {
+            cashMap.set(key, {
+              productId: it.productId,
+              description: it.productName || it.description || "Unknown",
+              sku: it.sku, unit: it.unit, category: it.category,
+              totalQty: qty, purchaseCount: 1, prices: [unitPrice],
+              costPrice: parseFloat(it.costPrice || "0"), avgPrice: 0,
+            });
+          }
+        }
+
+        // Round to nice business-friendly numbers
+        const roundNice = (price: number): number => {
+          if (price >= 200) return Math.round(price / 5) * 5;
+          if (price >= 50) return Math.round(price / 5) * 5;
+          if (price >= 10) return Math.round(price);
+          return Math.round(price * 2) / 2;
+        };
+
+        const cashProducts = Array.from(cashMap.values())
+          .map((p) => { p.avgPrice = p.prices.reduce((a, b) => a + b, 0) / p.prices.length; return p; })
+          .sort((a, b) => b.totalQty - a.totalQty)
+          .slice(0, 5);
+
+        for (const p of cashProducts) {
+          const unitProfit = p.avgPrice - p.costPrice;
+          const marginPct = p.avgPrice > 0 ? (unitProfit / p.avgPrice) * 100 : 0;
+          if (marginPct <= 15 || unitProfit <= 1) continue;
+
+          const rawDiscount = unitProfit * 0.25;
+          const rawSuggested = p.avgPrice - rawDiscount;
+          const suggestedPrice = roundNice(rawSuggested);
+          if (suggestedPrice >= p.avgPrice || suggestedPrice <= p.costPrice) continue;
+          const discountAmount = Math.round((p.avgPrice - suggestedPrice) * 100) / 100;
+          const newMargin = Math.round(((suggestedPrice - p.costPrice) / suggestedPrice) * 100 * 10) / 10;
+
+          promotions.push({
+            productId: p.productId, description: p.description, sku: p.sku, category: p.category,
+            reason: p.purchaseCount >= 3 ? "frequent_buyer" : "high_volume",
+            currentAvgPrice: Math.round(p.avgPrice * 100) / 100,
+            costPrice: p.costPrice,
+            currentProfit: Math.round(unitProfit * 100) / 100,
+            suggestedPrice, suggestedDiscount: discountAmount, newMarginPct: newMargin,
+            totalQtyBought: p.totalQty, purchaseCount: p.purchaseCount,
+            message: p.purchaseCount >= 3
+              ? `${p.description} — bought ${p.purchaseCount} times (${p.totalQty} ${p.unit || "pcs"}) cash. Offer at ${suggestedPrice} QAR (save ${discountAmount}/unit) to keep loyalty. Still ${newMargin}% margin.`
+              : `${p.description} — ${p.totalQty} ${p.unit || "pcs"} purchased cash. Offer at ${suggestedPrice} QAR (${discountAmount} off) to encourage repeat. ${newMargin}% margin preserved.`,
+          });
+        }
+      }
+
+      const paidCount = invs.filter((d: any) => d.status === "paid").length;
+      res.json({
+        topProducts: topProducts.slice(0, 20),
+        totalProfit: Math.round(totalProfit * 100) / 100,
+        totalRevenue: Math.round(totalRevenue * 100) / 100,
+        totalCost: Math.round(totalCost * 100) / 100,
+        invoiceCount: invs.length,
+        paidInvoices: paidCount,
+        cashOnly: true,
+        promotions,
+      });
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
@@ -800,6 +1133,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const before: any = await getDocument(id);
       if (!before) return res.status(404).json({ message: "Document not found" });
 
+      if (["void", "returned", "converted"].includes(before.status)) {
+        return res.status(400).json({ message: `Cannot edit a ${before.status} document.` });
+      }
+
       // 2-day edit window
       const created = before.createdAt ? new Date(before.createdAt).getTime() : 0;
       const ageHours = created ? (Date.now() - created) / 3_600_000 : 0;
@@ -811,8 +1148,6 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       await updateDocument(id, docData);
       if (items && Array.isArray(items)) {
         await updateDocumentItems(id, items);
-        // Reconcile inventory on INV edits so stock never desyncs: reverse the old
-        // line quantities and apply the new ones (net delta per product).
         if (before.type === "INV" && before.storeId) {
           const sum = (rows: any[]) => {
             const m: Record<number, number> = {};
@@ -827,31 +1162,55 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
             if (delta !== 0) await adjustStock(pid, before.storeId, delta, "adjustment", "Invoice edit reconcile", id);
           }
 
-          // Auto-refund when edit reduces the total (e.g. 5 rolls → 4 rolls)
-          const oldTotal = parseFloat(String(before.total || 0));
           const newTotal = parseFloat(String(docData.total || 0));
-          const refundAmount = oldTotal - newTotal;
-          if (refundAmount > 0.005) {
+          const allPays = await getPayments(id);
+          const netPaid = allPays.reduce(
+            (s, p) => s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+          const overpaid = netPaid - newTotal;
+          if (overpaid > 0.005) {
             await createPayment({
               documentId: id,
               customerId: before.customerId,
-              amount: String(refundAmount),
+              amount: String(overpaid),
               method: "Cash",
               date: new Date().toISOString().slice(0, 10),
               isRefund: true,
               recordedBy: (req as any).user?.id ?? docData.createdBy ?? null,
-              notes: `Auto-refund: invoice edited (total ${oldTotal.toFixed(2)} → ${newTotal.toFixed(2)})`,
+              notes: `Auto-refund: invoice edited (total ${parseFloat(String(before.total || 0)).toFixed(2)} → ${newTotal.toFixed(2)})`,
             } as any);
             await logCashflow({
               direction: "out", category: "Edit Refund",
-              amount: refundAmount, refType: "document", refId: id,
+              amount: overpaid, refType: "document", refId: id,
               storeId: before.storeId,
-              notes: `Edit refund on ${before.number} (${oldTotal.toFixed(2)} → ${newTotal.toFixed(2)})`,
+              notes: `Edit refund on ${before.number} (${parseFloat(String(before.total || 0)).toFixed(2)} → ${newTotal.toFixed(2)})`,
               createdBy: (req as any).user?.id ?? docData.createdBy,
             });
+          } else {
+            const status = newTotal > 0 && netPaid >= newTotal - 0.005 ? "paid" : netPaid > 0.005 ? "partial" : "unpaid";
+            await updateDocument(id, { status });
           }
         }
       }
+      // Process additional payments submitted with the edit (cash invoice: customer
+      // pays the difference when items are added). createPayment recalculates status,
+      // so the "partial" set above gets corrected to "paid" once the tender covers the total.
+      const editPayments: any[] = docData.payments || [];
+      for (const p of editPayments) {
+        const amt = Number(p.amount) || 0;
+        if (amt <= 0 || p.method === "Credit") continue;
+        const methodLabel =
+          p.method === "Online Transfer" ? "Bank Transfer" :
+          p.method === "PDC" ? "Cheque" :
+          p.method === "Card" ? "Credit Card" : "Cash";
+        await createPayment({
+          documentId: id, customerId: before.customerId,
+          amount: String(amt), method: methodLabel,
+          date: new Date().toISOString().slice(0, 10),
+          isRefund: false,
+          recordedBy: (req as any).user?.id ?? docData.createdBy ?? null,
+        } as any);
+      }
+
       const updated = await getDocument(id);
       res.json(updated);
     } catch (err) {
@@ -1220,6 +1579,11 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   app.get("/api/products", async (req: Request, res: Response) => {
     try {
+      const search = (req.query.search as string || "").trim();
+      if (search.length >= 2) {
+        const rows = await searchProducts(search);
+        return res.json(rows);
+      }
       const rows = await getProducts();
       res.json(rows);
     } catch (err) {
@@ -1524,22 +1888,129 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/returns", async (req: Request, res: Response) => {
     try {
       const {
-        originalInvoiceId, type, reason, refundMethod, refundAmount,
+        originalInvoiceId, sourceInvoices, isManual,
+        type, reason, refundMethod, refundAmount,
         items, processedBy, storeId, createdBy,
+        customerId, customerName,
       } = req.body;
 
-      // Fetch original invoice
+      const submitter = processedBy ? Number(processedBy) : (createdBy ? Number(createdBy) : undefined);
+
+      // Qty validation: return qty must not exceed purchased qty minus already-returned qty
+      if (!isManual && Array.isArray(items)) {
+        const docItemIds = items.filter((it: any) => it.documentItemId).map((it: any) => Number(it.documentItemId));
+        if (docItemIds.length > 0) {
+          const { db: valDb } = await import("./db");
+          const { documentItems: docItemsTable, returnItems: retItemsTable, returns: retTable } = await import("@shared/schema");
+          const { inArray: valInArray, eq: valEq } = await import("drizzle-orm");
+
+          // Purchased qty per document item
+          const purchasedRows = await valDb.select({ id: docItemsTable.id, qty: docItemsTable.qty })
+            .from(docItemsTable).where(valInArray(docItemsTable.id, docItemIds));
+          const purchasedMap: Record<number, number> = {};
+          for (const r of purchasedRows) purchasedMap[r.id] = parseFloat(String(r.qty || "0"));
+
+          // Already-returned qty (from non-rejected returns)
+          const existingRI = await valDb.select({
+            documentItemId: retItemsTable.documentItemId,
+            qty: retItemsTable.qty,
+            returnId: retItemsTable.returnId,
+          }).from(retItemsTable).where(valInArray(retItemsTable.documentItemId, docItemIds));
+
+          const returnIds = Array.from(new Set(existingRI.map((ri) => ri.returnId)));
+          let activeReturnIds = new Set<number>();
+          if (returnIds.length > 0) {
+            const retRows = await valDb.select({ id: retTable.id, status: retTable.status })
+              .from(retTable).where(valInArray(retTable.id, returnIds));
+            activeReturnIds = new Set(retRows.filter((r) => r.status !== "rejected").map((r) => r.id));
+          }
+
+          const returnedMap: Record<number, number> = {};
+          for (const ri of existingRI) {
+            if (ri.documentItemId && activeReturnIds.has(ri.returnId)) {
+              returnedMap[ri.documentItemId] = (returnedMap[ri.documentItemId] || 0) + parseFloat(String(ri.qty || "0"));
+            }
+          }
+
+          // Validate each item
+          const violations: string[] = [];
+          for (const it of items as any[]) {
+            if (!it.documentItemId) continue;
+            const diId = Number(it.documentItemId);
+            const purchased = purchasedMap[diId] ?? 0;
+            const alreadyReturned = returnedMap[diId] ?? 0;
+            const returnable = purchased - alreadyReturned;
+            const requestedQty = parseFloat(String(it.qty || "0"));
+            if (requestedQty > returnable) {
+              violations.push(`"${it.description || "Item"}" — returning ${requestedQty} but only ${returnable} returnable (bought ${purchased}, already returned ${alreadyReturned})`);
+            }
+          }
+          if (violations.length > 0) {
+            return res.status(400).json({
+              message: "Return quantity exceeds what the customer purchased",
+              code: "QTY_EXCEEDS_PURCHASED",
+              violations,
+            });
+          }
+        }
+      }
+
+      // Mode 1: Manual return (no invoice)
+      if (isManual) {
+        if (!items || items.length === 0) return res.status(400).json({ message: "Manual return requires at least one item" });
+        const ret = await createReturn({
+          originalInvoiceId: null,
+          isManual: true,
+          customerId: customerId ? Number(customerId) : undefined,
+          customerName: customerName || undefined,
+          storeId: storeId ? Number(storeId) : undefined,
+          type: type || "partial",
+          reason,
+          refundMethod: refundMethod || "Cash",
+          refundAmount: refundAmount ? parseFloat(refundAmount) : undefined,
+          items: items || [],
+          submittedBy: submitter,
+        });
+        return res.status(201).json({ returnVoucher: ret, status: "pending" });
+      }
+
+      // Mode 2: Multi-invoice return
+      if (Array.isArray(sourceInvoices) && sourceInvoices.length > 0) {
+        const resolvedSources: { invoiceId: number; invoiceNumber: string }[] = [];
+        let firstInvoice: any = null;
+        for (const src of sourceInvoices) {
+          const doc = await getDocument(Number(src.invoiceId));
+          if (!doc) return res.status(404).json({ message: `Invoice ${src.invoiceId} not found` });
+          resolvedSources.push({ invoiceId: doc.id, invoiceNumber: doc.number });
+          if (!firstInvoice) firstInvoice = doc;
+        }
+        const ret = await createReturn({
+          originalInvoiceId: firstInvoice.id,
+          originalInvoiceNumber: firstInvoice.number,
+          sourceInvoices: resolvedSources,
+          customerId: customerId ? Number(customerId) : firstInvoice.customerId,
+          customerName: customerName || firstInvoice.customerName,
+          storeId: storeId ? Number(storeId) : firstInvoice.storeId,
+          type: type || "partial",
+          reason,
+          refundMethod,
+          refundAmount: refundAmount ? parseFloat(refundAmount) : undefined,
+          items: items || [],
+          submittedBy: submitter,
+        });
+        return res.status(201).json({ returnVoucher: ret, status: "pending" });
+      }
+
+      // Mode 3: Single-invoice return (original flow)
       const originalInvoice = await getDocument(Number(originalInvoiceId));
       if (!originalInvoice) return res.status(404).json({ message: "Original invoice not found" });
 
-      // Create the Return Voucher as PENDING. Nothing moves until admin/manager approves.
-      // (No stock reversal, no refund here — that is the whole point of the approval gate.)
-      const submitter = processedBy ? Number(processedBy) : (createdBy ? Number(createdBy) : undefined);
       const ret = await createReturn({
         originalInvoiceId: Number(originalInvoiceId),
         originalInvoiceNumber: originalInvoice.number,
-        customerId: originalInvoice.customerId,
-        customerName: originalInvoice.customerName,
+        sourceInvoices: [{ invoiceId: originalInvoice.id, invoiceNumber: originalInvoice.number }],
+        customerId: customerId ? Number(customerId) : originalInvoice.customerId,
+        customerName: customerName || originalInvoice.customerName,
         storeId: storeId || originalInvoice.storeId,
         type,
         reason,
@@ -1640,6 +2111,83 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/notifications/read-all", async (req: Request, res: Response) => {
     try { await markAllNotificationsRead({ role: reqRole(req), userId: reqUid(req) }); res.json({ ok: true }); }
     catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // APPROVAL REQUESTS — generic override inbox
+  // ══════════════════════════════════════════════════════════════
+  // Approvers (admin/manager) see the whole queue; a requester sees only their
+  // own. Pass ?mine=1 to force the requester view even for an approver.
+  app.get("/api/approvals", async (req: Request, res: Response) => {
+    try {
+      const mine = req.query.mine === "1";
+      res.json(await getApprovalRequests({ role: reqRole(req), userId: reqUid(req), mine }));
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // Raise a request. Allowed for any operational role — the asking is open; the
+  // DECISION is what's gated. On approval the held action (payload) is carried out.
+  app.post("/api/approvals", async (req: Request, res: Response) => {
+    try {
+      const b = req.body || {};
+      const type = String(b.type || "manual");
+      if (!["credit_limit", "discount", "void", "manual"].includes(type)) {
+        return res.status(400).json({ message: "Unknown approval type." });
+      }
+      const created = await createApprovalRequest({
+        type,
+        requestedBy: reqUid(req),
+        storeId: b.storeId ?? lockedStoreId(req) ?? undefined,
+        title: b.title,
+        summary: b.summary,
+        message: b.message,
+        amount: b.amount != null ? Number(b.amount) : undefined,
+        entityType: b.entityType,
+        entityId: b.entityId != null ? Number(b.entityId) : undefined,
+        payload: b.payload,
+      });
+      res.status(201).json(created);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/approvals/:id/approve", async (req: Request, res: Response) => {
+    if (!approver(req)) return res.status(403).json({ message: "Only an admin or manager can approve requests." });
+    try {
+      res.json(await approveApprovalRequest(Number(req.params.id), reqUid(req), req.body?.note));
+    } catch (err) {
+      if (sendFundsError(res, err)) return;
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/approvals/:id/reject", async (req: Request, res: Response) => {
+    if (!approver(req)) return res.status(403).json({ message: "Only an admin or manager can reject requests." });
+    try {
+      res.json(await rejectApprovalRequest(Number(req.params.id), reqUid(req), req.body?.note));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // A requester withdraws their own still-pending request.
+  app.post("/api/approvals/:id/cancel", async (req: Request, res: Response) => {
+    try {
+      res.json(await cancelApprovalRequest(Number(req.params.id), reqUid(req)));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/approvals/:id/complete", async (req: Request, res: Response) => {
+    try {
+      res.json(await completeApprovalRequest(Number(req.params.id), reqUid(req)));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
   });
 
   // ══════════════════════════════════════════════════════════════
@@ -1849,29 +2397,39 @@ ALL item descriptions in UPPERCASE. No explanation.` }
   const uidOf = (req: Request) => (req.user?.id || undefined);
 
   // Expenses (Module 5)
+  // Salesman/helper see only their own store's expenses; admin/manager see all.
   app.get("/api/expenses", async (req: Request, res: Response) => {
     try {
-      // Lazy recurring check — reminders fire when anyone opens Expenses.
       await checkRecurringExpenses().catch(() => 0);
+      const role = reqRole(req);
+      const isScopedRole = ["salesman", "salesman_helper"].includes(role);
+      const storeId = isScopedRole
+        ? (req.user?.storeId ?? undefined)
+        : (req.query.storeId ? Number(req.query.storeId) : undefined);
       res.json(await getExpenses({
         start: req.query.start as string | undefined,
         end: req.query.end as string | undefined,
-        storeId: req.query.storeId ? Number(req.query.storeId) : undefined,
+        storeId,
         category: req.query.category as string | undefined,
       }));
     } catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
+  // Salesman/helper can log store-level expenses (auto-scoped to their store).
+  // Admin/manager can log any expense (company-wide or store-specific).
   app.post("/api/expenses", async (req: Request, res: Response) => {
-    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    const role = reqRole(req);
+    if (!["admin", "manager", "salesman", "salesman_helper"].includes(role))
+      return res.status(403).json({ message: "Not authorized" });
     try {
       const { category, amount, date } = req.body || {};
       if (!category || !(Number(amount) > 0) || !date)
         return res.status(400).json({ message: "Category, amount and date are required." });
-      // Only an admin may override the insufficient-funds guard (with a reason).
-      const canOverride = reqRole(req) === "admin";
+      const isScopedRole = ["salesman", "salesman_helper"].includes(role);
+      const storeId = isScopedRole ? (req.user?.storeId ?? undefined) : req.body.storeId;
+      const canOverride = role === "admin";
       res.status(201).json(await createExpense({
-        ...req.body, createdBy: uidOf(req),
+        ...req.body, storeId, createdBy: uidOf(req),
         override: canOverride && req.body?.override === true,
         overrideReason: req.body?.overrideReason,
       }));
@@ -1919,7 +2477,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       res.json(await setChequeStatus(Number(req.params.id), String(req.body?.status || ""), uidOf(req), {
         override: canOverride && req.body?.override === true,
         overrideReason: req.body?.overrideReason,
-      }));
+      }, { depositProofUrl: req.body?.depositProofUrl, depositedToAccount: req.body?.depositedToAccount, clearanceProofUrl: req.body?.clearanceProofUrl }));
     } catch (err) {
       if (sendFundsError(res, err)) return;
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
@@ -1942,11 +2500,11 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       if (search) rows = rows.filter((r) => (r.chequeNumber || "").toLowerCase().includes(search.toLowerCase()));
       const esc = (v: any) => `"${String(v ?? "").replace(/"/g, '""')}"`;
       const csv = [
-        ["Cheque #", "Type", "Who", "Bank", "Amount", "Cheque Date", "Status", "Linked Document", "Deposited", "Cleared", "Bounced"].join(","),
+        ["Cheque #", "Type", "Who", "Bank", "Amount", "Cheque Date", "Status", "Linked Document", "Deposited", "Deposited To", "Cleared", "Bounced"].join(","),
         ...rows.map((r) => [
           esc(r.chequeNumber), esc(r.type || "receivable"), esc(r.who || r.customerName || ""), esc(r.bankName),
           esc(r.amount), esc(r.chequeDate), esc(r.status), esc(r.documentId || ""),
-          esc(r.depositedDate || ""), esc(r.clearedDate || ""), esc(r.bouncedDate || ""),
+          esc(r.depositedDate || ""), esc(r.depositedToAccount || ""), esc(r.clearedDate || ""), esc(r.bouncedDate || ""),
         ].join(",")),
       ].join("\n");
       res.setHeader("Content-Type", "text/csv");
@@ -1971,6 +2529,54 @@ ALL item descriptions in UPPERCASE. No explanation.` }
     if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
     try { res.json(await setChequePhoto(Number(req.params.id), String(req.body?.photoUrl || ""))); }
     catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // PDC Swap — customer pays cash/transfer, takes cheque back.
+  app.post("/api/cheques/:id/swap", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try {
+      const method = req.body?.method;
+      if (!["cash", "bank_transfer"].includes(method)) return res.status(400).json({ message: "method must be 'cash' or 'bank_transfer'" });
+      res.json(await swapChequeToPayment(Number(req.params.id), method, String(req.body?.notes || ""), uidOf(req)));
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Attach a deposit proof slip (bank receipt).
+  app.post("/api/cheques/:id/deposit-proof", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try { res.json(await setChequeDepositProof(Number(req.params.id), String(req.body?.depositProofUrl || ""))); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Attach a clearance proof (bank statement confirming funds credited).
+  app.post("/api/cheques/:id/clearance-proof", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try { res.json(await setChequeClearanceProof(Number(req.params.id), String(req.body?.clearanceProofUrl || ""))); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Bounced cheque recovery workflow — update recovery status.
+  app.post("/api/cheques/:id/recovery", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try {
+      res.json(await setChequeRecovery(Number(req.params.id), String(req.body?.recoveryStatus || ""), String(req.body?.recoveryNotes || ""), uidOf(req)));
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Create a replacement cheque for a bounced one.
+  app.post("/api/cheques/:id/replace", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(reqRole(req))) return res.status(403).json({ message: "Admin or manager only" });
+    try {
+      const { chequeNumber, bankName, amount, chequeDate } = req.body || {};
+      if (!chequeNumber || !bankName || !amount || !chequeDate) return res.status(400).json({ message: "chequeNumber, bankName, amount, chequeDate are required." });
+      res.status(201).json(await createReplacementCheque(Number(req.params.id), { chequeNumber, bankName, amount: String(amount), chequeDate }, uidOf(req)));
+    } catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // PDC action summary — counts of cheques needing attention.
+  app.get("/api/pdc/summary", async (_req: Request, res: Response) => {
+    try { res.json(await getPdcActionSummary()); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
   // Cash flow (Agent 4)
@@ -2177,8 +2783,10 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const summary = {
         period: { start, end }, storeId,
         totalSales: cashSales + creditSales + pdcSales,
+        invoiceCount: invs.length,
         cashSales, creditSales, pdcSales,
-        realProfit, imaginaryProfit: totalProfit,
+        // Canonical profit model: real = paid only, expected = all invoices (== imaginary).
+        realProfit, expectedProfit: totalProfit, imaginaryProfit: totalProfit,
         newCustomers, returningCustomers,
         creditCustomersCount: creditCustomers.size, creditOutstanding,
         suppliersCount: suppliersAll.length, totalPaidToSuppliers, owedToSuppliers,
@@ -2442,19 +3050,40 @@ ALL item descriptions in UPPERCASE. No explanation.` }
     if (!["admin", "manager"].includes(normalizeRoleStrict(req)))
       return res.status(403).json({ message: "Only an admin or manager can record owner loans." });
     try {
-      const { type, amount, source, method, date, note } = req.body || {};
-      if (!["injection", "repayment"].includes(type)) return res.status(400).json({ message: "type must be injection or repayment" });
+      const { type, amount, source, method, date, note, proofUrl, refInjectionId } = req.body || {};
+      if (!LOAN_TYPES.has(type)) return res.status(400).json({ message: "type must be injection, repayment, lend_out, collection or profit_withdrawal" });
       if (!(Number(amount) > 0)) return res.status(400).json({ message: "amount must be a positive number" });
       const canOverride = normalizeRoleStrict(req) === "admin";
       const row = await createOwnerLoan({
         type, amount: Number(amount), source, method,
-        date: date || new Date().toISOString().slice(0, 10), note, createdBy: req.user?.id || undefined,
+        date: date || new Date().toISOString().slice(0, 10), note, proofUrl,
+        refInjectionId: refInjectionId ? Number(refInjectionId) : undefined,
+        createdBy: req.user?.id || undefined,
         override: canOverride && req.body?.override === true,
         overrideReason: req.body?.overrideReason,
       });
       res.status(201).json(row);
     } catch (err) {
       if (sendFundsError(res, err)) return;
+      // Validation failures (unlinked repayment, over-payment, missing loan) carry
+      // a user-facing message — surface it plainly at 400 rather than a raw 500.
+      const msg = err instanceof Error ? err.message : String(err);
+      const isValidation = /repayment|collection|loan|lent|remaining|linked|balance/i.test(msg);
+      res.status(isValidation ? 400 : 500).json({ message: msg });
+    }
+  });
+
+  app.put("/api/owner-loans/:id", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(normalizeRoleStrict(req)))
+      return res.status(403).json({ message: "Only an admin or manager can edit loan records." });
+    try {
+      const { amount, source, method, date, note, proofUrl } = req.body || {};
+      const row = await updateOwnerLoan(Number(req.params.id), {
+        amount: amount != null ? Number(amount) : undefined,
+        source, method, date, note, proofUrl, updatedBy: req.user?.id || undefined,
+      });
+      res.json(row);
+    } catch (err) {
       res.status(500).json({ message: String(err) });
     }
   });
@@ -2468,6 +3097,12 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const storeId = req.query.storeId ? Number(req.query.storeId) : undefined;
       res.json(await getProfitDetail(start, end, storeId));
     } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.get("/api/reports/profit-summary", async (req: Request, res: Response) => {
+    if (!reportGate(req, res)) return;
+    try { res.json(await getProfitSummary()); }
+    catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
   // Credit Exposure — all unpaid credit grouped by customer.
@@ -2688,18 +3323,22 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const invs = todaysDocs.filter((d: any) => d.type === "INV" && d.status !== "void" && isReal(d));
       const returnsDocs = todaysDocs.filter((d: any) => (d.type === "RV" || d.type === "CN") && isReal(d));
 
-      // COGS per invoice (join items → product cost)
+      // COGS + item-level profit per invoice (join items → product cost). Profit uses
+      // the canonical formula Σ(item.amount − item.cost×qty) so "Profit Today" here
+      // reconciles exactly with Finance → Profit and Reports → Business Summary.
       const invIds = invs.map((d: any) => d.id);
       const cogsByDoc: Record<number, number> = {};
+      const profitByDoc: Record<number, number> = {};
       if (invIds.length) {
         const itemRows = await db
-          .select({ documentId: documentItems.documentId, qty: documentItems.qty, productId: documentItems.productId, cost: productsTable.costPrice })
+          .select({ documentId: documentItems.documentId, qty: documentItems.qty, amount: documentItems.amount, productId: documentItems.productId, cost: productsTable.costPrice })
           .from(documentItems)
           .leftJoin(productsTable, eq(documentItems.productId, productsTable.id))
           .where(inArray(documentItems.documentId, invIds));
         for (const r of itemRows as any[]) {
           const c = parseFloat(r.cost || "0") * parseFloat(r.qty || "0");
           cogsByDoc[r.documentId] = (cogsByDoc[r.documentId] || 0) + c;
+          profitByDoc[r.documentId] = (profitByDoc[r.documentId] || 0) + (parseFloat(r.amount || "0") - c);
         }
       }
 
@@ -2709,7 +3348,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       let cashSalesToday = 0, creditSalesToday = 0, profitFromCash = 0, profitFromUnrealizedCredit = 0;
       for (const d of invs as any[]) {
         const total = parseFloat(d.total || "0");
-        const profit = total - (cogsByDoc[d.id] || 0);
+        const profit = profitByDoc[d.id] ?? (total - (cogsByDoc[d.id] || 0));
         if (isCash(d)) { cashSalesToday += total; profitFromCash += profit; }
         else { creditSalesToday += total; profitFromUnrealizedCredit += profit; }
       }
@@ -2788,7 +3427,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
         const remaining = parseFloat(d.total || "0") - paid;
         if (remaining <= 0.005) continue;
         const daysOverdue = Math.floor((Date.parse(today) - Date.parse(d.date)) / 86400000);
-        totalOutstanding += remaining;
+        if (d.customerId) totalOutstanding += remaining;
 
         if (!d.customerId) continue;
         const key = d.customerId;
@@ -2882,7 +3521,7 @@ ${bizName}`;
         status: documents.status,
       }).from(documents).where(and(...conditions));
 
-      const custIds = [...new Set(docs.map(d => d.customerId!).filter(Boolean))];
+      const custIds = Array.from(new Set(docs.map(d => d.customerId).filter((id): id is number => id != null)));
 
       const custRows = custIds.length > 0
         ? await db.select({ id: customersTable.id, name: customersTable.name })
@@ -3021,6 +3660,8 @@ ${bizName}`;
     try {
       const start = req.query.start as string | undefined;
       const end = req.query.end as string | undefined;
+      const storeId = req.query.storeId as string | undefined;
+      const statusFilter = req.query.status as string | undefined;
 
       const { db } = await import("./db");
       const {
@@ -3033,9 +3674,18 @@ ${bizName}`;
       const conditions: any[] = [];
       if (start) conditions.push(gte(returnsTable.date, start));
       if (end) conditions.push(lte(returnsTable.date, end));
+      if (storeId) conditions.push(eq(returnsTable.storeId, Number(storeId)));
+      if (statusFilter && statusFilter !== "all") conditions.push(eq(returnsTable.status, statusFilter));
 
       const rows = await db.select().from(returnsTable)
         .where(conditions.length > 0 ? and(...conditions) : undefined);
+
+      // Status breakdown (always count all statuses for the breakdown card)
+      const byStatus: Record<string, number> = {};
+      for (const r of rows) {
+        const s = r.status || "unknown";
+        byStatus[s] = (byStatus[s] || 0) + 1;
+      }
 
       const byTypeMap: Record<string, { count: number; amount: number }> = {};
       for (const r of rows) {
@@ -3068,18 +3718,41 @@ ${bizName}`;
           .slice(0, 10);
       }
 
+      // Return rate: only approved returns / total invoices in period
+      const approvedCount = rows.filter((r) => r.status === "approved").length;
       const invConditions: any[] = [eq(documentsTable.type, "INV")];
       if (start) invConditions.push(gte(documentsTable.date, start));
       if (end) invConditions.push(lte(documentsTable.date, end));
+      if (storeId) invConditions.push(eq(documentsTable.storeId, Number(storeId)));
       const invRows = await db.select({ id: documentsTable.id }).from(documentsTable)
         .where(and(...invConditions));
-      const rate = invRows.length > 0 ? (rows.length / invRows.length) * 100 : 0;
+      const rate = invRows.length > 0 ? (approvedCount / invRows.length) * 100 : 0;
+
+      // Total refund amount
+      const totalAmount = rows.reduce((s, r) => s + parseFloat(String(r.refundAmount || r.total || "0")), 0);
+
+      // Individual return rows for table
+      const returnRows = rows.map((r) => ({
+        id: r.id,
+        voucherNumber: r.voucherNumber,
+        date: r.date,
+        customerName: r.customerName,
+        originalInvoiceNumber: r.originalInvoiceNumber,
+        type: r.type,
+        status: r.status,
+        reason: r.reason,
+        refundAmount: parseFloat(String(r.refundAmount || r.total || "0")),
+      })).sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
 
       res.json({
         total: rows.length,
+        totalAmount,
         rate,
+        byStatus,
         byType: byType ?? [],
         topProducts: topProducts ?? [],
+        returnRows,
+        invoiceCount: invRows.length,
       });
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -4050,12 +4723,53 @@ CRITICAL: Extract quantity from NUMBER BEFORE UNIT, not from product name!`
     try {
       const role = normalizeRoleStrict(req);
       if (role !== "admin") return res.status(403).json({ message: "Admin only" });
+
+      const { type, amount, userId } = req.body;
+
+      const amt = Number(amount);
+      const expenseTypes = ["advance", "salary_payment", "bonus"];
+
+      if (type === "advance") {
+        if (amt > 500) return res.status(400).json({ message: "Advance cannot exceed 500 QAR" });
+        if (amt <= 0) return res.status(400).json({ message: "Advance amount must be positive" });
+      }
+
+      if (expenseTypes.includes(type) && amt > 0) {
+        await ensureFunds({
+          instrument: "cash",
+          amount: amt,
+          context: type === "advance" ? "Salary Advance" : type === "salary_payment" ? "Staff Salary" : "Staff Bonus",
+        });
+      }
+
       const entry = await createStaffPayrollEntry({
         ...req.body,
         createdBy: req.user?.id,
       });
+
+      if (expenseTypes.includes(type) && amt > 0) {
+        try {
+          const staff = await getUser(userId);
+          const staffName = staff?.name || `Staff #${userId}`;
+          const categoryMap: Record<string, string> = { advance: "Salary Advance", salary_payment: "Staff Salary", bonus: "Staff Bonus" };
+          await createExpense({
+            category: categoryMap[type],
+            amount: String(amount),
+            date: req.body.date || new Date().toISOString().slice(0, 10),
+            paymentMethod: "Cash",
+            notes: `${categoryMap[type]} — ${staffName}${req.body.note ? ` — ${req.body.note}` : ""}`,
+            createdBy: req.user?.id,
+          });
+        } catch (expErr) {
+          await deleteStaffPayrollEntry(entry.id);
+          throw expErr;
+        }
+      }
+
       res.json(entry);
-    } catch (err) { res.status(500).json({ message: String(err) }); }
+    } catch (err) {
+      if (!sendFundsError(res, err)) res.status(500).json({ message: String(err) });
+    }
   });
 
   app.delete("/api/staff-payroll/:id", async (req: Request, res: Response) => {

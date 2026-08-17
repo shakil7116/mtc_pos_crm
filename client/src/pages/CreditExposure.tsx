@@ -29,7 +29,7 @@ export default function CreditExposure() {
         <p className="text-xs text-muted-foreground">{customers.length} customer{customers.length === 1 ? "" : "s"} owe money right now</p>
       </div>
 
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+      <div className="section-card !p-0 overflow-hidden">
         <div className="px-4 py-3 border-b bg-muted/30"><h2 className="font-semibold text-sm">Credit customers (highest first)</h2></div>
         {customers.length === 0 ? <p className="p-8 text-center text-sm text-muted-foreground">Nothing outstanding. 🎉</p> : (
           <div className="divide-y">

@@ -299,6 +299,13 @@ export default function DocumentEditor({ type, params }: Props) {
     queryFn: () => fetch(`/api/documents/${editId}`).then((r) => r.json()),
     enabled: isEdit && Boolean(editId),
   });
+  const editNetPaid = useMemo(() => {
+    if (!isEdit || !existingDoc) return 0;
+    const pays: any[] = (existingDoc as any).payments || [];
+    return pays.reduce((s: number, p: any) =>
+      s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+  }, [isEdit, existingDoc]);
+
   const { data: customerBalance } = useQuery<CustomerBalance>({
     queryKey: ["customer-balance", selectedCustomer?.id],
     queryFn: () => fetch(`/api/customers/${selectedCustomer!.id}/balance`).then((r) => r.json()),
@@ -319,6 +326,8 @@ export default function DocumentEditor({ type, params }: Props) {
     setCustomerInput(existingDoc.customerName);
     setDocNumber(existingDoc.number);
     setNumberTouched(true);
+    setDocDiscountAmount(Number((existingDoc as any).discountAmount) || 0);
+    setDocCustomData((existingDoc as any).customData || {});
     if (existingDoc.items && existingDoc.items.length > 0) {
       setItems(existingDoc.items.map((i) => {
         const qty = Number(i.qty) || 0;
@@ -592,42 +601,47 @@ export default function DocumentEditor({ type, params }: Props) {
   };
 
   // ── Save mutation (network only after interceptor) ──
+  // Assemble the full document body from the current editor state + the interceptor
+  // result. Shared by the normal save AND the credit-limit approval request (which
+  // stores this payload and replays it via createDocument once a manager approves).
+  const buildDocPayload = (intercept: InterceptorResult) => ({
+    type: docType, date, poNumber: poNumber.trim() || null,
+    number: docNumber.trim() || undefined,
+    customerId: selectedCustomer?.id ?? null, customerName: customerInput.trim(),
+    storeId: storeId ?? user?.storeId ?? null,
+    transactionMode: intercept.transactionMode, paymentType: intercept.paymentType,
+    payments: (intercept as any).payments || [],
+    creditOverride: (intercept as any).creditOverride || false,
+    dueDate: (intercept as any).dueDate ?? null,
+    ...(docType === "INV" ? {
+      deliveryMethod,
+      deliveryAddress: deliveryMethod === "deliver_site" ? deliveryAddress.trim() || null : null,
+      mapLink: deliveryMethod === "deliver_site" ? mapLink.trim() || null : null,
+      deliveryStatus: deliveryMethod === "deliver_site" ? "pending" : null,
+      driverId: deliveryMethod === "deliver_site" && driverId ? Number(driverId) : null,
+      deliveryInstructions: deliveryMethod === "deliver_site" ? deliveryInstructions.trim() || null : null,
+    } : {}),
+    // Persist the footer discount as a resolved QAR amount (not the raw %
+    // input) so the customer copy's net subtotal and every downstream total
+    // stay consistent whether it was entered as QAR or %.
+    discountType: "QAR", discountAmount: docDiscount,
+    footerDiscountBy: docDiscount > 0 && canFooterDiscount ? (user?.id ?? null) : null,
+    subtotal, taxRate: 0, taxAmount: 0, total, totalWords,
+    customData: docCustomData,
+    notes: receiver.trim() ? `Received by: ${receiver.trim()}` : notes,
+    // originalPrice lets the server detect a salesman price reduction; the PIN
+    // (from the manager-approval modal) authorises it.
+    pricingOverridePin: pricingPinRef.current || undefined,
+    items: items.filter((i) => i.description.trim()).map((i) => ({
+      productId: i.productId ?? null, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit, price: i.price, originalPrice: i.originalPrice ?? i.price, discountType: i.discountType, discountAmount: i.discountAmount, amount: i.amount,
+      locationStoreId: i.locationStoreId ?? storeId ?? user?.storeId ?? null, // pull stock FROM this location
+    })),
+    createdBy: user?.id ?? null,
+  });
+
   const saveMutation = useMutation({
     mutationFn: async (intercept: InterceptorResult) => {
-      const payload = {
-        type: docType, date, poNumber: poNumber.trim() || null,
-        number: docNumber.trim() || undefined,
-        customerId: selectedCustomer?.id ?? null, customerName: customerInput.trim(),
-        storeId: storeId ?? user?.storeId ?? null,
-        transactionMode: intercept.transactionMode, paymentType: intercept.paymentType,
-        payments: (intercept as any).payments || [],
-        creditOverride: (intercept as any).creditOverride || false,
-        dueDate: (intercept as any).dueDate ?? null,
-        ...(docType === "INV" ? {
-          deliveryMethod,
-          deliveryAddress: deliveryMethod === "deliver_site" ? deliveryAddress.trim() || null : null,
-          mapLink: deliveryMethod === "deliver_site" ? mapLink.trim() || null : null,
-          deliveryStatus: deliveryMethod === "deliver_site" ? "pending" : null,
-          driverId: deliveryMethod === "deliver_site" && driverId ? Number(driverId) : null,
-          deliveryInstructions: deliveryMethod === "deliver_site" ? deliveryInstructions.trim() || null : null,
-        } : {}),
-        // Persist the footer discount as a resolved QAR amount (not the raw %
-        // input) so the customer copy's net subtotal and every downstream total
-        // stay consistent whether it was entered as QAR or %.
-        discountType: "QAR", discountAmount: docDiscount,
-        footerDiscountBy: docDiscount > 0 && canFooterDiscount ? (user?.id ?? null) : null,
-        subtotal, taxRate: 0, taxAmount: 0, total, totalWords,
-        customData: docCustomData,
-        notes: receiver.trim() ? `Received by: ${receiver.trim()}` : notes,
-        // originalPrice lets the server detect a salesman price reduction; the PIN
-        // (from the manager-approval modal) authorises it.
-        pricingOverridePin: pricingPinRef.current || undefined,
-        items: items.filter((i) => i.description.trim()).map((i) => ({
-          productId: i.productId ?? null, sku: i.sku, description: i.description, qty: i.qty, unit: i.unit, price: i.price, originalPrice: i.originalPrice ?? i.price, discountType: i.discountType, discountAmount: i.discountAmount, amount: i.amount,
-          locationStoreId: i.locationStoreId ?? storeId ?? user?.storeId ?? null, // pull stock FROM this location
-        })),
-        createdBy: user?.id ?? null,
-      };
+      const payload = buildDocPayload(intercept);
       const url = isEdit ? `/api/documents/${editId}` : "/api/documents";
       const method = isEdit ? "PUT" : "POST";
       const res = await fetch(url, { method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -667,6 +681,69 @@ export default function DocumentEditor({ type, params }: Props) {
       }
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
     },
+  });
+
+  // Credit-limit async: a salesman over the limit sends the assembled sale to a manager.
+  // The invoice is NOT created now — the manager approves it in the Approvals Center, and
+  // the server then replays this payload (with the override) to create the invoice.
+  const requestApprovalMutation = useMutation({
+    mutationFn: async ({ intercept, reason }: { intercept: InterceptorResult; reason: string }) => {
+      const docPayload = { ...buildDocPayload(intercept), number: undefined }; // fresh number at approval time
+      const deferred = ((intercept as any).payments || [])
+        .filter((p: any) => p.method === "Credit" || p.method === "PDC")
+        .reduce((s: number, p: any) => s + (Number(p.amount) || 0), 0);
+      const remaining = customerBalance && Number(customerBalance.creditLimit || 0) > 0
+        ? Math.max(0, Number(customerBalance.creditLimit) - Number(customerBalance.balance || 0)) : 0;
+      const over = Math.max(0, deferred - remaining);
+      const body = {
+        type: "credit_limit",
+        title: "Credit-limit override",
+        summary: `${customerInput.trim() || "Customer"} · over limit by QAR ${over.toFixed(2)} (invoice QAR ${total.toFixed(2)})`,
+        message: reason || undefined,
+        amount: deferred,
+        entityType: "customer",
+        entityId: selectedCustomer?.id ?? undefined,
+        payload: docPayload,
+      };
+      const res = await fetch("/api/approvals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Could not send the request");
+      return res.json();
+    },
+    onSuccess: (ar: any) => {
+      setInterceptorOpen(false);
+      toast({ title: "Approval request sent", description: `${ar?.requestNumber || "Request"} is with a manager — the invoice is created once approved.` });
+      navigate("/approvals");
+    },
+    onError: (e: any) => toast({ title: "Could not send request", description: String(e?.message || ""), variant: "destructive" }),
+  });
+
+  // Discount async approval: when manager isn't present, salesman sends the held invoice
+  // as a "discount" approval request. On approval the server replays + creates the invoice.
+  const discountApprovalMutation = useMutation({
+    mutationFn: async (reason: string) => {
+      if (!pendingIntercept) throw new Error("No pending invoice");
+      const docPayload = { ...buildDocPayload(pendingIntercept), number: undefined };
+      const body = {
+        type: "discount",
+        title: "Discount / price change",
+        summary: `${customerInput.trim() || "Customer"} · invoice QAR ${total.toFixed(2)}`,
+        message: reason || undefined,
+        amount: total,
+        entityType: "customer",
+        entityId: selectedCustomer?.id ?? undefined,
+        payload: docPayload,
+      };
+      const res = await fetch("/api/approvals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Could not send the request");
+      return res.json();
+    },
+    onSuccess: (ar: any) => {
+      setPinModalOpen(false);
+      setInterceptorOpen(false);
+      toast({ title: "Discount approval sent", description: `${ar?.requestNumber || "Request"} is with a manager — the invoice is created once approved.` });
+      navigate("/approvals");
+    },
+    onError: (e: any) => toast({ title: "Could not send request", description: String(e?.message || ""), variant: "destructive" }),
   });
 
   const convertMutation = useMutation({
@@ -722,9 +799,14 @@ export default function DocumentEditor({ type, params }: Props) {
   const handleSave = () => {
     const err = validate();
     if (err) { toast({ title: "Validation error", description: err, variant: "destructive" }); return; }
-    // Payment/tender selection only makes sense for an INVOICE (a sale). A quotation,
-    // delivery note or credit note is not a payment event — save it straight through.
     if (docType === "INV") {
+      if (isEdit) {
+        const editBalance = Math.max(0, total - editNetPaid);
+        if (invoiceMode === "credit" || editBalance < 0.01) {
+          saveMutation.mutate({ transactionMode: "real", paymentType: invoiceMode === "credit" ? "Credit" : "Cash", payments: [], creditOverride: false, dueDate: null } as any);
+          return;
+        }
+      }
       setInterceptorOpen(true);
     } else {
       saveMutation.mutate({ transactionMode: "real", paymentType: null, payments: [], creditOverride: false, dueDate: null } as any);
@@ -1256,6 +1338,8 @@ export default function DocumentEditor({ type, params }: Props) {
           setPinModalOpen(false);
           if (pendingIntercept) saveMutation.mutate(pendingIntercept);
         }}
+        onRequestRemote={!isEdit ? (reason) => discountApprovalMutation.mutate(reason) : undefined}
+        requestingRemote={discountApprovalMutation.isPending}
       />
 
       {/* ── Admin Manual Settings ── */}
@@ -1283,8 +1367,12 @@ export default function DocumentEditor({ type, params }: Props) {
         saving={saveMutation.isPending}
         invoiceDate={date}
         invoiceMode={docType === "INV" ? invoiceMode : undefined}
+        editBalance={isEdit ? Math.max(0, total - editNetPaid) : undefined}
         creditRemaining={customerBalance && Number(customerBalance.creditLimit || 0) > 0 ? Math.max(0, Number(customerBalance.creditLimit || 0) - Number(customerBalance.balance || 0)) : undefined}
         customer={selectedCustomer ? { id: selectedCustomer.id, name: selectedCustomer.name, creditLimit: Number(selectedCustomer.creditLimit || 0) } : undefined}
+        currentUserRole={user?.role}
+        onRequestApproval={isEdit ? undefined : (intercept, reason) => requestApprovalMutation.mutate({ intercept, reason })}
+        requestingApproval={requestApprovalMutation.isPending}
         onCustomerUpgraded={() => {
           qc.invalidateQueries({ queryKey: ["customers"] });
           qc.invalidateQueries({ queryKey: ["/api/customers"] });

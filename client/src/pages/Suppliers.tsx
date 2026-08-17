@@ -139,7 +139,7 @@ type SupplierForm = {
 };
 
 type OrderItem = {
-  productId: number;
+  productId: number | null;
   name: string;
   unit: string;
   currentStock: number;
@@ -464,6 +464,7 @@ function OrderBuilderDialog({
 }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
+  const [productSearch, setProductSearch] = useState("");
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -479,13 +480,29 @@ function OrderBuilderDialog({
     queryFn: () => fetch("/api/inventory").then((r) => r.json()),
   });
 
+  const activeProducts = useMemo(
+    () => allProducts.filter((p) => p.active !== false),
+    [allProducts]
+  );
+
   // Supplier's products
   const supplierProducts = useMemo(
-    () =>
-      allProducts.filter(
-        (p) => p.supplierId === supplier.id && p.active !== false
-      ),
-    [allProducts, supplier.id]
+    () => activeProducts.filter((p) => p.supplierId === supplier.id),
+    [activeProducts, supplier.id]
+  );
+
+  // Other products (not linked to this supplier)
+  const otherProducts = useMemo(
+    () => activeProducts.filter((p) => p.supplierId !== supplier.id),
+    [activeProducts, supplier.id]
+  );
+
+  const searchQ = productSearch.toLowerCase();
+  const filteredLinked = supplierProducts.filter(
+    (p) => !searchQ || p.name.toLowerCase().includes(searchQ) || (p.sku ?? "").toLowerCase().includes(searchQ)
+  );
+  const filteredOther = otherProducts.filter(
+    (p) => !searchQ || p.name.toLowerCase().includes(searchQ) || (p.sku ?? "").toLowerCase().includes(searchQ)
   );
 
   // Total stock per product across all stores
@@ -519,10 +536,31 @@ function OrderBuilderDialog({
     });
   }
 
-  function updateQty(productId: number, qty: number) {
+  function updateQty(idx: number, qty: number) {
     setOrderItems((prev) =>
-      prev.map((i) => (i.productId === productId ? { ...i, qty } : i))
+      prev.map((item, i) => (i === idx ? { ...item, qty } : item))
     );
+  }
+
+  function removeItem(idx: number) {
+    setOrderItems((prev) => prev.filter((_, i) => i !== idx));
+  }
+
+  // Custom (free-text) item
+  const [customName, setCustomName] = useState("");
+  const [customUnit, setCustomUnit] = useState("PCS");
+  const [customQty, setCustomQty] = useState(1);
+
+  function addCustomItem() {
+    const name = customName.trim();
+    if (!name) return;
+    setOrderItems((prev) => [
+      ...prev,
+      { productId: null, name, unit: customUnit, currentStock: 0, minStock: 0, qty: customQty },
+    ]);
+    setCustomName("");
+    setCustomUnit("PCS");
+    setCustomQty(1);
   }
 
   function isLowStock(product: Product): boolean {
@@ -556,15 +594,32 @@ function OrderBuilderDialog({
   }, [orderItems, today, poRef]);
 
   const saveMut = useMutation({
-    mutationFn: () =>
-      fetch("/api/supplier-orders", {
+    mutationFn: async () => {
+      // Auto-link any unlinked products to this supplier
+      const unlinkIds = orderItems
+        .map((i) => i.productId)
+        .filter((pid): pid is number => {
+          if (!pid) return false;
+          const p = allProducts.find((x) => x.id === pid);
+          return !!p && p.supplierId !== supplier.id;
+        });
+      await Promise.all(
+        unlinkIds.map((pid) =>
+          fetch(`/api/products/${pid}`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ supplierId: supplier.id }),
+          })
+        )
+      );
+      const res = await fetch("/api/supplier-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           supplierId: supplier.id,
           status: "sent",
           items: orderItems.map((i) => ({
-            productId: i.productId,
+            productId: i.productId || undefined,
             name: i.name,
             qty: i.qty,
             unit: i.unit,
@@ -572,12 +627,13 @@ function OrderBuilderDialog({
           notes: messagePreview,
           sentAt: new Date().toISOString(),
         }),
-      }).then((r) => {
-        if (!r.ok) throw new Error("Failed");
-        return r.json();
-      }),
+      });
+      if (!res.ok) throw new Error("Failed");
+      return res.json();
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/supplier-orders"] });
+      qc.invalidateQueries({ queryKey: ["/api/products"] });
       toast({ title: "Order saved" });
       handleClose();
     },
@@ -600,6 +656,10 @@ function OrderBuilderDialog({
   function handleClose() {
     setStep(1);
     setOrderItems([]);
+    setProductSearch("");
+    setCustomName("");
+    setCustomUnit("PCS");
+    setCustomQty(1);
     onClose();
   }
 
@@ -644,21 +704,37 @@ function OrderBuilderDialog({
         {/* Step 1: Select products */}
         {step === 1 && (
           <div className="space-y-3">
-            {supplierProducts.length === 0 ? (
-              <div className="py-10 text-center">
-                <Package className="w-10 h-10 text-muted-foreground/40 mx-auto mb-3" />
-                <p className="text-muted-foreground font-medium">No products linked to this supplier</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Assign products to this supplier from the Products section
-                </p>
-              </div>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Select products to include in this order. Low-stock items are highlighted.
-                </p>
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {supplierProducts.map((product) => {
+            <p className="text-sm text-muted-foreground">
+              Select products to include in this order. Low-stock items are highlighted.
+            </p>
+
+            {/* Search products */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search products by name or SKU…"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+              />
+              {productSearch && (
+                <button
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setProductSearch("")}
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+              {/* Linked products section */}
+              {filteredLinked.length > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                    Linked Products ({filteredLinked.length})
+                  </p>
+                  {filteredLinked.map((product) => {
                     const selected = orderItems.some((i) => i.productId === product.id);
                     const lowStock = isLowStock(product);
                     const stock = stockMap[product.id] ?? 0;
@@ -683,12 +759,9 @@ function OrderBuilderDialog({
                         >
                           {selected && <CheckCircle2 className="w-3 h-3 text-white" />}
                         </div>
-
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-foreground">
-                              {product.name}
-                            </span>
+                            <span className="text-sm font-medium text-foreground">{product.name}</span>
                             {lowStock && (
                               <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">
                                 <AlertTriangle className="w-2.5 h-2.5" />
@@ -696,32 +769,172 @@ function OrderBuilderDialog({
                               </span>
                             )}
                           </div>
-                          {product.sku && (
-                            <p className="text-xs text-muted-foreground">{product.sku}</p>
-                          )}
+                          {product.sku && <p className="text-xs text-muted-foreground">{product.sku}</p>}
                         </div>
-
                         <div className="text-right shrink-0">
                           <p className="text-xs text-muted-foreground">Stock</p>
-                          <p
-                            className={cn(
-                              "text-sm font-mono font-bold",
-                              lowStock ? "text-orange-600" : "text-foreground"
-                            )}
-                          >
+                          <p className={cn("text-sm font-mono font-bold", lowStock ? "text-orange-600" : "text-foreground")}>
                             {stock} {product.unit ?? "PCS"}
                           </p>
                           {toNum(product.minStockQty) > 0 && (
-                            <p className="text-[10px] text-muted-foreground">
-                              min {product.minStockQty}
-                            </p>
+                            <p className="text-[10px] text-muted-foreground">min {product.minStockQty}</p>
                           )}
                         </div>
                       </div>
                     );
                   })}
+                </>
+              )}
+
+              {/* Other products section */}
+              {filteredOther.length > 0 && (
+                <>
+                  <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mt-3">
+                    All Other Products ({filteredOther.length})
+                  </p>
+                  {filteredOther.map((product) => {
+                    const selected = orderItems.some((i) => i.productId === product.id);
+                    const lowStock = isLowStock(product);
+                    const stock = stockMap[product.id] ?? 0;
+                    return (
+                      <div
+                        key={product.id}
+                        onClick={() => toggleProduct(product)}
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-colors",
+                          selected
+                            ? "border-primary bg-primary/5"
+                            : lowStock
+                            ? "border-orange-200 bg-orange-50 hover:border-orange-300"
+                            : "border-border bg-white hover:border-primary/30"
+                        )}
+                      >
+                        <div
+                          className={cn(
+                            "w-5 h-5 rounded border-2 flex items-center justify-center shrink-0",
+                            selected ? "border-primary bg-primary" : "border-border"
+                          )}
+                        >
+                          {selected && <CheckCircle2 className="w-3 h-3 text-white" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium text-foreground">{product.name}</span>
+                            {lowStock && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 text-orange-700">
+                                <AlertTriangle className="w-2.5 h-2.5" />
+                                Low Stock
+                              </span>
+                            )}
+                          </div>
+                          {product.sku && <p className="text-xs text-muted-foreground">{product.sku}</p>}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-xs text-muted-foreground">Stock</p>
+                          <p className={cn("text-sm font-mono font-bold", lowStock ? "text-orange-600" : "text-foreground")}>
+                            {stock} {product.unit ?? "PCS"}
+                          </p>
+                          {toNum(product.minStockQty) > 0 && (
+                            <p className="text-[10px] text-muted-foreground">min {product.minStockQty}</p>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+
+              {/* No results from product search */}
+              {filteredLinked.length === 0 && filteredOther.length === 0 && activeProducts.length > 0 && searchQ && (
+                <div className="py-4 text-center">
+                  <p className="text-sm text-muted-foreground">No products match "{productSearch}"</p>
                 </div>
-              </>
+              )}
+            </div>
+
+            <Separator />
+
+            {/* Add custom (free-text) item */}
+            <div className="space-y-2">
+              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Add Custom Item
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Type any item description — for inquiries or products not yet in inventory.
+              </p>
+              <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Description</Label>
+                  <Input
+                    value={customName}
+                    onChange={(e) => setCustomName(e.target.value)}
+                    placeholder="e.g. 1.5mm Cable 100m Roll"
+                    className="h-8 text-sm"
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCustomItem(); } }}
+                  />
+                </div>
+                <div className="w-20 space-y-1">
+                  <Label className="text-xs">Qty</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={customQty}
+                    onChange={(e) => setCustomQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="h-8 text-sm text-center"
+                  />
+                </div>
+                <div className="w-24 space-y-1">
+                  <Label className="text-xs">Unit</Label>
+                  <select
+                    value={customUnit}
+                    onChange={(e) => setCustomUnit(e.target.value)}
+                    className="w-full h-8 rounded-md border border-input bg-background px-2 text-sm"
+                  >
+                    <option value="PCS">PCS</option>
+                    <option value="ROLL">ROLL</option>
+                    <option value="BAG">BAG</option>
+                    <option value="SET">SET</option>
+                    <option value="TIN">TIN</option>
+                    <option value="SHEET">SHEET</option>
+                    <option value="PAIR">PAIR</option>
+                    <option value="BOX">BOX</option>
+                    <option value="KG">KG</option>
+                    <option value="MTR">MTR</option>
+                    <option value="LTR">LTR</option>
+                  </select>
+                </div>
+                <Button
+                  size="sm"
+                  onClick={addCustomItem}
+                  disabled={!customName.trim()}
+                  className="h-8 gap-1"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </Button>
+              </div>
+            </div>
+
+            {/* Show custom items already added */}
+            {orderItems.filter((i) => !i.productId).length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                  Custom Items ({orderItems.filter((i) => !i.productId).length})
+                </p>
+                {orderItems.map((item, idx) =>
+                  item.productId ? null : (
+                    <div key={`custom-${idx}`} className="flex items-center gap-3 p-2.5 rounded-lg border border-blue-200 bg-blue-50">
+                      <Edit2 className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <span className="text-sm font-medium text-foreground">{item.name}</span>
+                        <span className="text-xs text-muted-foreground ml-2">{item.qty} {item.unit}</span>
+                      </div>
+                      <button onClick={() => removeItem(idx)} className="text-muted-foreground hover:text-red-500">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                  )
+                )}
+              </div>
             )}
 
             <DialogFooter className="pt-2">
@@ -742,26 +955,38 @@ function OrderBuilderDialog({
         {step === 2 && (
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">
-              Set the quantity to order for each selected product.
+              Set the quantity to order for each item.
             </p>
             <div className="space-y-2">
-              {orderItems.map((item) => (
+              {orderItems.map((item, idx) => (
                 <div
-                  key={item.productId}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-border bg-white"
+                  key={item.productId ? `p-${item.productId}` : `c-${idx}`}
+                  className={cn(
+                    "flex items-center gap-3 p-3 rounded-lg border",
+                    item.productId ? "border-border bg-white" : "border-blue-200 bg-blue-50"
+                  )}
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      Stock: {item.currentStock} | Min: {item.minStock} {item.unit}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-medium text-foreground">{item.name}</p>
+                      {!item.productId && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-600 font-semibold">Custom</span>
+                      )}
+                    </div>
+                    {item.productId ? (
+                      <p className="text-xs text-muted-foreground">
+                        Stock: {item.currentStock} | Min: {item.minStock} {item.unit}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">{item.unit}</p>
+                    )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     <Button
                       variant="outline"
                       size="icon"
                       className="w-7 h-7"
-                      onClick={() => updateQty(item.productId, Math.max(1, item.qty - 1))}
+                      onClick={() => updateQty(idx, Math.max(1, item.qty - 1))}
                     >
                       —
                     </Button>
@@ -770,7 +995,7 @@ function OrderBuilderDialog({
                       min={1}
                       value={item.qty}
                       onChange={(e) =>
-                        updateQty(item.productId, Math.max(1, parseInt(e.target.value) || 1))
+                        updateQty(idx, Math.max(1, parseInt(e.target.value) || 1))
                       }
                       className="w-16 text-center h-7 px-1"
                     />
@@ -778,7 +1003,7 @@ function OrderBuilderDialog({
                       variant="outline"
                       size="icon"
                       className="w-7 h-7"
-                      onClick={() => updateQty(item.productId, item.qty + 1)}
+                      onClick={() => updateQty(idx, item.qty + 1)}
                     >
                       +
                     </Button>
@@ -1193,7 +1418,7 @@ function useMarkReceived() {
   });
 }
 
-// GRN receive flow — store picker + supplier invoice entry + AI scan
+// GRN receive flow — store picker + invoice entry + AI scan + item-level receive
 function ReceiveCell({ order, markReceived }: { order: any; markReceived: any }) {
   const { data: stores = [] } = useQuery<any[]>({
     queryKey: ["/api/stores"],
@@ -1208,10 +1433,56 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
   const [invAmount, setInvAmount] = useState("");
   const [invUrl, setInvUrl] = useState("");
   const [scanning, setScanning] = useState(false);
-  const [scannedItems, setScannedItems] = useState<any[]>([]);
+  const [receiving, setReceiving] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Items to receive — initialized from PO items when dialog opens
+  type ReceiveItem = {
+    name: string; qty: number; unit: string; costPrice: string;
+    productId: number | null; isCustom: boolean; receive: boolean;
+    receivedQty?: number;
+  };
+  const [receiveItems, setReceiveItems] = useState<ReceiveItem[]>([]);
+
+  // Manual add item form
+  const [manualName, setManualName] = useState("");
+  const [manualQty, setManualQty] = useState(1);
+  const [manualUnit, setManualUnit] = useState("PCS");
+  const [manualCost, setManualCost] = useState("");
+
   useEffect(() => { if (storeId === "" && list[0]) setStoreId(list[0].id); }, [list.length]); // eslint-disable-line
+
+  function openGrn() {
+    const items = Array.isArray(order.items) ? (order.items as any[]) : [];
+    setReceiveItems(items.map((it: any) => ({
+      name: it.name || it.description || "",
+      qty: Number(it.qty || 0),
+      unit: it.unit || "PCS",
+      costPrice: String(it.cost || it.price || ""),
+      productId: it.productId || null,
+      isCustom: !it.productId,
+      receive: true,
+      receivedQty: Number(it.receivedQty || 0),
+    })));
+    setGrnOpen(true);
+  }
+
+  function updateReceiveItem(idx: number, patch: Partial<ReceiveItem>) {
+    setReceiveItems((prev) => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));
+  }
+
+  function addManualItem() {
+    if (!manualName.trim()) return;
+    setReceiveItems((prev) => [...prev, {
+      name: manualName.trim(), qty: manualQty, unit: manualUnit,
+      costPrice: manualCost, productId: null, isCustom: true, receive: true,
+    }]);
+    setManualName(""); setManualQty(1); setManualUnit("PCS"); setManualCost("");
+  }
+
+  function removeReceiveItem(idx: number) {
+    setReceiveItems((prev) => prev.filter((_, i) => i !== idx));
+  }
 
   const handleInvoiceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1235,8 +1506,28 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
       const data = await res.json();
       if (data.invoiceNumber) setInvNumber(data.invoiceNumber);
       if (data.totalAmount) setInvAmount(String(data.totalAmount));
-      if (Array.isArray(data.items) && data.items.length > 0) setScannedItems(data.items);
-      toast({ title: "Invoice scanned", description: `Found ${data.items?.length || 0} items, total: ${data.totalAmount || "N/A"}` });
+
+      // Merge scanned items into receive items: match by name similarity, else add new
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        setReceiveItems((prev) => {
+          const updated = [...prev];
+          for (const scanned of data.items) {
+            const sName = (scanned.description || "").toLowerCase();
+            const match = updated.findIndex((it) => it.name.toLowerCase().includes(sName) || sName.includes(it.name.toLowerCase()));
+            if (match >= 0) {
+              updated[match] = { ...updated[match], costPrice: String(scanned.unitPrice || updated[match].costPrice) };
+            } else {
+              updated.push({
+                name: scanned.description || "", qty: Number(scanned.qty || 1),
+                unit: scanned.unit || "PCS", costPrice: String(scanned.unitPrice || ""),
+                productId: null, isCustom: true, receive: true,
+              });
+            }
+          }
+          return updated;
+        });
+        toast({ title: "Invoice scanned", description: `${data.items.length} items merged into receive list` });
+      }
     } catch (err: any) {
       toast({ title: "AI scan failed", description: err.message, variant: "destructive" });
     } finally { setScanning(false); }
@@ -1244,20 +1535,82 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
 
   const handleReceive = async () => {
     if (!storeId) return;
-    // Save invoice details on the PO first
-    if (invNumber || invUrl || invAmount) {
+    setReceiving(true);
+    try {
+      // Save invoice details on PO
+      if (invNumber || invUrl || invAmount) {
+        await fetch(`/api/supplier-orders/${order.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            supplierInvoiceNumber: invNumber || null,
+            supplierInvoiceUrl: invUrl || null,
+            supplierInvoiceAmount: invAmount || null,
+          }),
+        });
+      }
+
+      const toReceive = receiveItems.filter((it) => it.receive);
+
+      // Create products for custom items that have no productId
+      for (const item of toReceive) {
+        if (!item.productId && item.isCustom) {
+          const res = await fetch("/api/products", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: item.name,
+              unit: item.unit,
+              costPrice: item.costPrice ? Number(item.costPrice) : 0,
+              supplierId: order.supplierId,
+              active: true,
+            }),
+          });
+          if (res.ok) {
+            const created = await res.json();
+            item.productId = created.id;
+          }
+        }
+      }
+
+      // Update PO items with cost prices and new productIds
+      const updatedItems = receiveItems.map((it) => ({
+        productId: it.productId || undefined,
+        name: it.name,
+        qty: it.qty,
+        unit: it.unit,
+        cost: it.costPrice ? Number(it.costPrice) : undefined,
+        receivedQty: it.receivedQty || 0,
+      }));
       await fetch(`/api/supplier-orders/${order.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          supplierInvoiceNumber: invNumber || null,
-          supplierInvoiceUrl: invUrl || null,
-          supplierInvoiceAmount: invAmount || null,
-        }),
+        body: JSON.stringify({ items: updatedItems }),
       });
-    }
-    markReceived.mutate({ orderId: order.id, storeId: Number(storeId) });
-    setGrnOpen(false);
+
+      // Build receipts for items being received
+      const receipts = toReceive.map((it, idx) => ({
+        index: idx,
+        productId: it.productId || undefined,
+        qty: Math.max(0, it.qty - (it.receivedQty || 0)),
+      })).filter((r) => r.qty > 0);
+
+      const res = await fetch(`/api/supplier-orders/${order.id}/receive-items`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ storeId: Number(storeId), receipts }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).message || "Failed");
+
+      qc.invalidateQueries({ queryKey: ["/api/supplier-orders"] });
+      qc.invalidateQueries({ queryKey: ["/api/inventory"] });
+      qc.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
+      qc.invalidateQueries({ queryKey: ["/api/products"] });
+      toast({ title: "PO received — stock added to inventory" });
+      setGrnOpen(false);
+    } catch (err: any) {
+      toast({ title: "Failed to receive", description: String(err?.message || ""), variant: "destructive" });
+    } finally { setReceiving(false); }
   };
 
   return (
@@ -1273,16 +1626,16 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
         </select>
         <Button
           size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs"
-          disabled={markReceived.isPending || !storeId}
-          onClick={() => setGrnOpen(true)}
+          disabled={receiving || !storeId}
+          onClick={openGrn}
         >
           <CheckCircle2 className="w-3 h-3" /> Receive
         </Button>
       </div>
 
-      {/* GRN Dialog — invoice entry + AI scan */}
+      {/* GRN Dialog */}
       <Dialog open={grnOpen} onOpenChange={setGrnOpen}>
-        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="w-5 h-5 text-[#d4a017]" /> Goods Receipt — {order.poNumber || `PO-${order.id}`}
@@ -1290,26 +1643,125 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Receiving all items to <strong>{list.find((s: any) => s.id === storeId)?.nameEn || "store"}</strong>.
-              Optionally attach supplier invoice details.
+              Receiving to <strong>{list.find((s: any) => s.id === storeId)?.nameEn || "store"}</strong>.
+              Custom items will be created as new products in inventory.
             </p>
+
+            {/* Items to receive */}
+            <div className="space-y-2">
+              <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Items to Receive ({receiveItems.length})
+              </h4>
+              <div className="max-h-60 overflow-y-auto space-y-1.5">
+                {receiveItems.map((item, idx) => {
+                  const remaining = item.qty - (item.receivedQty || 0);
+                  return (
+                    <div key={idx} className={cn(
+                      "flex items-center gap-2 p-2.5 rounded-lg border",
+                      item.isCustom ? "border-blue-200 bg-blue-50/50" : "border-border bg-white",
+                      !item.receive && "opacity-50"
+                    )}>
+                      <input type="checkbox" checked={item.receive}
+                        onChange={(e) => updateReceiveItem(idx, { receive: e.target.checked })}
+                        className="w-4 h-4 rounded shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium truncate">{item.name}</span>
+                          {item.isCustom && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-600 font-semibold shrink-0">
+                              New Product
+                            </span>
+                          )}
+                          {remaining < item.qty && remaining > 0 && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600 font-semibold shrink-0">
+                              Partial
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-muted-foreground">
+                          {remaining > 0 ? `${remaining} ${item.unit} to receive` : "Fully received"}
+                          {(item.receivedQty || 0) > 0 && ` (${item.receivedQty} already)`}
+                        </p>
+                      </div>
+                      <div className="w-24 shrink-0">
+                        <Input
+                          type="number"
+                          value={item.costPrice}
+                          onChange={(e) => updateReceiveItem(idx, { costPrice: e.target.value })}
+                          placeholder="Cost"
+                          className="h-7 text-xs font-mono text-right"
+                          title="Cost price per unit"
+                        />
+                      </div>
+                      {item.isCustom && (
+                        <button onClick={() => removeReceiveItem(idx)} className="text-muted-foreground hover:text-red-500 shrink-0">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
 
             <Separator />
 
-            {/* Manual invoice entry */}
+            {/* Add manual item */}
+            <div className="space-y-2">
+              <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Add Item Manually
+              </h4>
+              <div className="flex items-end gap-2">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Name</Label>
+                  <Input value={manualName} onChange={(e) => setManualName(e.target.value)}
+                    placeholder="Product name from invoice" className="h-8 text-sm"
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addManualItem(); } }} />
+                </div>
+                <div className="w-16 space-y-1">
+                  <Label className="text-xs">Qty</Label>
+                  <Input type="number" min={1} value={manualQty}
+                    onChange={(e) => setManualQty(Math.max(1, parseInt(e.target.value) || 1))}
+                    className="h-8 text-sm text-center" />
+                </div>
+                <div className="w-20 space-y-1">
+                  <Label className="text-xs">Unit</Label>
+                  <select value={manualUnit} onChange={(e) => setManualUnit(e.target.value)}
+                    className="w-full h-8 rounded-md border border-input bg-background px-2 text-xs">
+                    <option value="PCS">PCS</option><option value="ROLL">ROLL</option>
+                    <option value="BAG">BAG</option><option value="SET">SET</option>
+                    <option value="TIN">TIN</option><option value="SHEET">SHEET</option>
+                    <option value="BOX">BOX</option><option value="KG">KG</option>
+                    <option value="MTR">MTR</option><option value="LTR">LTR</option>
+                  </select>
+                </div>
+                <div className="w-20 space-y-1">
+                  <Label className="text-xs">Cost</Label>
+                  <Input type="number" value={manualCost} onChange={(e) => setManualCost(e.target.value)}
+                    placeholder="0.00" className="h-8 text-xs font-mono" />
+                </div>
+                <Button size="sm" onClick={addManualItem} disabled={!manualName.trim()} className="h-8 gap-1">
+                  <Plus className="w-3.5 h-3.5" /> Add
+                </Button>
+              </div>
+            </div>
+
+            <Separator />
+
+            {/* Invoice details */}
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold flex items-center gap-1.5">
-                <Edit2 className="w-3.5 h-3.5" /> Manual Entry
+              <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                Supplier Invoice
               </h4>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <Label className="text-xs">Supplier Invoice #</Label>
-                  <Input value={invNumber} onChange={e => setInvNumber(e.target.value)}
+                  <Label className="text-xs">Invoice #</Label>
+                  <Input value={invNumber} onChange={(e) => setInvNumber(e.target.value)}
                     placeholder="INV-12345" className="h-8 text-sm" />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Invoice Amount</Label>
-                  <Input type="number" value={invAmount} onChange={e => setInvAmount(e.target.value)}
+                  <Label className="text-xs">Total Amount</Label>
+                  <Input type="number" value={invAmount} onChange={(e) => setInvAmount(e.target.value)}
                     placeholder="0.00" className="h-8 text-sm font-mono" />
                 </div>
               </div>
@@ -1317,77 +1769,35 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
 
             <Separator />
 
-            {/* AI scan / upload */}
+            {/* AI scan */}
             <div className="space-y-3">
-              <h4 className="text-sm font-semibold flex items-center gap-1.5">
+              <h4 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
                 <Camera className="w-3.5 h-3.5" /> Scan Invoice (AI)
               </h4>
-              <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden"
-                onChange={handleInvoiceUpload} />
+              <p className="text-xs text-muted-foreground">
+                Upload supplier invoice — AI extracts items, quantities, and prices into the receive list above.
+              </p>
+              <input ref={fileRef} type="file" accept="image/*,.pdf" className="hidden" onChange={handleInvoiceUpload} />
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="flex-1"
-                  onClick={() => fileRef.current?.click()}>
+                <Button variant="outline" size="sm" className="flex-1" onClick={() => fileRef.current?.click()}>
                   <Upload className="w-3.5 h-3.5 mr-1.5" />
                   {invUrl ? "Replace Photo" : "Upload Invoice"}
                 </Button>
-                <Button variant="outline" size="sm" className="flex-1"
-                  disabled={!invUrl || scanning}
-                  onClick={handleAiScan}>
+                <Button variant="outline" size="sm" className="flex-1" disabled={!invUrl || scanning} onClick={handleAiScan}>
                   {scanning ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <ScanLine className="w-3.5 h-3.5 mr-1.5" />}
                   {scanning ? "Scanning…" : "AI Scan"}
                 </Button>
               </div>
-              {invUrl && (
-                <img src={invUrl} className="w-full h-32 object-cover rounded border" alt="Invoice" />
-              )}
+              {invUrl && <img src={invUrl} className="w-full h-32 object-cover rounded border" alt="Invoice" />}
             </div>
-
-            {scannedItems.length > 0 && (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <h4 className="text-sm font-semibold">Extracted Items ({scannedItems.length})</h4>
-                  <div className="max-h-48 overflow-y-auto border rounded">
-                    <table className="w-full text-xs">
-                      <thead className="bg-slate-50 sticky top-0">
-                        <tr>
-                          <th className="text-left p-1.5 font-medium">Description</th>
-                          <th className="text-right p-1.5 font-medium w-12">Qty</th>
-                          <th className="text-center p-1.5 font-medium w-12">Unit</th>
-                          <th className="text-right p-1.5 font-medium w-16">Price</th>
-                          <th className="text-right p-1.5 font-medium w-16">Amount</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {scannedItems.map((it, i) => (
-                          <tr key={i} className="border-t">
-                            <td className="p-1.5 truncate max-w-[140px]" title={it.description}>{it.description}</td>
-                            <td className="p-1.5 text-right font-mono">{it.qty}</td>
-                            <td className="p-1.5 text-center">{it.unit}</td>
-                            <td className="p-1.5 text-right font-mono">{Number(it.unitPrice || 0).toFixed(2)}</td>
-                            <td className="p-1.5 text-right font-mono">{Number(it.amount || 0).toFixed(2)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot className="bg-slate-50 border-t font-semibold">
-                        <tr>
-                          <td colSpan={4} className="p-1.5 text-right">Total</td>
-                          <td className="p-1.5 text-right font-mono">{scannedItems.reduce((s, it) => s + Number(it.amount || 0), 0).toFixed(2)}</td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                </div>
-              </>
-            )}
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setGrnOpen(false)}>Cancel</Button>
             <Button className="bg-[#1e2a3a] text-white"
-              disabled={markReceived.isPending || !storeId}
+              disabled={receiving || !storeId || !receiveItems.some((it) => it.receive)}
               onClick={handleReceive}>
-              {markReceived.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
-              Confirm Receipt
+              {receiving ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="w-4 h-4 mr-1.5" />}
+              {receiving ? "Receiving…" : "Confirm Receipt"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1637,25 +2047,27 @@ export default function Suppliers() {
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-5">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+      <div className="page-header">
         <div>
-          <div className="flex items-center gap-2">
-            <Building2 className="w-6 h-6 text-primary" />
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-teal-50 to-emerald-50 flex items-center justify-center">
+              <Building2 className="w-5 h-5 text-teal-600" />
+            </div>
             <h1 className="text-2xl font-bold tracking-tight">Suppliers</h1>
           </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
+          <p className="text-[13px] text-muted-foreground mt-0.5">
             {suppliersLoading
-              ? "Loading…"
+              ? "Loading..."
               : `${activeSuppliers.length} supplier${activeSuppliers.length !== 1 ? "s" : ""}`}
           </p>
         </div>
-        <Button
+        <button
           onClick={() => setShowAddDialog(true)}
-          className="gap-2 shrink-0"
+          className="btn-primary-action shrink-0"
         >
           <Plus className="w-4 h-4" />
           Add Supplier
-        </Button>
+        </button>
       </div>
 
       {/* Tabs */}
@@ -1691,7 +2103,7 @@ export default function Suppliers() {
           </div>
 
           {/* Table */}
-          <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+          <div className="section-card !p-0 overflow-hidden">
             {suppliersLoading ? (
               <div className="p-4 space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (
@@ -1760,7 +2172,7 @@ export default function Suppliers() {
 
         {/* ── Tab 2: Orders ── */}
         <TabsContent value="orders" className="mt-4">
-          <div className="bg-white rounded-2xl border border-border/40 shadow-sm overflow-hidden">
+          <div className="section-card !p-0 overflow-hidden">
             {ordersLoading ? (
               <div className="p-4 space-y-3">
                 {Array.from({ length: 5 }).map((_, i) => (

@@ -313,29 +313,33 @@ export default function Documents() {
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
       {/* ── Page header ── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">
-            {isTodayView ? (creditOnly ? "Today's Credit Invoices" : "Today's Invoices") : "Documents"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {isTodayView
-              ? `${todayStr} · total QAR ${todayTotal.toFixed(2)}`
-              : "Invoices, Quotations, Delivery Notes, Credit Notes"}
-          </p>
+      <div className="page-header">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-blue-50 to-cyan-50 flex items-center justify-center">
+            <FileText className="w-5 h-5 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {isTodayView ? (creditOnly ? "Today's Credit Invoices" : "Today's Invoices") : "Documents"}
+            </h1>
+            <p className="text-[13px] text-muted-foreground">
+              {isTodayView
+                ? `${todayStr} · total QAR ${todayTotal.toFixed(2)}`
+                : "Invoices, Quotations, Delivery Notes, Credit Notes"}
+            </p>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            className="gap-1.5 bg-[#1e2a3a] hover:bg-[#2a3a4a] text-white"
+          <button
+            className="btn-primary-action text-sm"
             onClick={() => nav("/documents/new/INV")}
           >
             <Plus className="w-4 h-4" /> Invoice
-          </Button>
+          </button>
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className="gap-1.5 rounded-lg"
             onClick={() => nav("/documents/new/QT")}
           >
             <Plus className="w-4 h-4" /> Quotation
@@ -343,7 +347,7 @@ export default function Documents() {
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5"
+            className="gap-1.5 rounded-lg"
             onClick={() => nav("/documents/new/DN")}
           >
             <Plus className="w-4 h-4" /> DN
@@ -351,7 +355,7 @@ export default function Documents() {
           <Button
             size="sm"
             variant="outline"
-            className="gap-1.5 border-emerald-600/40 text-emerald-700 hover:bg-emerald-50"
+            className="gap-1.5 rounded-lg border-emerald-600/40 text-emerald-700 hover:bg-emerald-50"
             onClick={() => nav("/purchase-orders/new")}
           >
             <Plus className="w-4 h-4" /> Purchase Order
@@ -367,9 +371,9 @@ export default function Documents() {
           resetPage();
         }}
       >
-        <TabsList className="flex-wrap h-auto gap-1 bg-muted/50">
+        <TabsList className="flex-wrap h-auto gap-1 bg-muted/40 rounded-xl border border-border/30 p-1.5">
           {TAB_TYPES.map((t) => (
-            <TabsTrigger key={t.value} value={t.value} className="text-xs sm:text-sm">
+            <TabsTrigger key={t.value} value={t.value} className="text-xs sm:text-sm rounded-lg">
               {t.label}
             </TabsTrigger>
           ))}

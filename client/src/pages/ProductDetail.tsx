@@ -1,11 +1,15 @@
 import { useRoute, useLocation, Link } from "wouter";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import { ArrowLeft, Package, TrendingUp, History, Factory, MapPin } from "lucide-react";
+import { ArrowLeft, Package, TrendingUp, History, Factory, MapPin, Camera, Loader2, Pencil, X, Save } from "lucide-react";
+import { useRef, useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 const money = (n: any) => "QAR " + (Number(n) || 0).toFixed(2);
 const moveColor: Record<string, string> = {
@@ -17,6 +21,115 @@ export default function ProductDetail() {
   const [, params] = useRoute("/inventory/:id");
   const [, nav] = useLocation();
   const id = Number(params?.id);
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [form, setForm] = useState<Record<string, any>>({});
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = reject;
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = reject;
+        img.onload = () => {
+          const canvas = document.createElement("canvas");
+          const max = 800;
+          let w = img.width, h = img.height;
+          if (w > max || h > max) {
+            if (w > h) { h = Math.round(h * max / w); w = max; }
+            else { w = Math.round(w * max / h); h = max; }
+          }
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL("image/jpeg", 0.8));
+        };
+        img.src = reader.result as string;
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast({ title: "Invalid file", description: "Please select an image file.", variant: "destructive" });
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Max 5 MB allowed.", variant: "destructive" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const compressed = await compressImage(file);
+      setPreviewImage(compressed);
+      setForm((f) => ({ ...f, imageUrl: compressed }));
+    } catch {
+      toast({ title: "Error", description: "Could not process image.", variant: "destructive" });
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const startEdit = (product: any) => {
+    setForm({
+      name: product.name || "",
+      sku: product.sku || "",
+      category: product.category || "",
+      unit: product.unit || "",
+      salePrice: product.salePrice || "",
+      wholesalePrice: product.wholesalePrice || "",
+      costPrice: product.costPrice || "",
+      minStockQty: product.minStockQty || "",
+    });
+    setPreviewImage(null);
+    setEditing(true);
+  };
+
+  const cancelEdit = () => {
+    setEditing(false);
+    setForm({});
+    setPreviewImage(null);
+  };
+
+  const saveEdit = async () => {
+    setSaving(true);
+    try {
+      const body: Record<string, any> = {};
+      if (form.name) body.name = form.name;
+      if (form.sku !== undefined) body.sku = form.sku;
+      if (form.category !== undefined) body.category = form.category;
+      if (form.unit) body.unit = form.unit;
+      if (form.salePrice !== undefined) body.salePrice = form.salePrice;
+      if (form.wholesalePrice !== undefined) body.wholesalePrice = form.wholesalePrice;
+      if (form.costPrice !== undefined) body.costPrice = form.costPrice;
+      if (form.minStockQty !== undefined) body.minStockQty = form.minStockQty;
+      if (form.imageUrl) body.imageUrl = form.imageUrl;
+      const res = await fetch(`/api/products/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("Save failed");
+      queryClient.invalidateQueries({ queryKey: [`/api/products/${id}/activity`] });
+      toast({ title: "Product updated" });
+      setEditing(false);
+      setForm({});
+      setPreviewImage(null);
+    } catch {
+      toast({ title: "Save failed", description: "Could not update product.", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const { data, isLoading } = useQuery<any>({
     queryKey: [`/api/products/${id}/activity`],
@@ -39,31 +152,123 @@ export default function ProductDetail() {
   const cost = p.costPrice != null ? Number(p.costPrice) : null;
   const sell = Number(p.salePrice) || 0;
   const margin = cost != null && sell > 0 ? ((sell - cost) / sell) * 100 : null;
+  const displayImage = previewImage || p.imageUrl;
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-5">
-      <Button variant="ghost" size="sm" className="gap-1.5 -ml-2" onClick={() => nav("/inventory")}>
-        <ArrowLeft className="w-4 h-4" /> Inventory
-      </Button>
+      <div className="flex items-center justify-between">
+        <Button variant="ghost" size="sm" className="gap-1.5 -ml-2" onClick={() => nav("/inventory")}>
+          <ArrowLeft className="w-4 h-4" /> Inventory
+        </Button>
+        {!editing && (
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => startEdit(p)}>
+            <Pencil className="w-3.5 h-3.5" /> Edit Product
+          </Button>
+        )}
+      </div>
 
-      {/* Header */}
-      <div className="bg-white rounded-2xl border border-border/40 shadow-sm p-5 flex items-start gap-4">
-        {p.imageUrl
-          ? <img src={p.imageUrl} alt="" className="w-20 h-20 rounded-xl object-cover shrink-0" />
-          : <div className="w-20 h-20 rounded-xl bg-muted flex items-center justify-center shrink-0"><Package className="w-8 h-8 text-muted-foreground" /></div>}
-        <div className="flex-1 min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight">{p.name}</h1>
-          <div className="flex flex-wrap items-center gap-2 mt-1 text-sm text-muted-foreground">
-            <span className="font-mono">{p.sku || "—"}</span>
-            {p.category && <span className="px-2 py-0.5 rounded-full bg-secondary text-xs">{p.category}</span>}
-            <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold", p.active !== false ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500")}>
-              {p.active !== false ? "Active" : "Inactive"}
-            </span>
+      {/* Header card with large image */}
+      <div className="section-card">
+        <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleImagePick} />
+
+        <div className="flex flex-col sm:flex-row gap-5">
+          {/* Product image — large, prominent */}
+          <div className="shrink-0 flex flex-col items-center gap-2">
+            <div className={cn(
+              "relative w-40 h-40 sm:w-48 sm:h-48 rounded-2xl overflow-hidden border-2 shadow-sm",
+              editing ? "border-primary/30 cursor-pointer group" : "border-border/40",
+            )}
+              onClick={editing ? () => fileInputRef.current?.click() : undefined}
+            >
+              {displayImage
+                ? <img src={displayImage} alt={p.name} className="w-full h-full object-cover" />
+                : <div className="w-full h-full bg-muted flex items-center justify-center"><Package className="w-16 h-16 text-muted-foreground/50" /></div>}
+              {editing && (
+                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-1">
+                  {uploading
+                    ? <Loader2 className="w-7 h-7 text-white animate-spin" />
+                    : <>
+                        <Camera className="w-7 h-7 text-white" />
+                        <span className="text-white text-xs font-medium">Change Image</span>
+                      </>}
+                </div>
+              )}
+            </div>
+            {editing && (
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
+                <Camera className="w-3.5 h-3.5" />
+                {displayImage ? "Change Image" : "Upload Image"}
+              </Button>
+            )}
           </div>
-        </div>
-        <div className="text-right shrink-0">
-          <p className="text-2xl font-mono font-bold text-amber-600">{money(sell)}</p>
-          {margin != null && <p className="text-xs text-muted-foreground">{margin.toFixed(1)}% margin</p>}
+
+          {/* Product info */}
+          <div className="flex-1 min-w-0 flex flex-col justify-between">
+            {!editing ? (
+              <>
+                <div>
+                  <h1 className="text-2xl font-bold tracking-tight">{p.name}</h1>
+                  <div className="flex flex-wrap items-center gap-2 mt-1.5 text-sm text-muted-foreground">
+                    <span className="font-mono">{p.sku || "—"}</span>
+                    {p.category && <span className="px-2 py-0.5 rounded-full bg-secondary text-xs">{p.category}</span>}
+                    <span className={cn("px-2 py-0.5 rounded-full text-xs font-semibold", p.active !== false ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500")}>
+                      {p.active !== false ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <p className="text-3xl font-mono font-bold text-amber-600">{money(sell)}</p>
+                  {margin != null && <p className="text-sm text-muted-foreground mt-0.5">{margin.toFixed(1)}% margin</p>}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs">Product Name</Label>
+                    <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">SKU</Label>
+                    <Input value={form.sku} onChange={(e) => setForm({ ...form, sku: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Category</Label>
+                    <Input value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Unit</Label>
+                    <Input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Sale Price</Label>
+                    <Input type="number" value={form.salePrice} onChange={(e) => setForm({ ...form, salePrice: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Wholesale Price</Label>
+                    <Input type="number" value={form.wholesalePrice} onChange={(e) => setForm({ ...form, wholesalePrice: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Cost Price</Label>
+                    <Input type="number" value={form.costPrice} onChange={(e) => setForm({ ...form, costPrice: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Min Stock Qty</Label>
+                    <Input type="number" value={form.minStockQty} onChange={(e) => setForm({ ...form, minStockQty: e.target.value })} />
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <Button size="sm" className="gap-1.5" onClick={saveEdit} disabled={saving}>
+                    {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+                    Save Changes
+                  </Button>
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={cancelEdit} disabled={saving}>
+                    <X className="w-3.5 h-3.5" /> Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

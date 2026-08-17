@@ -71,7 +71,7 @@ export default function BusinessRulesSettings() {
   });
 
   return (
-    <AccordionItem value="business-rules" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
+    <AccordionItem value="business-rules" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
       <AccordionTrigger className="hover:no-underline">
         <div className="flex items-center gap-2">
           <SlidersHorizontal className="w-4 h-4 text-[#d4a017]" />

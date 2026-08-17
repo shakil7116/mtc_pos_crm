@@ -67,7 +67,7 @@ function ListEditor({ listKey, title, hint }: { listKey: string; title: string; 
 
 export default function ManagedListsSettings() {
   return (
-    <AccordionItem value="lists-categories" className="bg-white rounded-xl border border-border/60 px-6 shadow-sm">
+    <AccordionItem value="lists-categories" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
       <AccordionTrigger className="hover:no-underline">
         <div className="flex items-center gap-2">
           <ListChecks className="w-4 h-4 text-[#d4a017]" />

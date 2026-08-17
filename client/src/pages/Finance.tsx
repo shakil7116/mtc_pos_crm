@@ -1,6 +1,6 @@
 import { useLocation, useSearch } from "wouter";
 import { cn } from "@/lib/utils";
-import { Wallet, TrendingUp, Landmark, ScrollText, ArrowLeft } from "lucide-react";
+import { Wallet, TrendingUp, Landmark, ScrollText } from "lucide-react";
 import CashPosition from "./CashPosition";
 import ProfitToday from "./ProfitToday";
 import CashLoans from "./CashLoans";
@@ -35,19 +35,22 @@ export default function Finance() {
   return (
     <div>
       <div className="max-w-5xl mx-auto px-4 md:px-6 pt-4">
-        <button onClick={() => nav("/")} className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground mb-3"><ArrowLeft className="w-4 h-4" /> Dashboard</button>
-        <div className="flex items-center gap-2 mb-3">
-          <Wallet className="w-6 h-6 text-emerald-600" />
-          <h1 className="text-2xl font-bold tracking-tight">Finance</h1>
-          <span className="text-xs text-muted-foreground ml-1">money management — cash, bank, profit, loans, cheques</span>
+        <div className="flex items-center gap-2.5 mb-3">
+          <div className="w-9 h-9 rounded-lg bg-emerald-500/10 flex items-center justify-center">
+            <Wallet className="w-5 h-5 text-emerald-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold tracking-tight">Finance</h1>
+            <span className="text-[13px] text-muted-foreground">money management — cash, bank, profit, loans, cheques</span>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-1.5 bg-muted/50 p-1.5 rounded-xl">
+        <div className="flex flex-wrap gap-1.5 bg-muted/40 p-1.5 rounded-xl border border-border/30">
           {TABS.map((t) => {
             const Icon = t.icon;
             return (
               <button key={t.key} onClick={() => go(t.key)}
-                className={cn("flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-lg transition-colors",
-                  tab === t.key ? "bg-white shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
+                className={cn("flex items-center gap-1.5 text-xs font-semibold px-3.5 h-8 rounded-lg transition-all duration-150",
+                  tab === t.key ? "bg-card shadow-sm text-foreground border border-border/50" : "text-muted-foreground hover:text-foreground hover:bg-card/60")}>
                 <Icon className="w-3.5 h-3.5" />{t.label}
               </button>
             );
