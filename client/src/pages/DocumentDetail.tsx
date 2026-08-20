@@ -779,12 +779,12 @@ export default function DocumentDetail() {
         ];
         const stageIdx = steps.findIndex((s) => s.key === stage);
         const role = user?.role;
-        const canPick = stage === "pending_pick" && ["warehouse", "admin", "manager"].includes(role || "");
+        const canPick = stage === "pending_pick" && ["worker", "admin", "manager"].includes(role || "");
         const canAuthorize = stage === "picked" && ["admin", "manager"].includes(role || "");
         const canDeliver = stage === "authorized" && ["driver", "admin", "manager"].includes(role || "");
         const d: any = doc;
-        const canWarehouseSign = !d.warehouseSignedBy && stage !== "delivered" && ["warehouse_manager", "warehouse", "admin", "manager"].includes(role || "");
-        const canDamage = stage !== "delivered" && ["driver", "warehouse_manager", "warehouse", "admin", "manager"].includes(role || "");
+        const canWarehouseSign = !d.warehouseSignedBy && stage !== "delivered" && ["worker", "admin", "manager"].includes(role || "");
+        const canDamage = stage !== "delivered" && ["driver", "worker", "admin", "manager"].includes(role || "");
         const navUrl = d.mapLink || (d.deliveryAddress ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(d.deliveryAddress + ", Doha, Qatar")}` : null);
         return (
           <div className="no-print rounded-2xl border border-purple-200 bg-purple-50/50 p-4 space-y-3">
@@ -915,7 +915,7 @@ export default function DocumentDetail() {
         {(() => {
           const terminalStatus = ["void", "returned", "converted"].includes(doc?.status ?? "");
           const ageMs = doc?.createdAt ? Date.now() - new Date(doc.createdAt).getTime() : 0;
-          const expired = ageMs > 48 * 3_600_000;
+          const expired = ageMs > voidWindowHours * 3_600_000;
           const blocked = terminalStatus || expired;
           return (
             <Button
@@ -923,7 +923,7 @@ export default function DocumentDetail() {
               size="sm"
               className="gap-1.5"
               disabled={blocked}
-              title={terminalStatus ? `Cannot edit — ${doc?.status}` : expired ? "Edit window expired (2 days)" : undefined}
+              title={terminalStatus ? `Cannot edit — ${doc?.status}` : expired ? `Edit window expired (${voidWindowHours}h)` : undefined}
               onClick={() => nav(`/documents/${id}/edit`)}
             >
               <Pencil className="w-3.5 h-3.5" /> Edit

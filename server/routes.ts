@@ -1,6 +1,9 @@
 import express, { type Request, type Response } from "express";
 import { createServer, type Server } from "http";
 import { openai } from "./replit_integrations/audio/client";
+import { db } from "./db";
+import { settings, users } from "@shared/schema";
+import { eq, sql } from "drizzle-orm";
 import {
   getSettings, upsertSettings,
   getStores, createStore, updateStore,
@@ -23,7 +26,8 @@ import {
   getProductActivity, getReorderSuggestions,
   createOwnerLoan, updateOwnerLoan, getOwnerLoans, LOAN_TYPES, getProfitDetail, getProfitSummary, getCreditExposure, getCustomerOverview, getLocationOverview,
   createNotification, getNotifications, markNotificationRead, markAllNotificationsRead,
-  getArrangementNote, createArrangementCorrection,
+  getArrangementNote, createArrangementCorrection, getPickNoteQueue, claimPickNote, markPickNoteReady,
+  updatePickItem, completePickNote, reassignPickNote,
   getMessages, logMessage, getLastMessageDate,
   createSupplierOrder, getSupplierOrders, updateSupplierOrder, receiveSupplierOrder,
   updateSupplierOrderStatus, receiveSupplierOrderItems, createSupplierReturn,
@@ -49,9 +53,9 @@ import {
   getStaffPayroll, createStaffPayrollEntry, deleteStaffPayrollEntry, updateUserSalary, getStaffPayrollSummary,
   ensureFunds,
 } from "./storage";
-import { normalizeRole } from "@shared/schema";
+import { normalizeRole } from "@shared/permissions";
 import {
-  login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword,
+  login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword, registerOwner, recoverPassword,
 } from "./auth";
 
 // Role from the verified JWT (req.user). No token → no role → every gate fails
@@ -569,6 +573,54 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   // ══════════════════════════════════════════════════════════════
+  // SETUP / ONBOARDING (no auth required)
+  // ══════════════════════════════════════════════════════════════
+
+  app.get("/api/setup/status", async (_req: Request, res: Response) => {
+    try {
+      const adminUsers = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin"));
+      let setupComplete = false;
+      try {
+        const rows = await db.execute(sql`SELECT setup_complete FROM settings LIMIT 1`);
+        setupComplete = !!(rows as any)?.rows?.[0]?.setup_complete;
+      } catch { /* column may not exist yet — treat as not complete */ }
+      res.json({ setupComplete, hasAdmin: adminUsers.length > 0 });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.post("/api/auth/register", async (req: Request, res: Response) => {
+    try {
+      const result = await registerOwner(req.body, res);
+      if (!result.ok) return res.status(result.status).json({ message: result.message });
+      res.status(201).json({ user: result.user });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.post("/api/setup/business", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    try {
+      const { companyName, companyNameAr, address, phone, email, crNumber } = req.body;
+      await db.update(settings).set({
+        storeNameEn: companyName || undefined,
+        storeNameAr: companyNameAr || undefined,
+        addressEn: address || undefined,
+        phone: phone || undefined,
+        email: email || undefined,
+        crNumber: crNumber || undefined,
+      }).where(eq(settings.id, 1));
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  app.post("/api/setup/complete", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    try {
+      await db.update(settings).set({ setupComplete: true }).where(eq(settings.id, 1));
+      res.json({ ok: true });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
+  });
+
+  // ══════════════════════════════════════════════════════════════
   // AUTH
   // ══════════════════════════════════════════════════════════════
 
@@ -600,6 +652,17 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/auth/logout", async (_req: Request, res: Response) => {
     clearTokenCookie(res);
     res.json({ ok: true });
+  });
+
+  // Recover password using username + PIN (no session required).
+  app.post("/api/auth/recover", async (req: Request, res: Response) => {
+    const { username, pin, newPassword } = req.body || {};
+    if (!username || !pin || !newPassword) return res.status(400).json({ message: "Username, PIN, and new password are required." });
+    try {
+      const result = await recoverPassword(String(username), String(pin), String(newPassword), res);
+      if (!result.ok) return res.status(result.status).json({ message: result.message });
+      res.json({ user: result.user });
+    } catch (err) { res.status(500).json({ message: String(err) }); }
   });
 
   // Change own password (first-login forced change routes here too).
@@ -646,7 +709,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   // ══════════════════════════════════════════════════════════════
   // TASKS — manager (and warehouse-manager / main salesman) assign to staff
   // ══════════════════════════════════════════════════════════════
-  const canAssignTasks = (req: Request) => ["admin", "manager", "warehouse_manager", "salesman"].includes(reqRole(req));
+  const canAssignTasks = (req: Request) => ["admin", "manager", "worker", "salesman"].includes(reqRole(req));
   app.get("/api/tasks", async (req: Request, res: Response) => {
     if (!req.user) return res.status(401).json({ message: "Not authenticated" });
     const seesAll = ["admin", "manager"].includes(reqRole(req));
@@ -1137,14 +1200,16 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         return res.status(400).json({ message: `Cannot edit a ${before.status} document.` });
       }
 
-      // 2-day edit window
+      // Edit window — same configurable window as voiding (default 12 h)
+      const rules = await getBusinessRules();
+      const editWindowHours = rules.voidWindowHours;
       const created = before.createdAt ? new Date(before.createdAt).getTime() : 0;
       const ageHours = created ? (Date.now() - created) / 3_600_000 : 0;
-      if (created && ageHours > 48) {
-        return res.status(400).json({ message: "Edit window expired — documents can only be modified within 2 days of creation." });
+      if (created && ageHours > editWindowHours) {
+        return res.status(400).json({ message: `Edit window expired — documents can only be modified within ${editWindowHours} hours of creation.` });
       }
 
-      const { items, ...docData } = req.body;
+      const { items, payments: editPaymentsRaw, creditOverride, pricingOverridePin, ...docData } = req.body;
       await updateDocument(id, docData);
       if (items && Array.isArray(items)) {
         await updateDocumentItems(id, items);
@@ -1194,7 +1259,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       // Process additional payments submitted with the edit (cash invoice: customer
       // pays the difference when items are added). createPayment recalculates status,
       // so the "partial" set above gets corrected to "paid" once the tender covers the total.
-      const editPayments: any[] = docData.payments || [];
+      const editPayments: any[] = editPaymentsRaw || [];
       for (const p of editPayments) {
         const amt = Number(p.amount) || 0;
         if (amt <= 0 || p.method === "Credit") continue;
@@ -1210,6 +1275,23 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
           recordedBy: (req as any).user?.id ?? docData.createdBy ?? null,
         } as any);
       }
+
+      // Log the edit for audit trail
+      const changes: string[] = [];
+      if (String(before.total || 0) !== String(docData.total || 0))
+        changes.push(`total ${parseFloat(String(before.total || 0)).toFixed(2)} → ${parseFloat(String(docData.total || 0)).toFixed(2)}`);
+      if (before.paymentType !== docData.paymentType)
+        changes.push(`payment ${before.paymentType || "—"} → ${docData.paymentType || "—"}`);
+      if ((before.items?.length || 0) !== (items?.length || 0))
+        changes.push(`items ${before.items?.length || 0} → ${items?.length || 0}`);
+      await logEdit({
+        documentId: id,
+        userId: (req as any).user?.id ?? docData.createdBy ?? null,
+        field: "document_edit",
+        oldValue: String(parseFloat(String(before.total || 0)).toFixed(2)),
+        newValue: String(parseFloat(String(docData.total || 0)).toFixed(2)),
+        reason: changes.length ? changes.join("; ") : "Document edited",
+      });
 
       const updated = await getDocument(id);
       res.json(updated);
@@ -1320,8 +1402,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   // Warehouse: mark the pick complete (accepts the DN id or its parent invoice id).
   app.post("/api/documents/:id/pick", async (req: Request, res: Response) => {
-    if (!["warehouse", "admin", "manager"].includes(reqRole(req)))
-      return res.status(403).json({ message: "Only the warehouse (or admin/manager) can pick a delivery." });
+    if (!["worker", "admin", "manager"].includes(reqRole(req)))
+      return res.status(403).json({ message: "Only a worker (or admin/manager) can pick a delivery." });
     try {
       const dn = await resolveDeliveryNote(Number(req.params.id));
       if (!dn) return res.status(404).json({ message: "No delivery note found for this document." });
@@ -1377,8 +1459,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   // Warehouse manager signs / releases the load (validates the physical DN at dispatch).
   app.post("/api/documents/:id/sign-warehouse", async (req: Request, res: Response) => {
-    if (!["warehouse_manager", "warehouse", "admin", "manager"].includes(reqRole(req)))
-      return res.status(403).json({ message: "Only the warehouse manager (or admin/manager) can sign the release." });
+    if (!["worker", "admin", "manager"].includes(reqRole(req)))
+      return res.status(403).json({ message: "Only a worker (or admin/manager) can sign the release." });
     try {
       const dn = await resolveDeliveryNote(Number(req.params.id));
       if (!dn) return res.status(404).json({ message: "No delivery note found for this document." });
@@ -1424,7 +1506,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       if (resolution === "redelivery_requested" && dn.linkedDocId) {
         await updateDocument(dn.linkedDocId, { deliveryStatus: "pending_pick" } as any);
         await createNotification({
-          targetRole: "warehouse", type: "redelivery_pick", title: "Redelivery needed",
+          targetRole: "worker", type: "redelivery_pick", title: "Redelivery needed",
           message: `${dn.number} damaged — new pick required for redelivery.`,
           link: `/documents/${dn.linkedDocId}`, entityType: "document", entityId: dn.linkedDocId, createdBy: uid,
         });
@@ -1736,6 +1818,92 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         correctedBy: req.user?.id,
       });
       res.status(201).json(corr);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Helper Pick Note Queue ────────────────────────────────────
+  app.get("/api/pick-notes/queue", async (req: Request, res: Response) => {
+    try {
+      const role = reqRole(req);
+      const isAdmin = role === "admin" || role === "manager";
+      const storeId = req.user?.storeId ?? (req.query.storeId ? Number(req.query.storeId) : null);
+      if (!storeId && !isAdmin) return res.status(400).json({ message: "Store ID required" });
+      res.json(await getPickNoteQueue(storeId));
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  app.post("/api/arrangement-notes/:noteId/pick", async (req: Request, res: Response) => {
+    const role = reqRole(req);
+    if (!["worker", "salesman", "admin", "manager"].includes(role))
+      return res.status(403).json({ message: "Not authorized" });
+    try {
+      const result = await claimPickNote(Number(req.params.noteId), req.user!.id);
+      if (!result.ok) return res.status(409).json({ message: result.message });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  app.post("/api/arrangement-notes/:noteId/ready", async (req: Request, res: Response) => {
+    const role = reqRole(req);
+    if (!["worker", "salesman", "admin", "manager"].includes(role))
+      return res.status(403).json({ message: "Not authorized" });
+    try {
+      const result = await markPickNoteReady(Number(req.params.noteId), req.user!.id);
+      if (!result.ok) return res.status(400).json({ message: result.message });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Pick item-level update (mark each product during picking) ──
+  app.put("/api/arrangement-notes/:noteId/items/:itemId", async (req: Request, res: Response) => {
+    const role = reqRole(req);
+    if (!["worker", "salesman", "admin", "manager"].includes(role))
+      return res.status(403).json({ message: "Not authorized" });
+    try {
+      const result = await updatePickItem(
+        Number(req.params.noteId),
+        Number(req.params.itemId),
+        req.body,
+        req.user!.id,
+      );
+      if (!result.ok) return res.status(400).json({ message: result.message });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Complete pick note (Done button — notify salesman if issues) ──
+  app.post("/api/arrangement-notes/:noteId/complete", async (req: Request, res: Response) => {
+    const role = reqRole(req);
+    if (!["worker", "salesman", "admin", "manager"].includes(role))
+      return res.status(403).json({ message: "Not authorized" });
+    try {
+      const result = await completePickNote(Number(req.params.noteId), req.user!.id);
+      if (!result.ok) return res.status(400).json({ message: result.message });
+      res.json(result);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Reassign pick note (manager override) ──
+  app.post("/api/arrangement-notes/:noteId/reassign", async (req: Request, res: Response) => {
+    const role = reqRole(req);
+    if (!["admin", "manager"].includes(role))
+      return res.status(403).json({ message: "Only managers can reassign" });
+    try {
+      const result = await reassignPickNote(Number(req.params.noteId), Number(req.body.userId));
+      if (!result.ok) return res.status(400).json({ message: result.message });
+      res.json(result);
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
@@ -2057,7 +2225,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     const isBoss = ["admin", "manager"].includes(role);
     // Salesman (and helper) may process a routine return AT OR UNDER the threshold;
     // anything over needs a manager/admin. Others cannot approve at all.
-    if (!isBoss && !["salesman", "salesman_helper"].includes(role)) {
+    if (!isBoss && !["salesman", "worker"].includes(role)) {
       return res.status(403).json({ message: "You are not allowed to approve returns." });
     }
     try {
@@ -2402,7 +2570,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
     try {
       await checkRecurringExpenses().catch(() => 0);
       const role = reqRole(req);
-      const isScopedRole = ["salesman", "salesman_helper"].includes(role);
+      const isScopedRole = ["salesman", "worker"].includes(role);
       const storeId = isScopedRole
         ? (req.user?.storeId ?? undefined)
         : (req.query.storeId ? Number(req.query.storeId) : undefined);
@@ -2419,13 +2587,13 @@ ALL item descriptions in UPPERCASE. No explanation.` }
   // Admin/manager can log any expense (company-wide or store-specific).
   app.post("/api/expenses", async (req: Request, res: Response) => {
     const role = reqRole(req);
-    if (!["admin", "manager", "salesman", "salesman_helper"].includes(role))
+    if (!["admin", "manager", "worker", "salesman"].includes(role))
       return res.status(403).json({ message: "Not authorized" });
     try {
       const { category, amount, date } = req.body || {};
       if (!category || !(Number(amount) > 0) || !date)
         return res.status(400).json({ message: "Category, amount and date are required." });
-      const isScopedRole = ["salesman", "salesman_helper"].includes(role);
+      const isScopedRole = ["salesman", "worker"].includes(role);
       const storeId = isScopedRole ? (req.user?.storeId ?? undefined) : req.body.storeId;
       const canOverride = role === "admin";
       res.status(201).json(await createExpense({

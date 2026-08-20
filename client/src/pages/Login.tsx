@@ -27,6 +27,8 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [recovering, setRecovering] = useState(false);
+  const [pin, setPin] = useState("");
 
   const companyName = settings?.storeNameEn || "Mamun M Trading and Contracting W.L.L";
 
@@ -36,6 +38,24 @@ export default function Login() {
     const res = await login(username.trim(), password, rememberMe);
     setBusy(false);
     if (!res.ok) { setError(res.message || "Login failed."); return; }
+  };
+
+  const doRecover = async () => {
+    if (!username.trim()) { setError("Enter your username."); return; }
+    if (!pin.trim()) { setError("Enter your PIN."); return; }
+    if (newPw.length < 8) { setError("New password must be at least 8 characters."); return; }
+    if (newPw !== confirmPw) { setError("Passwords do not match."); return; }
+    setBusy(true); setError("");
+    try {
+      const r = await fetch("/api/auth/recover", {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), pin: pin.trim(), newPassword: newPw }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { setError(d.message || "Recovery failed."); setBusy(false); return; }
+      await refresh();
+    } catch { setError("Network error."); }
+    setBusy(false);
   };
 
   const doChangePassword = async () => {
@@ -92,6 +112,46 @@ export default function Login() {
                 </Button>
               </div>
             </>
+          ) : recovering ? (
+            <>
+              <div className="flex items-center gap-2 mb-4">
+                <KeyRound className="w-5 h-5 text-blue-600" />
+                <h2 className="font-bold text-[#1e2a3a]">Recover password</h2>
+              </div>
+              <p className="text-xs text-muted-foreground mb-4">Enter your username and PIN to set a new password.</p>
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs">Username</Label>
+                  <div className="relative">
+                    <User className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input className="pl-9 no-uppercase" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="e.g. shakil" autoCapitalize="none" autoCorrect="off" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">Your PIN</Label>
+                  <div className="relative">
+                    <ShieldCheck className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                    <Input className="pl-9" type="password" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="4-digit PIN" maxLength={4} inputMode="numeric" />
+                  </div>
+                </div>
+                <div>
+                  <Label className="text-xs">New password</Label>
+                  <Input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="At least 8 characters" />
+                </div>
+                <div>
+                  <Label className="text-xs">Confirm new password</Label>
+                  <Input type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && doRecover()} />
+                </div>
+                {error && <p className="text-xs text-red-600">{error}</p>}
+                <Button className="w-full bg-[#1e2a3a] text-white h-11 text-base" disabled={busy} onClick={doRecover}>
+                  {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Reset password
+                </Button>
+                <button onClick={() => { setRecovering(false); setError(""); setPin(""); setNewPw(""); setConfirmPw(""); }} className="w-full text-xs text-blue-600 hover:underline mt-1">
+                  Back to sign in
+                </button>
+              </div>
+            </>
           ) : (
             <>
               <h2 className="font-bold text-[#1e2a3a] mb-4 flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-[#d4a017]" /> Sign in</h2>
@@ -111,10 +171,15 @@ export default function Login() {
                       onKeyDown={(e) => e.key === "Enter" && doLogin()} placeholder="Your password" />
                   </div>
                 </div>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
-                  Remember me (30 days)
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={rememberMe} onChange={(e) => setRememberMe(e.target.checked)} />
+                    Remember me (30 days)
+                  </label>
+                  <button onClick={() => { setRecovering(true); setError(""); }} className="text-xs text-blue-600 hover:underline">
+                    Forgot password?
+                  </button>
+                </div>
                 {error && <p className="text-xs text-red-600">{error}</p>}
                 <Button className="w-full bg-[#1e2a3a] text-white h-11 text-base" disabled={busy} onClick={doLogin}>
                   {busy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null} Login

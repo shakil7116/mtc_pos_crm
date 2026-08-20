@@ -337,12 +337,19 @@ export default function DocumentEditor({ type, params }: Props) {
         return {
           id: uid(), productId: i.productId, sku: i.sku ?? "", description: i.description, qty, unit: i.unit,
           price, discountType: i.discountType ?? "QAR", discountAmount, amount, originalPrice: price,
+          locationStoreId: (i as any).locationStoreId ?? null,
         };
       }));
     }
     if (existingDoc.customerId) {
       const c = customers.find((c) => c.id === existingDoc.customerId);
       if (c) setSelectedCustomer(c);
+    }
+    if (existingDoc.type === "INV") {
+      const pt = (existingDoc as any).paymentType ?? "";
+      const mode = /credit/i.test(pt) ? "credit" : "cash";
+      setInvoiceMode(mode);
+      setInvoiceModeTouched(true);
     }
   }, [existingDoc, customers]);
 
@@ -662,13 +669,14 @@ export default function DocumentEditor({ type, params }: Props) {
     },
     onSuccess: (data) => {
       pricingPinRef.current = ""; // consume the approval
+      const docId = data.id ?? editId;
       qc.invalidateQueries({ queryKey: ["documents"] });
       qc.invalidateQueries({ queryKey: ["/api/documents"] });
+      if (docId) qc.invalidateQueries({ queryKey: [`/api/documents/${docId}`] });
       toast({ title: isEdit ? "Document updated" : "Document created" });
       setInterceptorOpen(false);
-      const id = data.id ?? editId;
-      setSavedDocId(id);
-      navigate(`/documents/${id}`);
+      setSavedDocId(docId);
+      navigate(`/documents/${docId}`);
     },
     onError: (err: Error, intercept) => {
       // A salesman discount / price change → collect a manager's PIN, then retry.

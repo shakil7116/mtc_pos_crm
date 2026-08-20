@@ -36,7 +36,9 @@ export function clearCachedUser(): void {
   localStorage.removeItem(SESSION_KEY);
 }
 
-/** Ask the server who we are (verifies the cookie). Refreshes the UI cache. */
+/** Ask the server who we are (verifies the cookie). Refreshes the UI cache.
+ *  Never falls back to a cached identity — if the server can't be reached,
+ *  the user is treated as unauthenticated (security over convenience). */
 export async function fetchMe(): Promise<SessionUser | null> {
   try {
     const res = await fetch('/api/auth/me', { credentials: 'include' });
@@ -47,7 +49,8 @@ export async function fetchMe(): Promise<SessionUser | null> {
     setCachedUser(su);
     return su;
   } catch {
-    return getCachedUser(); // offline: fall back to the cached identity
+    clearCachedUser();
+    return null;
   }
 }
 

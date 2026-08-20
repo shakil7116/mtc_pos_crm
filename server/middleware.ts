@@ -56,6 +56,23 @@ export function asyncHandler(
   };
 }
 
+const PUBLIC_API_PATHS = new Set([
+  "/api/auth/login",
+  "/api/auth/logout",
+  "/api/auth/register",
+  "/api/auth/recover",
+  "/api/setup/status",
+  "/api/settings",
+]);
+
+/** Defense-in-depth: reject unauthenticated /api requests except public endpoints. */
+export const apiAuthGate: RequestHandler = (req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next();
+  if (PUBLIC_API_PATHS.has(req.path)) return next();
+  if ((req as any).user) return next();
+  return jsonError(res, 401, "Authentication required");
+};
+
 /** Catch-all for unmatched /api routes — prevents HTML responses on API calls. */
 export const apiNotFoundHandler: RequestHandler = (req, res) => {
   jsonError(res, 404, `API route not found: ${req.method} ${req.originalUrl}`, {

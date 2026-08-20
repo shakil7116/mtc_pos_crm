@@ -5,7 +5,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { checkDbConnection } from "./db";
 import { createServer } from "http";
-import { corsMiddleware, errorHandler } from "./middleware";
+import { corsMiddleware, errorHandler, apiAuthGate } from "./middleware";
 import { authMiddleware } from "./auth";
 
 const app = express();
@@ -34,6 +34,7 @@ app.use(cookieParser());
 // JWT session: verifies the httpOnly cookie and attaches req.user.
 // Role comes from the token — never from client headers (dev fallback only via ALLOW_DEV_HEADERS=1).
 app.use(authMiddleware);
+app.use(apiAuthGate);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -81,7 +82,20 @@ app.use((req, res, next) => {
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route
   // doesn't interfere with the other routes
-  if (process.env.NODE_ENV === "production") {
+  const viteProxy = process.env.VITE_PROXY;
+  if (viteProxy) {
+    // Lightweight mode: proxy frontend requests to the main Vite server.
+    // Saves ~300MB per instance vs running a full Vite dev server.
+    const http = await import("http");
+    app.use((req, res) => {
+      const proxyReq = http.request(
+        { hostname: "127.0.0.1", port: Number(viteProxy), path: req.url, method: req.method, headers: { ...req.headers, host: `localhost:${viteProxy}` } },
+        (proxyRes) => { res.writeHead(proxyRes.statusCode || 200, proxyRes.headers); proxyRes.pipe(res); },
+      );
+      proxyReq.on("error", () => res.status(502).send("Vite proxy unavailable"));
+      req.pipe(proxyReq);
+    });
+  } else if (process.env.NODE_ENV === "production") {
     serveStatic(app);
   } else {
     const { setupVite } = await import("./vite");

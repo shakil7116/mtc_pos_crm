@@ -11,7 +11,8 @@ import { eq } from "drizzle-orm";
 import { normalizeRole } from "@shared/permissions";
 import { createNotification } from "./storage";
 
-const COOKIE = "mtc_token";
+const COOKIE_BASE = "mtc_token";
+const COOKIE = process.env.COOKIE_SUFFIX ? `${COOKIE_BASE}_${process.env.COOKIE_SUFFIX}` : COOKIE_BASE;
 const SHIFT_HOURS = 8;          // normal shift token
 const REMEMBER_DAYS = 30;       // "remember me"
 const MAX_FAILS = 5;            // lock after N wrong passwords
@@ -164,4 +165,71 @@ export async function verifyUserPassword(userId: number, password: string): Prom
 export async function invalidateUserSessions(userId: number) {
   const [u] = await db.select().from(users).where(eq(users.id, userId));
   if (u) await db.update(users).set({ tokenVersion: (u.tokenVersion || 0) + 1 }).where(eq(users.id, userId));
+}
+
+/** Recover password using username + PIN. Rate-limited via the same lockout logic. */
+export async function recoverPassword(usernameRaw: string, pin: string, newPassword: string, res: Response) {
+  const username = String(usernameRaw || "").trim().toLowerCase();
+  const [u] = await db.select().from(users).where(eq(users.username, username));
+  if (!u || u.active === false) return { ok: false as const, status: 401, message: "Account not found." };
+
+  if (u.lockedUntil && new Date(u.lockedUntil).getTime() > Date.now()) {
+    const mins = Math.ceil((new Date(u.lockedUntil).getTime() - Date.now()) / 60000);
+    return { ok: false as const, status: 423, message: `Account locked. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` };
+  }
+
+  if (String(u.pin) !== String(pin)) {
+    const fails = (u.failedAttempts || 0) + 1;
+    const patch: any = { failedAttempts: fails };
+    if (fails >= MAX_FAILS) {
+      patch.lockedUntil = new Date(Date.now() + LOCK_MINUTES * 60000);
+      patch.failedAttempts = 0;
+    }
+    await db.update(users).set(patch).where(eq(users.id, u.id));
+    return { ok: false as const, status: 401, message: "Incorrect PIN." };
+  }
+
+  if (String(newPassword || "").length < 8) return { ok: false as const, status: 400, message: "Password must be at least 8 characters." };
+
+  await db.update(users).set({
+    passwordHash: bcrypt.hashSync(newPassword, 10),
+    mustChangePassword: false,
+    failedAttempts: 0, lockedUntil: null,
+    tokenVersion: (u.tokenVersion || 0) + 1,
+  }).where(eq(users.id, u.id));
+
+  const token = signToken({ id: u.id, role: u.role, storeId: u.storeId ?? null, tokenVersion: (u.tokenVersion || 0) + 1 });
+  setTokenCookie(res, token);
+  return {
+    ok: true as const,
+    user: { id: u.id, name: u.name, role: normalizeRole(u.role), storeId: u.storeId ?? null, mustChangePassword: false, mustChangePin: false },
+  };
+}
+
+/** Register the first admin account during onboarding. Only works when no admin exists yet. */
+export async function registerOwner(data: { name: string; email: string; password: string }, res: Response) {
+  const existing = await db.select().from(users).where(eq(users.role, "admin"));
+  if (existing.length > 0) return { ok: false as const, status: 409, message: "An admin account already exists." };
+  if (!data.email?.includes("@")) return { ok: false as const, status: 400, message: "Valid email required." };
+  if (String(data.password || "").length < 8) return { ok: false as const, status: 400, message: "Password must be at least 8 characters." };
+
+  const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "");
+  const [u] = await db.insert(users).values({
+    name: data.name.trim(),
+    email: data.email.trim().toLowerCase(),
+    username,
+    role: "admin",
+    pin: String(Math.floor(1000 + Math.random() * 9000)),
+    passwordHash: bcrypt.hashSync(data.password, 10),
+    mustChangePassword: false,
+    mustChangePin: false,
+    tokenVersion: 0,
+  }).returning();
+
+  const token = signToken({ id: u.id, role: u.role, storeId: u.storeId ?? null, tokenVersion: u.tokenVersion });
+  setTokenCookie(res, token);
+  return {
+    ok: true as const,
+    user: { id: u.id, name: u.name, role: u.role, storeId: u.storeId ?? null, mustChangePassword: false, mustChangePin: false },
+  };
 }

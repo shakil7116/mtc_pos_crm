@@ -1,5 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { canAccess, navKeyForPath, ROLE_HOME } from "@shared/permissions";
+import Onboarding from "@/pages/Onboarding";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import SetPin from "@/pages/SetPin";
@@ -35,11 +36,20 @@ import CreditExposure from "@/pages/CreditExposure";
 import CashLoans from "@/pages/CashLoans";
 import Maintenance from "@/pages/Maintenance";
 import Finance from "@/pages/Finance";
+import PickQueue from "@/pages/PickQueue";
 import NotFound from "@/pages/not-found";
 
 function ProtectedApp() {
   const { user, loading } = useAuth();
   const [location, navigate] = useLocation();
+  const [setupStatus, setSetupStatus] = useState<{ setupComplete: boolean; hasAdmin: boolean } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/setup/status")
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then(d => setSetupStatus({ setupComplete: !!d.setupComplete, hasAdmin: !!d.hasAdmin }))
+      .catch(() => setSetupStatus({ setupComplete: true, hasAdmin: true }));
+  }, []);
 
   // Role-based route guard: if this role can't access the current module, bounce home.
   const navKey = navKeyForPath(location);
@@ -48,7 +58,8 @@ function ProtectedApp() {
     if (denied && user) navigate(ROLE_HOME[user.role] || "/");
   }, [denied, user, navigate]);
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
+  if (loading || !setupStatus) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
+  if (!setupStatus.setupComplete && !setupStatus.hasAdmin) return <Onboarding />;
   if (!user) return <Login />;
   if (user.mustChangePassword) return <Login />; // Login renders the forced change-password step
   if (user.mustChangePin) return <SetPin />;     // forced PIN reset before the app loads
@@ -83,6 +94,7 @@ function ProtectedApp() {
         <Route path="/reports/finance" component={Finance} />
         <Route path="/reports" component={Reports} />
         <Route path="/messages" component={Messages} />
+        <Route path="/pick-queue" component={PickQueue} />
         <Route path="/approvals" component={Approvals} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/cash-loans" component={() => <CashLoans />} />

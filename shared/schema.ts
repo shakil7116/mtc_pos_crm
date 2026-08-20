@@ -60,6 +60,7 @@ export const settings = pgTable("settings", {
     "DEWALT","STANLEY","TOTAL TOOLS","MILANO","NATIONAL",
     "BQ","BR","MÜLLER","KISTENMACHER","ORYX PAINTS","BERGER PAINTS",
   ]),
+  setupComplete: boolean("setup_complete").default(false),
 });
 
 // ─── Stores ──────────────────────────────────────────────────────────────────
@@ -80,10 +81,11 @@ export const stores = pgTable("stores", {
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
-  // 5 roles: admin | manager | warehouse | salesman | driver  (legacy "staff" == salesman)
+  // 5 roles: admin | manager | worker | salesman | driver  (legacy "staff"→salesman, "warehouse"/"warehouse_manager"/"salesman_helper"→worker)
   role: text("role").notNull().default("salesman"),
   pin: text("pin").notNull(),
   // ── JWT auth (Phase 7 — Go-Live blocker 1) ──
+  email: text("email"),                           // owner/admin email (Google or business)
   username: text("username").unique(),           // login identifier
   passwordHash: text("password_hash"),           // bcrypt
   mustChangePassword: boolean("must_change_password").default(true), // first login forces change
@@ -735,7 +737,13 @@ export const arrangementNotes = pgTable("arrangement_notes", {
   documentId: integer("document_id").notNull().references(() => documents.id),
   pickupLocationId: integer("pickup_location_id").references(() => stores.id),
   deliveryMethod: text("delivery_method"), // pickup | delivery
-  status: text("status").notNull().default("pending"), // pending | arranged | corrected
+  status: text("status").notNull().default("pending"), // pending | picking | ready | arranged | corrected | completed
+  pickedById: integer("picked_by_id").references(() => users.id),
+  pickedAt: timestamp("picked_at"),
+  readyAt: timestamp("ready_at"),
+  completedAt: timestamp("completed_at"),
+  completedById: integer("completed_by_id").references(() => users.id),
+  hasIssues: boolean("has_issues").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -752,6 +760,10 @@ export const arrangementNoteItems = pgTable("arrangement_note_items", {
   bringTo: integer("bring_to").references(() => stores.id),
   staffGroup: text("staff_group").notNull(), // "store" | "warehouse" — who arranges this
   arranged: boolean("arranged").notNull().default(false),
+  pickedQty: numeric("picked_qty"),
+  issueType: text("issue_type"), // not_found | partial | damaged | wrong_item
+  issueNote: text("issue_note"),
+  pickedAt: timestamp("picked_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

@@ -50,7 +50,7 @@ export default function Expenses() {
   const qc = useQueryClient();
   const isAdmin = user?.role === "admin";
   const canManage = isAdmin || user?.role === "manager";
-  const isStoreScoped = user?.role === "salesman" || user?.role === "salesman_helper";
+  const isStoreScoped = user?.role === "salesman" || user?.role === "worker";
   const canCreate = canManage || isStoreScoped;
 
   // UI state

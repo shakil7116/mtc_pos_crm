@@ -14,7 +14,7 @@ import {
   ArrowRight, User, CalendarDays, Zap, MessageSquare,
 } from "lucide-react";
 
-const ASSIGNER_ROLES = ["admin", "manager", "warehouse_manager", "salesman"];
+const ASSIGNER_ROLES = ["admin", "manager", "worker", "salesman"];
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
   open: { label: "Assigned", color: "text-slate-600", icon: CircleDot },

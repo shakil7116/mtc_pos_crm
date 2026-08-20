@@ -7,7 +7,7 @@ import { getBusinessRules } from "../server/storage";
 const gate = (role: string, total: number, threshold: number) => {
   const isBoss = ["admin", "manager"].includes(role);
   if (isBoss) return true;
-  if (!["salesman", "salesman_helper"].includes(role)) return false;
+  if (!["salesman", "worker"].includes(role)) return false;
   return total <= threshold;
 };
 
@@ -19,7 +19,7 @@ const ok = (c: boolean, m: string) => { console.log(`  ${c ? "✓" : "✗"} ${m}
   ok(t === 1000, `threshold from settings = ${t}`);
   ok(gate("salesman", 1000, t) === true, "salesman may process exactly 1000");
   ok(gate("salesman", 1000.01, t) === false, "salesman blocked just over 1000");
-  ok(gate("salesman_helper", 500, t) === true, "helper may process 500");
+  ok(gate("worker", 500, t) === true, "worker may process 500");
   ok(gate("manager", 5000, t) === true, "manager may process 5000 (over threshold)");
   ok(gate("admin", 99999, t) === true, "admin may process anything");
   ok(gate("driver", 100, t) === false, "driver cannot approve returns at all");

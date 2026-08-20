@@ -1,11 +1,9 @@
-// Role → module access. Single source of truth for nav gating (client) and
-// route guards (client + server). Client-safe (no Drizzle imports).
-// Editable from Settings in a later phase.
-
-export const ROLES = ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper", "driver"] as const;
+export const ROLES = ["admin", "manager", "worker", "salesman", "driver"] as const;
 export type Role = (typeof ROLES)[number];
 export function normalizeRole(r?: string | null): Role {
-  if (r === "staff") return "salesman"; // legacy alias
+  if (r === "staff") return "salesman";
+  if (r === "helper" || r === "salesman_helper") return "worker";
+  if (r === "warehouse" || r === "warehouse_manager") return "worker";
   return (ROLES as readonly string[]).includes(r || "") ? (r as Role) : "salesman";
 }
 
@@ -14,34 +12,26 @@ export type NavKey =
   | "reports" | "messages" | "settings"
   | "deliveries" | "expenses" | "finance" | "maintenance" | "approvals";
 
-// Which roles may access each module. Per MTC_MASTER_SPEC Module 10.
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
-  dashboard:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper", "driver"],
-  // warehouse_manager can invoice too: a customer sometimes buys on the spot at the
-  // warehouse (sees stock, wants it now). Needs documents + customers to ring a sale.
-  documents:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
-  customers:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
-  inventory:   ["admin", "manager", "warehouse", "warehouse_manager", "salesman", "salesman_helper"],
+  dashboard:   ["admin", "manager", "worker", "salesman", "driver"],
+  documents:   ["admin", "manager", "worker", "salesman"],
+  customers:   ["admin", "manager", "worker", "salesman"],
+  inventory:   ["admin", "manager", "worker", "salesman"],
   suppliers:   ["admin", "manager"],
   reports:     ["admin", "manager"],
   messages:    ["admin", "manager"],
   settings:    ["admin"],
-  deliveries:  ["admin", "manager", "warehouse", "warehouse_manager", "driver"],
-  expenses:    ["admin", "manager", "salesman", "salesman_helper"],
+  deliveries:  ["admin", "manager", "worker", "driver"],
+  expenses:    ["admin", "manager", "worker", "salesman"],
   finance:     ["admin", "manager"],
-  maintenance: ["admin", "manager", "warehouse", "warehouse_manager"],
-
-  // Admin/manager decide; salesman/helper/warehouse_manager reach the page to
-  // RAISE requests and track their own (the page renders the right view by role,
-  // and approve/reject stay server-gated to admin/manager).
-  approvals:   ["admin", "manager", "warehouse_manager", "salesman", "salesman_helper"],
+  maintenance: ["admin", "manager", "worker"],
+  approvals:   ["admin", "manager", "worker", "salesman"],
 };
 
 export function canAccess(role: Role, key: NavKey): boolean {
   return (NAV_ACCESS[key] || []).includes(role);
 }
 
-// Route prefix → nav key, for guarding wouter routes and Express paths.
 const PATH_NAV: { prefix: string; key: NavKey }[] = [
   { prefix: "/quick-sale", key: "documents" },
   { prefix: "/documents", key: "documents" },
@@ -70,29 +60,20 @@ export function navKeyForPath(path: string): NavKey | null {
   return m ? m.key : null;
 }
 
-// Landing route per role after login.
 export const ROLE_HOME: Record<Role, string> = {
   admin: "/",
   manager: "/",
-  warehouse: "/",
-  warehouse_manager: "/",
+  worker: "/",
   salesman: "/",
-  salesman_helper: "/",
-  // Driver lands on the dashboard until the dedicated deliveries page ships (later phase).
-  // Keep this in sync with the routed pages so no role bounces to NotFound.
   driver: "/",
 };
 
-// Store business day (Phase 9): a day runs from the store's opening time to the
-// next opening. A sale rung at 04:00 (before a 05:00 open) belongs to the PREVIOUS
-// business day. Returns the business date (YYYY-MM-DD) for a given instant.
 export function businessDate(now: Date = new Date(), openTime = "05:00"): string {
   const [oh, om] = String(openTime).split(":").map(Number);
   const openMinutes = (oh || 0) * 60 + (om || 0);
   const nowMinutes = now.getHours() * 60 + now.getMinutes();
   const d = new Date(now);
-  if (nowMinutes < openMinutes) d.setDate(d.getDate() - 1); // before open → previous business day
-  // local YYYY-MM-DD
+  if (nowMinutes < openMinutes) d.setDate(d.getDate() - 1);
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, "0"), day = String(d.getDate()).padStart(2, "0");
   return `${y}-${m}-${day}`;
 }
@@ -100,9 +81,7 @@ export function businessDate(now: Date = new Date(), openTime = "05:00"): string
 export const ROLE_LABEL: Record<Role, string> = {
   admin: "Admin / Owner",
   manager: "Manager",
-  warehouse: "Warehouse Keeper",
-  warehouse_manager: "Warehouse Manager",
+  worker: "General Worker",
   salesman: "Salesman",
-  salesman_helper: "Helper Salesman",
   driver: "Driver",
 };

@@ -195,7 +195,7 @@ export async function updateTask(
   // The assignee may update their own task (e.g. mark it done); managers/admin/
   // warehouse-managers may update any; the assigner may update the one they made.
   if (actor) {
-    const boss = ["admin", "manager", "warehouse_manager"].includes(actor.role);
+    const boss = ["admin", "manager", "worker"].includes(actor.role);
     const owns = existing.assignedTo === actor.id || existing.assignedBy === actor.id;
     if (!boss && !owns) throw new Error("You are not allowed to change this task.");
   }
@@ -1195,7 +1195,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
 
         // Notify staff about arrangement.
         await createNotification({
-          targetRole: "warehouse", type: "arrangement", title: "New arrangement note",
+          targetRole: "worker", type: "arrangement", title: "New arrangement note",
           message: `${number} for ${req.customerName || "customer"} — ${splitPlan.length} item(s) to arrange.`,
           link: `/documents/${doc.id}`, entityType: "document", entityId: doc.id, createdBy: req.createdBy,
         });
@@ -1221,7 +1221,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
 
         // Warehouse staff tasks
         if (whItems.length > 0) {
-          const warehouseUsers = staffUsers.filter(u => u.role === "warehouse");
+          const warehouseUsers = staffUsers.filter(u => u.role === "worker");
           const itemList = whItems.map(i => `${i.description} x${i.splitQty}`).join(", ");
           for (const wUser of warehouseUsers) {
             await createTask({
@@ -1287,7 +1287,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
       doc.deliveryStatus = "pending" as any;
       // Tell the warehouse there is a new pick waiting.
       await createNotification({
-        targetRole: "warehouse", type: "pick_pending", title: "New delivery to pick",
+        targetRole: "worker", type: "pick_pending", title: "New delivery to pick",
         message: `${dn.number} for ${req.customerName || "customer"} — ${(req.items || []).length} line(s) to pick.`,
         link: `/documents/${dn.id}`, entityType: "document", entityId: dn.id, createdBy: req.createdBy,
       });
@@ -1313,7 +1313,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     // reference + bank. PDC: cheque no. + clear date + bank (who = auto from customer).
     if (p.method === "Card" && !p.referenceNumber)
       throw new Error("Card payment requires the reference number from the card terminal.");
-    if (p.method === "Online Transfer" && (!p.referenceNumber || !p.bankName || !p.accountNumber))
+    if ((p.method === "Online Transfer" || p.method === "Bank Transfer") && (!p.referenceNumber || !p.bankName || !p.accountNumber))
       throw new Error("Online transfer requires sender account/IBAN, reference number and bank name.");
     if (p.method === "PDC" && (!p.chequeNumber || !p.chequeDate || !p.bankName))
       throw new Error("PDC requires cheque number, bank name and cheque date.");
@@ -1321,16 +1321,16 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     const methodLabel =
       p.method === "PDC" ? "Cheque" :
       p.method === "Card" ? "Credit Card" :
-      p.method === "Online Transfer" ? "Bank Transfer" : "Cash";
+      (p.method === "Online Transfer" || p.method === "Bank Transfer") ? "Bank Transfer" : "Cash";
     // Confirmation fields on the payment row → searchable ledger for disputes/audit.
     // Staff (recordedBy) + timestamp (createdAt) are automatic.
     const [pay] = await db.insert(payments).values({
       documentId: doc.id, customerId: req.customerId ?? null, amount: String(amt),
       method: methodLabel,
-      date: p.method === "Online Transfer" ? (p.transferDate || req.date) : req.date,
+      date: (p.method === "Online Transfer" || p.method === "Bank Transfer") ? (p.transferDate || req.date) : req.date,
       reference: p.method === "PDC" ? (p.chequeNumber || null) : (p.referenceNumber || null),
-      accountNumber: p.method === "Online Transfer" ? (p.accountNumber || null) : null,
-      bankName: (p.method === "Online Transfer" || p.method === "PDC") ? (p.bankName || null) : null,
+      accountNumber: (p.method === "Online Transfer" || p.method === "Bank Transfer") ? (p.accountNumber || null) : null,
+      bankName: (p.method === "Online Transfer" || p.method === "Bank Transfer" || p.method === "PDC") ? (p.bankName || null) : null,
       isRefund: false, recordedBy: req.createdBy ?? null,
     }).returning();
     if (p.method === "PDC") {
@@ -1404,6 +1404,7 @@ export async function updateDocumentItems(documentId: number, items: Omit<Insert
         discountType: item.discountType,
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
+        locationStoreId: (item as any).locationStoreId ?? null,
       }))
     );
   }
@@ -4202,7 +4203,7 @@ export async function seedDatabase(): Promise<void> {
     await db.insert(users).values([
       { name: "Shakil", role: "admin", pin: "1234", storeId: null },
       { name: "Store Salesman", role: "salesman", pin: "1111", storeId: 1 },
-      { name: "Warehouse Keeper", role: "warehouse", pin: "2222", storeId: 2 },
+      { name: "General Worker", role: "worker", pin: "2222", storeId: 2 },
     ]);
   }
 
@@ -4426,6 +4427,198 @@ export async function createArrangementCorrection(data: {
     .where(eq(arrangementNotes.id, data.noteId));
 
   return corr;
+}
+
+// ─── Helper Pick Note Queue ─────────────────────────────────────────────────
+
+export async function getPickNoteQueue(storeId: number | null): Promise<{
+  note: ArrangementNote;
+  doc: { id: number; number: string; customerName: string | null; total: string; createdAt: Date | null };
+  items: (ArrangementNoteItem & { store: Store })[];
+  pickedByName?: string;
+}[]> {
+  const conditions = [
+    eq(documents.type, "INV"),
+    or(
+      eq(arrangementNotes.status, "pending"),
+      eq(arrangementNotes.status, "picking"),
+      eq(arrangementNotes.status, "ready"),
+    ),
+  ];
+  if (storeId) conditions.unshift(eq(documents.storeId, storeId));
+  const notes = await db.select().from(arrangementNotes)
+    .innerJoin(documents, eq(arrangementNotes.documentId, documents.id))
+    .where(and(...conditions))
+    .orderBy(desc(arrangementNotes.createdAt));
+
+  const results: Awaited<ReturnType<typeof getPickNoteQueue>> = [];
+  for (const row of notes) {
+    const itemRows = await db.select({ item: arrangementNoteItems, store: stores })
+      .from(arrangementNoteItems)
+      .innerJoin(stores, eq(arrangementNoteItems.sourceStoreId, stores.id))
+      .where(eq(arrangementNoteItems.noteId, row.arrangement_notes.id));
+    const noteItems = itemRows.map(r => ({ ...r.item, store: r.store }));
+    let pickedByName: string | undefined;
+    if (row.arrangement_notes.pickedById) {
+      const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, row.arrangement_notes.pickedById));
+      pickedByName = u?.name ?? undefined;
+    }
+    results.push({
+      note: row.arrangement_notes,
+      doc: {
+        id: row.documents.id,
+        number: row.documents.number,
+        customerName: row.documents.customerName,
+        total: row.documents.total,
+        createdAt: row.documents.createdAt,
+      },
+      items: noteItems,
+      pickedByName,
+    });
+  }
+  return results;
+}
+
+export async function claimPickNote(noteId: number, userId: number): Promise<{ ok: boolean; message?: string }> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (!note) return { ok: false, message: "Note not found" };
+  if (note.status !== "pending") return { ok: false, message: "Already claimed by another helper" };
+  await db.update(arrangementNotes).set({
+    status: "picking",
+    pickedById: userId,
+    pickedAt: new Date(),
+  }).where(and(eq(arrangementNotes.id, noteId), eq(arrangementNotes.status, "pending")));
+  const [updated] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (updated.pickedById !== userId) return { ok: false, message: "Already claimed by another helper" };
+  return { ok: true };
+}
+
+export async function markPickNoteReady(noteId: number, userId: number): Promise<{ ok: boolean; message?: string }> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (!note) return { ok: false, message: "Note not found" };
+  if (note.status !== "picking") return { ok: false, message: "Note is not being picked" };
+  if (note.pickedById !== userId) return { ok: false, message: "You are not the one picking this note" };
+  await db.update(arrangementNotes).set({
+    status: "ready",
+    readyAt: new Date(),
+  }).where(eq(arrangementNotes.id, noteId));
+  return { ok: true };
+}
+
+// ─── Pick Item Update (per-item issue reporting during picking) ──────────────
+
+export async function updatePickItem(
+  noteId: number,
+  itemId: number,
+  data: { pickedQty?: number | string; issueType?: string | null; issueNote?: string | null },
+  userId: number,
+): Promise<{ ok: boolean; message?: string }> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (!note) return { ok: false, message: "Note not found" };
+  if (!["picking", "ready"].includes(note.status)) return { ok: false, message: "Note is not in picking state" };
+
+  const [item] = await db.select().from(arrangementNoteItems)
+    .where(and(eq(arrangementNoteItems.id, itemId), eq(arrangementNoteItems.noteId, noteId)));
+  if (!item) return { ok: false, message: "Item not found in this note" };
+
+  const patch: Record<string, any> = { pickedAt: new Date() };
+  if (data.pickedQty !== undefined) patch.pickedQty = String(data.pickedQty);
+  if (data.issueType !== undefined) patch.issueType = data.issueType;
+  if (data.issueNote !== undefined) patch.issueNote = data.issueNote;
+
+  if (data.issueType && data.issueType !== "partial") {
+    patch.pickedQty = "0";
+  }
+
+  await db.update(arrangementNoteItems).set(patch).where(eq(arrangementNoteItems.id, itemId));
+  return { ok: true };
+}
+
+// ─── Complete Pick Note (Done button — notify salesman about issues) ────────
+
+export async function completePickNote(
+  noteId: number,
+  userId: number,
+): Promise<{ ok: boolean; message?: string; hasIssues?: boolean; issueCount?: number }> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (!note) return { ok: false, message: "Note not found" };
+  if (!["picking", "ready"].includes(note.status)) return { ok: false, message: "Note is not in picking state" };
+
+  const items = await db.select().from(arrangementNoteItems).where(eq(arrangementNoteItems.noteId, noteId));
+
+  const issueItems = items.filter(i => i.issueType);
+  const hasIssues = issueItems.length > 0;
+
+  await db.update(arrangementNotes).set({
+    status: "completed",
+    completedAt: new Date(),
+    completedById: userId,
+    hasIssues,
+  }).where(eq(arrangementNotes.id, noteId));
+
+  const [doc] = await db.select().from(documents).where(eq(documents.id, note.documentId));
+  if (!doc) return { ok: true, hasIssues, issueCount: issueItems.length };
+
+  const [picker] = await db.select({ name: users.name }).from(users).where(eq(users.id, userId));
+  const pickerName = picker?.name ?? "Helper";
+
+  if (hasIssues && doc.createdBy) {
+    const issueLines = issueItems.map(i => {
+      const label = { not_found: "Not Found", partial: "Partial", damaged: "Damaged", wrong_item: "Wrong Item" }[i.issueType!] ?? i.issueType;
+      const qty = i.issueType === "partial" ? ` (${i.pickedQty}/${i.totalQty})` : "";
+      return `${i.description}: ${label}${qty}${i.issueNote ? ` — ${i.issueNote}` : ""}`;
+    }).join("\n");
+
+    await createNotification({
+      targetUserId: doc.createdBy,
+      type: "pick_issues",
+      title: `Pick issues on ${doc.number}`,
+      message: `${pickerName} completed picking with ${issueItems.length} issue${issueItems.length > 1 ? "s" : ""}:\n${issueLines}`,
+      link: `/documents/${doc.id}`,
+      entityType: "document",
+      entityId: doc.id,
+      createdBy: userId,
+    });
+  }
+
+  if (!hasIssues && doc.createdBy) {
+    await createNotification({
+      targetUserId: doc.createdBy,
+      type: "pick_complete",
+      title: `${doc.number} picked — ready`,
+      message: `${pickerName} has finished picking all items. No issues found.`,
+      link: `/documents/${doc.id}`,
+      entityType: "document",
+      entityId: doc.id,
+      createdBy: userId,
+    });
+  }
+
+  return { ok: true, hasIssues, issueCount: issueItems.length };
+}
+
+// ─── Reassign Pick Note (manager override) ──────────────────────────────────
+
+export async function reassignPickNote(
+  noteId: number,
+  newUserId: number,
+): Promise<{ ok: boolean; message?: string }> {
+  const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.id, noteId));
+  if (!note) return { ok: false, message: "Note not found" };
+  if (note.status === "completed" || note.status === "arranged") {
+    return { ok: false, message: "Cannot reassign a completed note" };
+  }
+
+  const [u] = await db.select({ name: users.name }).from(users).where(eq(users.id, newUserId));
+  if (!u) return { ok: false, message: "User not found" };
+
+  await db.update(arrangementNotes).set({
+    status: "picking",
+    pickedById: newUserId,
+    pickedAt: new Date(),
+  }).where(eq(arrangementNotes.id, noteId));
+
+  return { ok: true };
 }
 
 // Legacy compatibility

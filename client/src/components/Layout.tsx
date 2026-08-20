@@ -15,6 +15,7 @@ import {
   LogOut,
   MoreHorizontal,
   PackageCheck,
+  ClipboardList,
   Receipt,
   Bell,
   Wallet,

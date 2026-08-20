@@ -29,6 +29,7 @@ import { format, isToday, addDays, isBefore } from "date-fns";
 import DriverDashboard from "@/pages/dashboards/DriverDashboard";
 import WarehouseDashboard from "@/pages/dashboards/WarehouseDashboard";
 import SalesmanDashboard from "@/pages/dashboards/SalesmanDashboard";
+import HelperDashboard from "@/pages/dashboards/HelperDashboard";
 import TasksPanel from "@/components/TasksPanel";
 import AdminExtras from "@/pages/dashboards/AdminExtras";
 import LocationOverview from "@/pages/reports/LocationOverview";
@@ -239,8 +240,8 @@ export default function Dashboard() {
 
   // Role dashboards (Module 8) — each role gets its own location-filtered view.
   if (user?.role === "driver") return <DriverDashboard />;
-  if (user?.role === "warehouse" || user?.role === "warehouse_manager") return <WarehouseDashboard />;
-  if (user?.role === "salesman" || user?.role === "salesman_helper") return <SalesmanDashboard />;
+  if (user?.role === "worker") return <SalesmanDashboard />;
+  if (user?.role === "salesman") return <SalesmanDashboard />;
 
   const today = new Date();
   const todayStr = format(today, "yyyy-MM-dd");
