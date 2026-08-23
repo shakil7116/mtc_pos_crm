@@ -1145,7 +1145,10 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const locked = lockedStoreId(req);
       const storeId = locked ?? (req.query.storeId ? Number(req.query.storeId) : undefined);
       const customerId = req.query.customerId ? Number(req.query.customerId) : undefined;
-      let rows = await getDocuments(type, storeId);
+      // Lean payload: the list view never renders the embedded customer logo or the
+      // signed-DN/damage photos, so strip those base64 blobs here. Keeps this endpoint
+      // small at scale (was ~15 MB when one 300 KB customer logo repeated across every row).
+      let rows = await getDocuments(type, storeId, { lean: true });
       // P0 fix: customer history must be isolated to THAT customer — server-side filter.
       if (customerId) rows = rows.filter((d: any) => d.customerId === customerId);
       res.json(rows);

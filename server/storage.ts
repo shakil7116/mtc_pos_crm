@@ -626,7 +626,7 @@ export async function updateSupplier(id: number, data: Partial<InsertSupplier>):
 }
 
 // ─── Documents ───────────────────────────────────────────────────────────────
-export async function getDocuments(type?: string, storeId?: number): Promise<DocumentWithItems[]> {
+export async function getDocuments(type?: string, storeId?: number, opts?: { lean?: boolean }): Promise<DocumentWithItems[]> {
   let query = db.select().from(documents);
   const conditions = [];
   if (type) conditions.push(eq(documents.type, type));
@@ -657,11 +657,25 @@ export async function getDocuments(type?: string, storeId?: number): Promise<Doc
   }
   const custById = new Map(allCustomers.map((c) => [c.id, c]));
 
-  return docs.map((doc) => ({
-    ...doc,
-    items: itemsByDoc.get(doc.id) || [],
-    customer: doc.customerId != null ? custById.get(doc.customerId) || null : null,
-  }));
+  const lean = opts?.lean === true;
+  return docs.map((doc) => {
+    const customer = doc.customerId != null ? custById.get(doc.customerId) || null : null;
+    const items = itemsByDoc.get(doc.id) || [];
+    if (!lean) return { ...doc, items, customer };
+    // Lean list view: null out the heavy base64 image blobs that only the
+    // detail/print and delivery views need — the embedded customer logo and the
+    // signed-DN / damage proof photos. A single 300 KB customer logo repeated
+    // across every invoice was ballooning /api/documents to ~15 MB; the list only
+    // needs names, totals and status. Detail (/api/documents/:id) and /api/deliveries
+    // still return the full payload with images.
+    return {
+      ...doc,
+      signedDnUrl: null,
+      damagePhoto: null,
+      items,
+      customer: customer ? { ...customer, logoUrl: null } : null,
+    };
+  });
 }
 
 export async function getDocument(id: number): Promise<DocumentWithItems | undefined> {
@@ -1563,12 +1577,19 @@ export async function getCheques(opts?: { start?: string; end?: string }): Promi
     ? await db.select().from(cheques).where(and(...conditions)).orderBy(asc(cheques.chequeDate))
     : await db.select().from(cheques).orderBy(asc(cheques.chequeDate));
 
-  return Promise.all(rows.map(async (c) => {
-    const customer = c.customerId
-      ? (await db.select().from(customers).where(eq(customers.id, c.customerId)))[0]
-      : undefined;
-    return { ...c, customer, customerName: customer?.name ?? null };
-  }));
+  // Batch the customer lookup (was one query per cheque — N+1) and drop the heavy
+  // base64 logo from the embedded customer: the cheque register only needs the name,
+  // and a single 300 KB customer logo repeated per cheque bloated this endpoint to ~1.2 MB.
+  const custIds = Array.from(new Set(rows.map((c) => c.customerId).filter((x): x is number => x != null)));
+  const custRows = custIds.length
+    ? await db.select().from(customers).where(inArray(customers.id, custIds))
+    : [];
+  const custById = new Map(custRows.map((c) => [c.id, c]));
+  return rows.map((c) => {
+    const full = c.customerId != null ? custById.get(c.customerId) : undefined;
+    const customer = full ? { ...full, logoUrl: null } : undefined;
+    return { ...c, customer, customerName: full?.name ?? null };
+  });
 }
 
 export async function createCheque(data: InsertCheque): Promise<Cheque> {
