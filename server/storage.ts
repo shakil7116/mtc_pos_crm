@@ -8,7 +8,7 @@ import {
   supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
   ownerLoans, tasks, staffPayroll,
-  arrangementNotes, arrangementNoteItems, arrangementCorrections,
+  arrangementNotes, arrangementNoteItems,
   type Settings, type InsertSettings,
   type Store, type InsertStore,
   type User, type InsertUser,
@@ -30,7 +30,7 @@ import {
   type WarehouseIssue, type InsertWarehouseIssue,
   type Correction,
   type StaffPayroll, type InsertStaffPayroll,
-  type ArrangementNote, type ArrangementNoteItem, type ArrangementCorrection,
+  type ArrangementNote, type ArrangementNoteItem,
 } from "@shared/schema";
 import { eq, desc, asc, and, or, gte, lte, lt, ne, isNull, sql, inArray } from "drizzle-orm";
 
@@ -4382,7 +4382,7 @@ export async function getStaffPayrollSummary(month: string) {
 // ─── Arrangement Notes ──────────────────────────────────────────────────────
 
 export async function getArrangementNote(documentId: number): Promise<{
-  note: ArrangementNote; items: (ArrangementNoteItem & { store: Store })[]; corrections: ArrangementCorrection[];
+  note: ArrangementNote; items: (ArrangementNoteItem & { store: Store })[];
 } | null> {
   const [note] = await db.select().from(arrangementNotes).where(eq(arrangementNotes.documentId, documentId));
   if (!note) return null;
@@ -4391,42 +4391,7 @@ export async function getArrangementNote(documentId: number): Promise<{
     .innerJoin(stores, eq(arrangementNoteItems.sourceStoreId, stores.id))
     .where(eq(arrangementNoteItems.noteId, note.id));
   const noteItems = rows.map(r => ({ ...r.item, store: r.store }));
-  const corr = await db.select().from(arrangementCorrections).where(eq(arrangementCorrections.noteId, note.id));
-  return { note, items: noteItems, corrections: corr };
-}
-
-export async function createArrangementCorrection(data: {
-  noteId: number; noteItemId?: number; reason: string;
-  productId?: number; storeId?: number; qtyReturned?: number; qtyCorrect?: number;
-  correctedBy?: number;
-}): Promise<ArrangementCorrection> {
-  const [corr] = await db.insert(arrangementCorrections).values({
-    noteId: data.noteId,
-    noteItemId: data.noteItemId ?? null,
-    reason: data.reason,
-    productId: data.productId ?? null,
-    storeId: data.storeId ?? null,
-    qtyReturned: data.qtyReturned != null ? String(data.qtyReturned) : null,
-    qtyCorrect: data.qtyCorrect != null ? String(data.qtyCorrect) : null,
-    correctedBy: data.correctedBy ?? null,
-  }).returning();
-
-  // Reverse the wrong deduction and apply correct one.
-  if (data.productId && data.storeId) {
-    if (data.qtyReturned && data.qtyReturned > 0) {
-      await adjustStock(data.productId, data.storeId, data.qtyReturned,
-        "correction", `Arrangement correction: ${data.reason}`, data.noteId, data.correctedBy);
-    }
-    if (data.qtyCorrect && data.qtyCorrect > 0) {
-      await adjustStock(data.productId, data.storeId, -data.qtyCorrect,
-        "correction", `Arrangement correction re-deduct: ${data.reason}`, data.noteId, data.correctedBy);
-    }
-  }
-
-  await db.update(arrangementNotes).set({ status: "corrected" })
-    .where(eq(arrangementNotes.id, data.noteId));
-
-  return corr;
+  return { note, items: noteItems };
 }
 
 // ─── Helper Pick Note Queue ─────────────────────────────────────────────────

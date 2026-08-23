@@ -471,30 +471,6 @@ export default function DocumentDetail() {
     enabled: !!id && doc?.type === "INV",
   });
 
-  const [correctionOpen, setCorrectionOpen] = useState(false);
-  const [correctionItem, setCorrectionItem] = useState<any>(null);
-  const [correctionReason, setCorrectionReason] = useState("");
-  const [correctionQtyReturned, setCorrectionQtyReturned] = useState("");
-  const [correctionQtyCorrect, setCorrectionQtyCorrect] = useState("");
-
-  const correctionMut = useMutation({
-    mutationFn: (data: any) =>
-      fetch(`/api/arrangement-notes/${data.noteId}/corrections`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(data),
-      }).then((r) => r.json()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: [`/api/documents/${id}/arrangement-note`] });
-      toast({ title: "Correction applied", description: "Stock adjusted." });
-      setCorrectionOpen(false);
-      setCorrectionItem(null);
-      setCorrectionReason("");
-      setCorrectionQtyReturned("");
-      setCorrectionQtyCorrect("");
-    },
-    onError: () => toast({ title: "Correction failed", variant: "destructive" }),
-  });
 
   // ── Fetch settings (for print) ─────────────────────────────
   const { data: settings } = useSettings();
@@ -698,7 +674,10 @@ export default function DocumentDetail() {
 
   // ── Print ──────────────────────────────────────────────────
   function handlePrint() {
+    const prev = document.title;
+    document.title = doc?.number || prev;
     window.print();
+    document.title = prev;
   }
 
   // ── Return button logic ────────────────────────────────────
@@ -1045,7 +1024,7 @@ export default function DocumentDetail() {
 
       {/* ── Arrangement Note (auto-split pick note) ── */}
       {doc.type === "INV" && arrangementData?.note && (() => {
-        const { note, items: noteItems, corrections: corrs } = arrangementData;
+        const { note, items: noteItems } = arrangementData;
         const pickupStore = stores.find((s: any) => s.id === note.pickupLocationId);
         // Group items by staff group.
         const warehouseItems = noteItems.filter((i: any) => i.staffGroup === "warehouse");
@@ -1077,16 +1056,6 @@ export default function DocumentDetail() {
                         </span>
                       )}
                     </div>
-                    <Button
-                      variant="ghost" size="sm"
-                      className="text-xs text-red-500 hover:text-red-700 shrink-0 h-7"
-                      onClick={() => {
-                        setCorrectionItem(item);
-                        setCorrectionOpen(true);
-                      }}
-                    >
-                      Correction
-                    </Button>
                   </div>
                 ))}
               </div>
@@ -1103,7 +1072,6 @@ export default function DocumentDetail() {
                 <Badge variant="outline" className={cn("text-xs", {
                   "border-amber-300 text-amber-700": note.status === "pending",
                   "border-green-300 text-green-700": note.status === "arranged",
-                  "border-red-300 text-red-700": note.status === "corrected",
                 })}>
                   {note.status}
                 </Badge>
@@ -1130,82 +1098,10 @@ export default function DocumentDetail() {
                 "text-teal-700"
               )}
             </div>
-            {corrs.length > 0 && (
-              <div className="px-4 py-2 border-t border-blue-200 bg-red-50/50">
-                <p className="text-xs font-semibold text-red-700 mb-1">Corrections</p>
-                {corrs.map((c: any) => (
-                  <div key={c.id} className="text-xs text-red-600">
-                    {c.reason} — returned {c.qtyReturned}, re-deducted {c.qtyCorrect} ({new Date(c.createdAt).toLocaleString()})
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
         );
       })()}
 
-      {/* ── Correction Dialog ── */}
-      <Dialog open={correctionOpen} onOpenChange={setCorrectionOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Arrangement Correction</DialogTitle>
-          </DialogHeader>
-          {correctionItem && (
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium">{correctionItem.description}</p>
-                <p className="text-xs text-muted-foreground">
-                  {parseFloat(correctionItem.splitQty)} {correctionItem.unit} from {correctionItem.store?.nameEn}
-                </p>
-              </div>
-              <div>
-                <Label>Reason</Label>
-                <Select value={correctionReason} onValueChange={setCorrectionReason}>
-                  <SelectTrigger><SelectValue placeholder="Select reason" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="wrong_product">Wrong product pulled</SelectItem>
-                    <SelectItem value="wrong_qty">Wrong quantity</SelectItem>
-                    <SelectItem value="damaged">Damaged during arrangement</SelectItem>
-                    <SelectItem value="wrong_location">Wrong location</SelectItem>
-                    <SelectItem value="customer_changed">Customer changed mind</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Qty returned to stock</Label>
-                  <Input type="number" value={correctionQtyReturned} onChange={(e) => setCorrectionQtyReturned(e.target.value)} placeholder="0" />
-                </div>
-                <div>
-                  <Label>Correct qty to deduct</Label>
-                  <Input type="number" value={correctionQtyCorrect} onChange={(e) => setCorrectionQtyCorrect(e.target.value)} placeholder="0" />
-                </div>
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCorrectionOpen(false)}>Cancel</Button>
-            <Button
-              disabled={!correctionReason || correctionMut.isPending}
-              onClick={() => {
-                if (!correctionItem || !correctionReason) return;
-                correctionMut.mutate({
-                  noteId: arrangementData.note.id,
-                  noteItemId: correctionItem.id,
-                  reason: correctionReason,
-                  productId: correctionItem.productId,
-                  storeId: correctionItem.sourceStoreId,
-                  qtyReturned: parseFloat(correctionQtyReturned) || 0,
-                  qtyCorrect: parseFloat(correctionQtyCorrect) || 0,
-                });
-              }}
-            >
-              {correctionMut.isPending ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : null}
-              Apply Correction
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* ── Linked Return Vouchers (audit — read-only) ── */}
       {doc.type === "INV" && Array.isArray(linkedReturns) && linkedReturns.length > 0 && (

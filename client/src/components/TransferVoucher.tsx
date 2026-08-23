@@ -20,7 +20,7 @@ export default function TransferVoucher({ transfer, onClose }: { transfer: any |
         <div className="flex items-center justify-between px-4 py-2 border-b no-print">
           <span className="text-sm font-semibold text-muted-foreground">Transfer Voucher</span>
           <div className="flex gap-2">
-            <Button size="sm" className="gap-1.5 bg-[#1e2a3a] text-white" onClick={() => window.print()}><Printer className="w-4 h-4" /> Print</Button>
+            <Button size="sm" className="gap-1.5 bg-[#1e2a3a] text-white" onClick={() => { const prev = document.title; document.title = transfer.number || prev; window.print(); document.title = prev; }}><Printer className="w-4 h-4" /> Print</Button>
             <Button size="sm" variant="ghost" onClick={onClose}><X className="w-4 h-4" /></Button>
           </div>
         </div>

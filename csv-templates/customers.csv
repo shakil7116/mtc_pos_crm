@@ -1,0 +1,6 @@
+name,phone,type,credit_limit,trn,address,notes,payment_terms
+Al Noor Trading LLC,+971501234567,corporate,50000,100123456789012,"Dubai, Deira",Key account,Net 30
+Mohammed Ahmed,+971559876543,contractor,20000,,"Sharjah, Industrial Area 2",,Net 15
+Walk-in Customer,,walk-in,0,,,,
+Emirates Construction Co.,+971504445555,government,100000,300987654321098,Abu Dhabi,Govt project Q3,Net 60
+Hassan Building Materials,+971556667777,contractor,35000,100555666777888,Ajman,Regular contractor,Net 30

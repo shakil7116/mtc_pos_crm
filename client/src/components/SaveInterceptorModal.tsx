@@ -99,7 +99,7 @@ export default function SaveInterceptorModal({ open, onClose, onConfirm, docLabe
   useEffect(() => {
     if (open) {
       setTransactionMode("real");
-      setLines([{ method: "Cash", amount: Number(effectiveTotal.toFixed(2)) }]);
+      setLines([{ method: invoiceMode === "credit" ? "Credit" : "Cash", amount: Number(effectiveTotal.toFixed(2)) }]);
       setOverride(false);
       setApprovalReason("");
       setUpgraded(false);

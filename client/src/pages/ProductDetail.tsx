@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
@@ -89,6 +90,7 @@ export default function ProductDetail() {
       wholesalePrice: product.wholesalePrice || "",
       costPrice: product.costPrice || "",
       minStockQty: product.minStockQty || "",
+      supplierId: product.supplierId ? String(product.supplierId) : "",
     });
     setPreviewImage(null);
     setEditing(true);
@@ -112,6 +114,7 @@ export default function ProductDetail() {
       if (form.wholesalePrice !== undefined) body.wholesalePrice = form.wholesalePrice;
       if (form.costPrice !== undefined) body.costPrice = form.costPrice;
       if (form.minStockQty !== undefined) body.minStockQty = form.minStockQty;
+      if (form.supplierId !== undefined) body.supplierId = form.supplierId ? Number(form.supplierId) : null;
       if (form.imageUrl) body.imageUrl = form.imageUrl;
       const res = await fetch(`/api/products/${id}`, {
         method: "PUT",
@@ -135,6 +138,11 @@ export default function ProductDetail() {
     queryKey: [`/api/products/${id}/activity`],
     queryFn: () => fetch(`/api/products/${id}/activity`).then((r) => r.json()),
     enabled: !!id,
+  });
+
+  const { data: suppliersList = [] } = useQuery<any[]>({
+    queryKey: ["/api/suppliers"],
+    queryFn: () => fetch("/api/suppliers").then((r) => r.json()),
   });
 
   if (isLoading) {
@@ -219,6 +227,10 @@ export default function ProductDetail() {
                 <div className="mt-3">
                   <p className="text-3xl font-mono font-bold text-amber-600">{money(sell)}</p>
                   {margin != null && <p className="text-sm text-muted-foreground mt-0.5">{margin.toFixed(1)}% margin</p>}
+                  <div className="flex items-center gap-1.5 mt-2 text-sm text-muted-foreground">
+                    <Factory className="w-3.5 h-3.5" />
+                    <span>{data.supplier ? data.supplier.name : "No supplier"}</span>
+                  </div>
                 </div>
               </>
             ) : (
@@ -255,6 +267,22 @@ export default function ProductDetail() {
                   <div>
                     <Label className="text-xs">Min Stock Qty</Label>
                     <Input type="number" value={form.minStockQty} onChange={(e) => setForm({ ...form, minStockQty: e.target.value })} />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <Label className="text-xs">Supplier</Label>
+                    <Select value={form.supplierId || "none"} onValueChange={(v) => setForm({ ...form, supplierId: v === "none" ? "" : v })}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="None" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">None</SelectItem>
+                        {suppliersList.map((s: any) => (
+                          <SelectItem key={s.id} value={String(s.id)}>
+                            {s.name}{s.company ? ` (${s.company})` : ""}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
                 <div className="flex gap-2 pt-1">

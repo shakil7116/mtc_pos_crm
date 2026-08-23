@@ -1,0 +1,9 @@
+name,company,whatsapp,phone,email,address,notes,payment_terms,credit_days,payment_mode
+Ahmed Khan,National Cement Co.,+971501112233,+971501112233,ahmed@nationalcement.ae,Dubai Industrial City,Main cement supplier,Net 30,30,credit
+Ali Raza,Emirates Steel,+971502223344,+971502223344,ali@emiratessteel.ae,"Abu Dhabi, Musaffah",Steel rebar & sections,Net 60,60,credit
+Tariq Mahmood,Al Madina Wood,+971503334455,+971503334455,tariq@almadinawood.ae,"Sharjah, Industrial 6",Plywood & timber,Net 30,30,credit
+Nabil Hassan,Jotun Paints,+971504445566,+971504445566,nabil@jotun.ae,"Dubai, Al Quoz",Paints & coatings,Net 45,45,credit
+Imran Siddiqui,National Pipes,+971505556677,+971505556677,imran@nationalpipes.ae,Ajman Free Zone,PVC & HDPE pipes,Cash on delivery,0,cash
+Sami Al Balushi,RAK Ceramics,+971506667788,+971506667788,sami@rakceramics.ae,Ras Al Khaimah,Tiles & sanitaryware,Net 30,30,credit
+Khalid Nawaz,Ducab Cables,+971507778899,+971507778899,khalid@ducab.ae,"Dubai, Jebel Ali",Electrical cables,Net 30,30,credit
+Yusuf Ibrahim,Gulf Aggregates,+971508889900,+971508889900,yusuf@gulfagg.ae,Fujairah,"Sand, gravel & crush",Cash,0,cash

@@ -2,8 +2,8 @@ import express, { type Request, type Response } from "express";
 import { createServer, type Server } from "http";
 import { openai } from "./replit_integrations/audio/client";
 import { db } from "./db";
-import { settings, users } from "@shared/schema";
-import { eq, sql } from "drizzle-orm";
+import { settings, users, stockAdjustments } from "@shared/schema";
+import { eq, sql, desc } from "drizzle-orm";
 import {
   getSettings, upsertSettings,
   getStores, createStore, updateStore,
@@ -26,7 +26,7 @@ import {
   getProductActivity, getReorderSuggestions,
   createOwnerLoan, updateOwnerLoan, getOwnerLoans, LOAN_TYPES, getProfitDetail, getProfitSummary, getCreditExposure, getCustomerOverview, getLocationOverview,
   createNotification, getNotifications, markNotificationRead, markAllNotificationsRead,
-  getArrangementNote, createArrangementCorrection, getPickNoteQueue, claimPickNote, markPickNoteReady,
+  getArrangementNote, getPickNoteQueue, claimPickNote, markPickNoteReady,
   updatePickItem, completePickNote, reassignPickNote,
   getMessages, logMessage, getLastMessageDate,
   createSupplierOrder, getSupplierOrders, updateSupplierOrder, receiveSupplierOrder,
@@ -1796,6 +1796,16 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
   });
 
+  app.get("/api/stock-adjustments", async (req: Request, res: Response) => {
+    try {
+      const locked = lockedStoreId(req);
+      const rows = await db.select().from(stockAdjustments).orderBy(desc(stockAdjustments.id)).limit(500);
+      res.json(locked ? rows.filter((r: any) => r.storeId === locked) : rows);
+    } catch (err) {
+      res.status(500).json({ message: String(err) });
+    }
+  });
+
   // ══════════════════════════════════════════════════════════════
   // ARRANGEMENT NOTES (auto-split pick notes per invoice)
   // ══════════════════════════════════════════════════════════════
@@ -1805,19 +1815,6 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const result = await getArrangementNote(Number(req.params.id));
       if (!result) return res.status(404).json({ message: "No arrangement note for this document" });
       res.json(result);
-    } catch (err) {
-      res.status(500).json({ message: String(err) });
-    }
-  });
-
-  app.post("/api/arrangement-notes/:noteId/corrections", async (req: Request, res: Response) => {
-    try {
-      const corr = await createArrangementCorrection({
-        noteId: Number(req.params.noteId),
-        ...req.body,
-        correctedBy: req.user?.id,
-      });
-      res.status(201).json(corr);
     } catch (err) {
       res.status(500).json({ message: String(err) });
     }
@@ -2792,7 +2789,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
 
   // Financial reports are management-only (Module 9 + 10). Staff never see them.
   const reportGate = (req: Request, res: Response): boolean => {
-    if (!["admin", "manager"].includes(reqRole(req))) { res.status(403).json({ message: "Admin or manager only" }); return false; }
+    if (!["admin", "manager", "salesman"].includes(reqRole(req))) { res.status(403).json({ message: "Not authorised" }); return false; }
     return true;
   };
 
@@ -3403,28 +3400,47 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       fs.unlink(req.file.path, () => {});
       const existing = await getProducts();
       const bySku = new Map(existing.filter((p) => p.sku).map((p) => [String(p.sku).toLowerCase(), p]));
+      const allStores = await getStores();
+      const allSuppliers = await getSuppliers();
       let created = 0, updated = 0;
       for (const r of rows) {
         const name = r.name || r["product name"] || r.description;
         if (!name && !r.sku) continue;
+        const col = ((...keys: string[]) => { for (const k of keys) { if (r[k]) return r[k]; } return ""; });
         const body: any = {
           sku: r.sku || null, name: name || "(unnamed)", category: r.category || null, unit: r.unit || "PCS",
-          salePrice: r.saleprice || r["sale price"] || "0", costPrice: r.costprice || r["cost price"] || "0",
-          minStockQty: r.minstockqty || r["min stock qty"] || r.minstock || "0",
+          salePrice: col("sale_price", "saleprice", "sale price") || "0",
+          wholesalePrice: col("wholesale_price", "wholesaleprice", "wholesale price") || "0",
+          costPrice: col("cost_price", "costprice", "cost price") || "0",
+          minStockQty: col("min_stock_qty", "minstockqty", "min stock qty", "minstock") || "0",
         };
-        // Physical location columns (bulk location updates via CSV — spec Agent 2).
-        const locName = r.location || r["location store"] || r.locationstore;
+        const supplierName = col("supplier_name", "suppliername", "supplier");
+        if (supplierName) {
+          const sup = allSuppliers.find((s: any) => (s.name || "").toLowerCase() === supplierName.toLowerCase());
+          if (sup) body.supplierId = sup.id;
+        }
+        const locName = col("location", "location_store", "location store", "locationstore");
         if (locName) {
-          const allStores = await getStores();
           const st = allStores.find((s: any) => s.nameEn.toLowerCase() === String(locName).toLowerCase());
           if (st) body.locationStoreId = st.id;
         }
-        if (r.area || r["location area"]) body.locationArea = r.area || r["location area"];
-        if (r.rack || r["location rack"]) body.locationRack = r.rack || r["location rack"];
-        if (r.shelf || r["location shelf"]) body.locationShelf = r.shelf || r["location shelf"];
+        const area = col("location_area", "area", "location area");
+        const rack = col("location_rack", "rack", "location rack");
+        const shelf = col("location_shelf", "shelf", "location shelf");
+        if (area) body.locationArea = area;
+        if (rack) body.locationRack = rack;
+        if (shelf) body.locationShelf = shelf;
         const match = r.sku ? bySku.get(String(r.sku).toLowerCase()) : null;
         if (match) { await updateProduct(match.id, body); updated++; }
-        else { await createProduct(body); created++; }
+        else {
+          const row = await createProduct(body);
+          const initialQty = Number(col("initial_qty", "initialqty", "initial qty", "opening_qty", "openingqty", "quantity", "qty")) || 0;
+          const storeId = body.locationStoreId ? Number(body.locationStoreId) : null;
+          if (initialQty > 0 && storeId) {
+            await adjustStock(row.id, storeId, initialQty, "add", "Opening stock (CSV import)", row.id, req.user?.id || undefined);
+          }
+          created++;
+        }
       }
       res.json({ ok: true, created, updated, total: rows.length });
     } catch (e) { res.status(500).json({ message: String(e) }); }
@@ -4673,7 +4689,7 @@ CRITICAL: Extract quantity from NUMBER BEFORE UNIT, not from product name!`
       const doc = new PDFDocument({ margin: 40, size: "A4" });
 
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename=delivery-note-${invoice.invoiceNumber || "draft"}.pdf`);
+      res.setHeader("Content-Disposition", `attachment; filename=${invoice.invoiceNumber || "draft"}.pdf`);
       doc.pipe(res);
 
       doc.fontSize(16).font("Helvetica-Bold")
@@ -4746,7 +4762,7 @@ CRITICAL: Extract quantity from NUMBER BEFORE UNIT, not from product name!`
       const doc = new PDFDocument({ margin: 40, size: "A4" });
 
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `attachment; filename=quotation-${invoice.invoiceNumber || "draft"}.pdf`);
+      res.setHeader("Content-Disposition", `attachment; filename=${invoice.invoiceNumber || "draft"}.pdf`);
       doc.pipe(res);
 
       doc.fontSize(16).font("Helvetica-Bold")

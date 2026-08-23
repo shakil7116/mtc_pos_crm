@@ -2,12 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "MTC POS+CRM Dev Server",
+      "name": "dev",
       "runtimeExecutable": "npx",
       "runtimeArgs": ["tsx", "server/index.ts"],
       "port": 5050,
       "autoPort": true,
-      "env": { "NODE_ENV": "development" }
+      "env": { "NODE_ENV": "development", "PORT": "5050" }
     }
   ]
 }

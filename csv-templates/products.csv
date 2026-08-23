@@ -1,0 +1,9 @@
+sku,name,category,unit,sale_price,wholesale_price,cost_price,min_stock_qty,supplier_name,location_area,location_rack,location_shelf,initial_qty
+CEM-001,Portland Cement 50kg,Cement,BAG,25.00,22.00,18.50,100,National Cement Co.,Warehouse A,R1,S1,500
+STL-010,Steel Rebar 12mm (12m),Steel,PCS,45.00,40.00,35.00,50,Emirates Steel,Yard B,R3,S1,200
+PLY-005,Plywood 18mm 4x8,Wood,SHEET,120.00,105.00,90.00,30,Al Madina Wood,Warehouse A,R2,S2,80
+PNT-020,White Emulsion Paint 20L,Paint,BUCKET,180.00,160.00,130.00,20,Jotun Paints,Warehouse C,R1,S3,60
+PIP-003,PVC Pipe 4 inch (6m),Plumbing,PCS,35.00,30.00,24.00,40,National Pipes,Yard B,R5,S1,150
+TIL-007,Ceramic Floor Tile 60x60,Tiles,BOX,55.00,48.00,38.00,25,RAK Ceramics,Warehouse A,R4,S2,100
+ELC-015,Cable 2.5mm (100m roll),Electrical,ROLL,210.00,190.00,160.00,15,Ducab Cables,Warehouse C,R2,S1,40
+SND-002,Washed Sand (per ton),Aggregates,TON,90.00,80.00,60.00,10,Gulf Aggregates,Yard A,,,30

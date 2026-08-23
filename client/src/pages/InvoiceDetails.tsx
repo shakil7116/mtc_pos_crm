@@ -32,7 +32,7 @@ export default function InvoiceDetails() {
   const printRef = useRef<HTMLDivElement>(null);
   const handlePrint = useReactToPrint({
     contentRef: printRef,
-    documentTitle: invoice ? `Invoice-${invoice.invoiceNumber}` : 'Invoice',
+    documentTitle: invoice?.invoiceNumber || 'Invoice',
   });
 
   if (loadingInvoice || loadingSettings) {

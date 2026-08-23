@@ -293,7 +293,12 @@ export default function Documents() {
   // ── Actions ───────────────────────────────────────────────
   function handlePrint(doc: Document) {
     nav(`/documents/${doc.id}`);
-    setTimeout(() => window.print(), 600);
+    setTimeout(() => {
+      const prev = document.title;
+      document.title = doc.number || prev;
+      window.print();
+      document.title = prev;
+    }, 600);
   }
 
   function handleWhatsApp(doc: Document) {
