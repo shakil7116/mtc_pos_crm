@@ -117,11 +117,14 @@ type Cheque = {
   id: number;
   customerId: number | null;
   paymentId: number | null;
+  type?: "receivable" | "payable";
   chequeNumber: string;
   bankName: string;
   amount: number | string;
   chequeDate: string;
-  status: "pending" | "cleared" | "cancelled" | "overdue";
+  who?: string | null;
+  status: "pending" | "deposited" | "cleared" | "bounced" | "cancelled" | "overdue";
+  depositedToAccount?: string | null;
   clearedDate: string | null;
 };
 
