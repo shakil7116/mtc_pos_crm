@@ -1299,6 +1299,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const updated = await getDocument(id);
       res.json(updated);
     } catch (err) {
+      if ((err as any)?.code === "OVERPAYMENT")
+        return res.status(400).json({ message: (err as Error).message, code: "OVERPAYMENT" });
       res.status(500).json({ message: String(err) });
     }
   });
@@ -1558,6 +1560,8 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
       res.status(201).json(payment);
     } catch (err) {
+      if ((err as any)?.code === "OVERPAYMENT")
+        return res.status(400).json({ message: (err as Error).message, code: "OVERPAYMENT" });
       res.status(500).json({ message: String(err) });
     }
   });
@@ -3406,15 +3410,28 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const allStores = await getStores();
       const allSuppliers = await getSuppliers();
       let created = 0, updated = 0;
+      const rejected: { row: number; sku: string; name: string; reason: string }[] = [];
+      let i = 0;
       for (const r of rows) {
+        i++;
         const name = r.name || r["product name"] || r.description;
-        if (!name && !r.sku) continue;
+        if (!name && !r.sku) continue; // wholly blank line — skip silently
         const col = ((...keys: string[]) => { for (const k of keys) { if (r[k]) return r[k]; } return ""; });
+        const rawSale = col("sale_price", "saleprice", "sale price");
+        const rawCost = col("cost_price", "costprice", "cost price");
+        // Reject rows with missing/zero critical values instead of importing them as 0
+        // (a 0-cost product reports 100% profit; a 0 sale price sells for free).
+        const num = (v: string) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, "")); return Number.isFinite(n) ? n : NaN; };
+        const bad: string[] = [];
+        if (!name) bad.push("missing name");
+        if (!(num(rawCost) > 0)) bad.push(`cost price is ${rawCost === "" ? "empty" : rawCost} (must be > 0)`);
+        if (!(num(rawSale) > 0)) bad.push(`sale price is ${rawSale === "" ? "empty" : rawSale} (must be > 0)`);
+        if (bad.length) { rejected.push({ row: i, sku: r.sku || "", name: name || "", reason: bad.join("; ") }); continue; }
         const body: any = {
           sku: r.sku || null, name: name || "(unnamed)", category: r.category || null, unit: r.unit || "PCS",
-          salePrice: col("sale_price", "saleprice", "sale price") || "0",
-          wholesalePrice: col("wholesale_price", "wholesaleprice", "wholesale price") || "0",
-          costPrice: col("cost_price", "costprice", "cost price") || "0",
+          salePrice: rawSale,
+          wholesalePrice: col("wholesale_price", "wholesaleprice", "wholesale price") || rawSale,
+          costPrice: rawCost,
           minStockQty: col("min_stock_qty", "minstockqty", "min stock qty", "minstock") || "0",
         };
         const supplierName = col("supplier_name", "suppliername", "supplier");
@@ -3445,7 +3462,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
           created++;
         }
       }
-      res.json({ ok: true, created, updated, total: rows.length });
+      res.json({ ok: true, created, updated, rejected, rejectedCount: rejected.length, total: rows.length });
     } catch (e) { res.status(500).json({ message: String(e) }); }
   });
 
@@ -3458,8 +3475,15 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const existing = await getCustomers();
       const byPhone = new Map(existing.filter((c) => c.phone).map((c) => [String(c.phone), c]));
       let created = 0, updated = 0;
+      const rejected: { row: number; name: string; reason: string }[] = [];
+      let i = 0;
       for (const r of rows) {
-        const name = r.name; if (!name) continue;
+        i++;
+        const name = r.name;
+        if (!name && !r.phone && !r.address) continue; // wholly blank line — skip silently
+        // A customer must at least have a name — reject (and report) rows without one
+        // instead of dropping them silently.
+        if (!name) { rejected.push({ row: i, name: "", reason: "missing name" }); continue; }
         const body: any = {
           name, phone: r.phone || null, type: r.type || "walk-in",
           creditLimit: r.creditlimit || r["credit limit"] || "0",
@@ -3469,7 +3493,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
         if (match) { await updateCustomer(match.id, body); updated++; }
         else { await createCustomer(body); created++; }
       }
-      res.json({ ok: true, created, updated, total: rows.length });
+      res.json({ ok: true, created, updated, rejected, rejectedCount: rejected.length, total: rows.length });
     } catch (e) { res.status(500).json({ message: String(e) }); }
   });
 

@@ -1526,7 +1526,43 @@ export async function getPayments(documentId?: number): Promise<Payment[]> {
   return db.select().from(payments).orderBy(desc(payments.createdAt));
 }
 
+/** Recording money collected must never exceed what the invoice is owed. Blocks
+    e.g. a QAR 9,000 cheque booked against an 860 invoice (the excess would sit
+    untracked, since there is no customer-credit ledger). Routes map this to 400. */
+export class OverpaymentError extends Error {
+  code = "OVERPAYMENT";
+  invoiceNumber: string;
+  remaining: number;
+  requested: number;
+  constructor(invoiceNumber: string, remaining: number, requested: number) {
+    const rem = Math.max(0, remaining);
+    super(`Payment exceeds the balance due. Invoice ${invoiceNumber} has QAR ${rem.toFixed(2)} left to pay, but QAR ${requested.toFixed(2)} was entered. Record at most the remaining balance — for cash, take the tender and hand back change rather than logging the extra.`);
+    this.name = "OverpaymentError";
+    this.invoiceNumber = invoiceNumber;
+    this.remaining = rem;
+    this.requested = requested;
+  }
+}
+
 export async function createPayment(data: InsertPayment): Promise<Payment> {
+  // Overpayment guard — a real customer payment (not a refund) may never push the
+  // net collected past the invoice total. Refunds reduce the balance and are exempt;
+  // void/returned invoices are terminal and not re-paid. Small epsilon absorbs rounding.
+  if (!data.isRefund && data.documentId && Number(data.amount) > 0) {
+    const [d] = await db.select({
+      total: documents.total, status: documents.status, type: documents.type, number: documents.number,
+    }).from(documents).where(eq(documents.id, data.documentId));
+    if (d && d.type === "INV" && d.status !== "void" && d.status !== "returned") {
+      const prior = await db.select({ amount: payments.amount, isRefund: payments.isRefund })
+        .from(payments).where(eq(payments.documentId, data.documentId));
+      const netPaid = prior.reduce((s, p) => s + ((p as any).isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+      const remaining = parseFloat(d.total || "0") - netPaid;
+      if (Number(data.amount) > remaining + 0.01) {
+        throw new OverpaymentError(d.number || String(data.documentId), remaining, Number(data.amount));
+      }
+    }
+  }
+
   const [row] = await db.insert(payments).values(data).returning();
 
   // Collected money (not cheques — those book on clearance; not refunds — callers

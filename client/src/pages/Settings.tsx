@@ -2337,10 +2337,23 @@ function Section8({ toast }: { toast: any }) {
       });
       if (!res.ok) throw new Error("Import failed");
       const result = await res.json();
-      toast({
-        title: "Import successful",
-        description: `${result.imported ?? result.count ?? "?"} records imported.`,
-      });
+      const ok = (result.created ?? 0) + (result.updated ?? 0);
+      const rejectedCount = result.rejectedCount ?? (result.rejected?.length ?? 0);
+      if (rejectedCount > 0) {
+        const preview = (result.rejected || []).slice(0, 5)
+          .map((r: any) => `Row ${r.row}${r.sku ? ` (${r.sku})` : r.name ? ` (${r.name})` : ""}: ${r.reason}`)
+          .join("\n");
+        toast({
+          title: `${ok} imported · ${rejectedCount} rejected`,
+          description: `Rejected rows were skipped (fix and re-import):\n${preview}${rejectedCount > 5 ? `\n…and ${rejectedCount - 5} more` : ""}`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Import successful",
+          description: `${result.created ?? 0} added, ${result.updated ?? 0} updated${result.imported != null ? ` (${result.imported} imported)` : ""}.`,
+        });
+      }
     } catch {
       toast({ title: "Import failed", variant: "destructive" });
     }
