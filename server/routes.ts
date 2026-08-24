@@ -56,6 +56,7 @@ import {
 import { normalizeRole } from "@shared/permissions";
 import {
   login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword, registerOwner, recoverPassword,
+  loginRateLimit,
 } from "./auth";
 
 // Role from the verified JWT (req.user). No token → no role → every gate fails
@@ -626,7 +627,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
 
   // ── JWT session auth (Phase 7) ──────────────────────────────────
   // Username + password → signed token in an httpOnly cookie.
-  app.post("/api/auth/login", async (req: Request, res: Response) => {
+  app.post("/api/auth/login", loginRateLimit(), async (req: Request, res: Response) => {
     const { username, password, rememberMe } = req.body || {};
     if (!username || !password) return res.status(400).json({ message: "Username and password are required." });
     try {
@@ -655,7 +656,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   });
 
   // Recover password using username + PIN (no session required).
-  app.post("/api/auth/recover", async (req: Request, res: Response) => {
+  app.post("/api/auth/recover", loginRateLimit(), async (req: Request, res: Response) => {
     const { username, pin, newPassword } = req.body || {};
     if (!username || !pin || !newPassword) return res.status(400).json({ message: "Username, PIN, and new password are required." });
     try {

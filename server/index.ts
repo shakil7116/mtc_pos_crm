@@ -1,5 +1,6 @@
 import "dotenv/config"; // load .env before anything reads process.env
 import express from "express";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
@@ -16,6 +17,10 @@ declare module "http" {
     rawBody: unknown;
   }
 }
+
+// gzip every compressible response (JS/CSS/JSON). Without this the client pulls the
+// raw ~2MB bundle instead of ~560KB gzipped — the single biggest load-time lever.
+app.use(compression());
 
 // CORS first — clean preflight + cross-port dev without connection drops
 app.use(corsMiddleware);

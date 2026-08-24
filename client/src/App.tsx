@@ -1,5 +1,5 @@
 import { Switch, Route, useLocation } from "wouter";
-import { useEffect, useState } from "react";
+import { useEffect, useState, lazy, Suspense, Component, type ReactNode } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { queryClient } from "./lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
@@ -7,37 +7,78 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { canAccess, navKeyForPath, ROLE_HOME } from "@shared/permissions";
+// Eager: the pre-auth / shell path that must render immediately.
 import Onboarding from "@/pages/Onboarding";
 import Layout from "@/components/Layout";
 import Login from "@/pages/Login";
 import SetPin from "@/pages/SetPin";
-import Dashboard from "@/pages/Dashboard";
-import Documents from "@/pages/Documents";
-import QuickSale from "@/pages/QuickSale";
-import DocumentEditor from "@/pages/DocumentEditor";
-import DocumentDetail from "@/pages/DocumentDetail";
-import PurchaseOrderEditor from "@/pages/PurchaseOrderEditor";
-import Customers from "@/pages/Customers";
-import CustomerDetail from "@/pages/CustomerDetail";
-import Inventory from "@/pages/Inventory";
-import ProductDetail from "@/pages/ProductDetail";
-import Suppliers from "@/pages/Suppliers";
-import SupplierLedger from "@/pages/SupplierLedger";
-import Reports from "@/pages/Reports";
-import Messages from "@/pages/Messages";
-import Settings from "@/pages/Settings";
-import Approvals from "@/pages/Approvals";
-import Expenses from "@/pages/Expenses";
+// Lazy: every in-app page is its own chunk, loaded on demand. This keeps heavy
+// libraries (recharts on Finance/Reports, the date-picker, etc.) out of the initial
+// bundle — the login + dashboard now download a fraction of the old ~560KB gzip.
+const Dashboard = lazy(() => import("@/pages/Dashboard"));
+const Documents = lazy(() => import("@/pages/Documents"));
+const QuickSale = lazy(() => import("@/pages/QuickSale"));
+const DocumentEditor = lazy(() => import("@/pages/DocumentEditor"));
+const DocumentDetail = lazy(() => import("@/pages/DocumentDetail"));
+const PurchaseOrderEditor = lazy(() => import("@/pages/PurchaseOrderEditor"));
+const Customers = lazy(() => import("@/pages/Customers"));
+const CustomerDetail = lazy(() => import("@/pages/CustomerDetail"));
+const Inventory = lazy(() => import("@/pages/Inventory"));
+const ProductDetail = lazy(() => import("@/pages/ProductDetail"));
+const Suppliers = lazy(() => import("@/pages/Suppliers"));
+const SupplierLedger = lazy(() => import("@/pages/SupplierLedger"));
+const Reports = lazy(() => import("@/pages/Reports"));
+const Messages = lazy(() => import("@/pages/Messages"));
+const Settings = lazy(() => import("@/pages/Settings"));
+const Approvals = lazy(() => import("@/pages/Approvals"));
+const Expenses = lazy(() => import("@/pages/Expenses"));
+const ChequeDetail = lazy(() => import("@/pages/ChequeDetail"));
+const ProfitToday = lazy(() => import("@/pages/ProfitToday"));
+const CashPosition = lazy(() => import("@/pages/CashPosition"));
+const CreditExposure = lazy(() => import("@/pages/CreditExposure"));
+const CashLoans = lazy(() => import("@/pages/CashLoans"));
+const Maintenance = lazy(() => import("@/pages/Maintenance"));
+const Finance = lazy(() => import("@/pages/Finance"));
+const PickQueue = lazy(() => import("@/pages/PickQueue"));
+const NotFound = lazy(() => import("@/pages/not-found"));
 
-import ChequeDetail from "@/pages/ChequeDetail";
-import ProfitToday from "@/pages/ProfitToday";
-import CashPosition from "@/pages/CashPosition";
-import CreditExposure from "@/pages/CreditExposure";
-import CashLoans from "@/pages/CashLoans";
-import Maintenance from "@/pages/Maintenance";
-import Finance from "@/pages/Finance";
-import PickQueue from "@/pages/PickQueue";
-import NotFound from "@/pages/not-found";
+// Shown briefly while a route's chunk downloads (usually a few hundred ms, once).
+function RouteFallback() {
+  return (
+    <div className="flex items-center justify-center py-24 text-muted-foreground">
+      <div className="w-6 h-6 border-2 border-current border-t-transparent rounded-full animate-spin" />
+    </div>
+  );
+}
+
+// With code-splitting, a client left open across a redeploy can request an old
+// chunk hash that no longer exists (the server returns index.html → "failed to
+// load module script"). Catch that and reload once to pull the fresh build,
+// rather than showing a white screen. A sessionStorage flag prevents reload loops.
+class ChunkErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) {
+    const msg = String((error as Error)?.message || error);
+    const isChunkError = /dynamically imported module|module script|Importing a module|ChunkLoadError|Failed to fetch/i.test(msg);
+    if (isChunkError && !sessionStorage.getItem("chunk-reloaded")) {
+      sessionStorage.setItem("chunk-reloaded", "1");
+      window.location.reload();
+    }
+  }
+  componentDidMount() { sessionStorage.removeItem("chunk-reloaded"); }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+          <p className="text-sm text-muted-foreground">Couldn’t load this page.</p>
+          <button onClick={() => window.location.reload()} className="rounded-lg bg-[#1e2a3a] text-white px-4 py-2 text-sm font-semibold">Reload</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 function ProtectedApp() {
   const { user, loading } = useAuth();
@@ -67,6 +108,8 @@ function ProtectedApp() {
 
   return (
     <Layout>
+      <ChunkErrorBoundary>
+      <Suspense fallback={<RouteFallback />}>
       <Switch>
         <Route path="/" component={Dashboard} />
         <Route path="/quick-sale" component={QuickSale} />
@@ -107,6 +150,8 @@ function ProtectedApp() {
         <Route path="/settings" component={Settings} />
         <Route component={NotFound} />
       </Switch>
+      </Suspense>
+      </ChunkErrorBoundary>
     </Layout>
   );
 }

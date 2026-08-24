@@ -18,6 +18,44 @@ const REMEMBER_DAYS = 30;       // "remember me"
 const MAX_FAILS = 5;            // lock after N wrong passwords
 const LOCK_MINUTES = 10;
 
+// ── Password strength ────────────────────────────────────────────────────────
+// The per-account lockout stops guessing a *specific* account; this stops staff
+// from setting a weak/known password in the first place. Applied on every change.
+const WEAK_PASSWORDS = new Set([
+  "test123", "test1234", "password", "password1", "passw0rd", "12345678", "123456789",
+  "1234567890", "qwerty123", "11111111", "00000000", "abc12345", "admin123", "welcome1",
+  "iloveyou", "letmein1", "changeme", "mtc12345",
+]);
+export function assertStrongPassword(pw: string, username?: string): void {
+  const p = String(pw || "");
+  if (p.length < 8) throw new Error("Password must be at least 8 characters.");
+  if (WEAK_PASSWORDS.has(p.toLowerCase())) throw new Error("That password is too common — pick something harder to guess.");
+  if (username && p.toLowerCase() === String(username).toLowerCase()) throw new Error("Password must be different from the username.");
+  if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) throw new Error("Password must include both letters and numbers.");
+}
+
+// ── Login rate limiter (per IP) ──────────────────────────────────────────────
+// Complements the per-account lockout: blocks brute-force that rotates usernames
+// from one source IP. In-memory sliding window — fine for a single instance.
+const rlBuckets = new Map<string, number[]>();
+export function loginRateLimit(maxAttempts = 30, windowMs = 15 * 60_000) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    const fwd = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0];
+    const ip = String(fwd || req.ip || (req.socket as any)?.remoteAddress || "unknown").trim();
+    const now = Date.now();
+    const hits = (rlBuckets.get(ip) || []).filter((t) => now - t < windowMs);
+    if (hits.length >= maxAttempts) {
+      res.status(429).json({ message: "Too many attempts from this device. Please wait a few minutes and try again." });
+      return;
+    }
+    hits.push(now);
+    rlBuckets.set(ip, hits);
+    // Occasional GC so the map can't grow unbounded from one-off IPs.
+    if (rlBuckets.size > 5000) rlBuckets.forEach((v, k) => { if (!v.some((t: number) => now - t < windowMs)) rlBuckets.delete(k); });
+    next();
+  };
+}
+
 function secret(): string {
   const s = process.env.JWT_SECRET;
   if (!s) throw new Error("JWT_SECRET is not set");
@@ -131,7 +169,7 @@ export async function login(usernameRaw: string, password: string, rememberMe: b
 export async function changePassword(userId: number, currentPassword: string, newPassword: string) {
   const [u] = await db.select().from(users).where(eq(users.id, userId));
   if (!u) throw new Error("User not found");
-  if (String(newPassword || "").length < 8) throw new Error("Password must be at least 8 characters.");
+  assertStrongPassword(newPassword, u.username || undefined);
   const valid = u.passwordHash ? bcrypt.compareSync(String(currentPassword || ""), u.passwordHash) : false;
   if (!valid) throw new Error("Current password is wrong.");
   await db.update(users).set({
@@ -143,9 +181,9 @@ export async function changePassword(userId: number, currentPassword: string, ne
 
 /** Admin resets any user's password → temp password, forced change, sessions invalidated. */
 export async function adminResetPassword(targetUserId: number, newPassword: string) {
-  if (String(newPassword || "").length < 8) throw new Error("Password must be at least 8 characters.");
   const [u] = await db.select().from(users).where(eq(users.id, targetUserId));
   if (!u) throw new Error("User not found");
+  assertStrongPassword(newPassword, u.username || undefined);
   await db.update(users).set({
     passwordHash: bcrypt.hashSync(newPassword, 10),
     mustChangePassword: true,

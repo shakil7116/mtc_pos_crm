@@ -1584,10 +1584,12 @@ export default function DocumentDetail() {
       `}</style>
       {/* ── Print isolation: portal-only, content-height paper → no blank pages ── */}
       <style>{`
-        /* @page margin is the ONLY print margin; size:auto adapts to the printer's
-           paper (A4/Letter). The paper drops its fixed 210×297mm + padding and flows,
-           so N pages of content == N printed pages (no forced height, no blank tail). */
-        @page { size: auto; margin: 10mm; }
+        /* @page margin is the ONLY print margin; A4 keeps the paper's 210mm design exact.
+           In print the paper drops its fixed 210×297mm + padding, then FILLS one A4 page
+           via flex + min-height so the amount-in-words, totals and signatures sit at the
+           BOTTOM of the page instead of leaving a big empty gap. height:auto still lets a
+           long invoice grow onto extra pages — no forced full height, no blank tail. */
+        @page { size: A4; margin: 10mm; }
         #print-root { display: none; }
         @media print {
           html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
@@ -1595,13 +1597,16 @@ export default function DocumentDetail() {
           body > *:not(#print-root) { display: none !important; }
           #print-root { display: block !important; }
           #print-root .paper-fit { zoom: 1 !important; transform: none !important; }
+          /* Keep the flex column + a one-page min-height so the existing flex-1 (items)
+             and mt-auto (footer block) push the bottom section down to the page bottom.
+             272mm ≈ A4 printable (297 − 2×10mm) with a small buffer so a short invoice
+             never spills a hairline onto a blank 2nd page; height:auto allows real
+             overflow to page 2+ for long invoices. */
           #print-root .invoice-paper {
-            display: block !important;            /* kill flex-col so flex-1/mt-auto stop reserving height */
-            width: 100% !important; min-height: 0 !important; height: auto !important;
+            display: flex !important; flex-direction: column !important;
+            width: 100% !important; min-height: 272mm !important; height: auto !important;
             padding: 0 !important; margin: 0 !important; box-shadow: none !important;
           }
-          #print-root .invoice-paper .mt-auto { margin-top: 0 !important; }
-          #print-root .invoice-paper .flex-1 { flex: 0 1 auto !important; }
         }
       `}</style>
     </div>
