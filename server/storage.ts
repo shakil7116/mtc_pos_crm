@@ -2678,6 +2678,17 @@ export async function createReturn(data: {
   return ret;
 }
 
+/** Credit-note total for an approved return.
+ *  The dashboard deducts CN totals from revenue, so this must be the credit the
+ *  customer ACTUALLY received. An explicit 0 (a damage claim where no item was
+ *  resaleable) stays 0 - falling back to the goods value would deduct revenue the
+ *  business legitimately kept. Only a NULL/absent refundAmount (legacy rows written
+ *  before the field existed) falls back to the goods value. */
+export function creditNoteTotal(refundAmount: any, goodsValue: number): number {
+  if (refundAmount === null || refundAmount === undefined || refundAmount === "") return goodsValue;
+  return Number(refundAmount) || 0;
+}
+
 // Approve a pending return: THEN and only then reverse stock, refund, finalize.
 // refundMethodOverride: the approving manager may choose the payout method
 // (relevant at/above the return PDC threshold: PDC cheque or online transfer).
@@ -2688,6 +2699,34 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
   if (ret.status === "rejected") throw new Error("This return was already rejected.");
 
   const storeId = ret.storeId ?? null;
+
+  // 0. PRE-FLIGHT. Everything that can REFUSE this approval runs before any write,
+  //    so a refusal leaves the return untouched and safely re-approvable.
+  const refundAmt = Number(ret.refundAmount || 0);
+  let appliedMethod = refundMethodOverride || ret.refundMethod || "Cash";
+  // Coerce anything that isn't Bank Transfer down to Cash (Card/Cheque/PDC/unknown).
+  if (refundAmt > 0 && appliedMethod !== "Bank Transfer") appliedMethod = "Cash";
+
+  // A return carrying stock rows but no store cannot put the goods back. Refusing
+  // beats paying the refund and silently losing the inventory.
+  const stockRows = ((ret.items || []) as any[]).filter((it) => it.productId);
+  if (!storeId && stockRows.length) {
+    throw new Error(
+      "Return " + ret.voucherNumber + " has stock to reverse but no store assigned. " +
+      "Set the store on the return before approving.");
+  }
+
+  // A refund is money OUT - check funds BEFORE reversing stock. Checking after meant
+  // a funds failure left the goods back on the shelf with the return still pending,
+  // and approving again reversed the same stock a second time.
+  if (refundAmt > 0) {
+    await ensureFunds({
+      instrument: methodInstrument(appliedMethod),
+      amount: refundAmt,
+      override: fundsOverride?.override, overrideReason: fundsOverride?.overrideReason, userId,
+      context: `Return refund ${ret.voucherNumber}`,
+    });
+  }
 
   // 1. Reverse inventory back into the correct location.
   if (storeId) {
@@ -2705,18 +2744,8 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
   // 2. RETURN refund rules: **Cash (preferred) or Online Transfer only — never PDC,
   //    never card.** Returns are small amounts; PDC on returns is not a real-business
   //    flow. (PDC stays only for invoice payments + supplier payments.)
-  const refundAmt = Number(ret.refundAmount || 0);
-  let appliedMethod = refundMethodOverride || ret.refundMethod || "Cash";
+  // Method, amount and funds were all settled in the pre-flight above.
   if (refundAmt > 0) {
-    // Coerce anything that isn't Bank Transfer down to Cash (Card/Cheque/PDC/unknown).
-    if (appliedMethod !== "Bank Transfer") appliedMethod = "Cash";
-    // Guard: a refund is money OUT — block if it exceeds the instrument's balance.
-    await ensureFunds({
-      instrument: methodInstrument(appliedMethod),
-      amount: refundAmt,
-      override: fundsOverride?.override, overrideReason: fundsOverride?.overrideReason, userId,
-      context: `Return refund ${ret.voucherNumber}`,
-    });
     await createPayment({
       customerId: ret.customerId ?? null,
       amount: String(refundAmt),
@@ -2757,7 +2786,7 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
       originalInvoiceId: ret.originalInvoiceId ?? null,
       linkedDocId: ret.originalInvoiceId ?? null,
       subtotal: String(rvTotal),
-      total: String(refundAmt || rvTotal),
+      total: String(creditNoteTotal(ret.refundAmount, rvTotal)),
       notes: `Credit note for return ${ret.voucherNumber}${ret.originalInvoiceNumber ? ` vs ${ret.originalInvoiceNumber}` : (ret as any).isManual ? " (manual return)" : ""}. Refund ${appliedMethod}.`,
       createdBy: userId ?? null,
     }).returning();
@@ -2778,7 +2807,19 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
     }
   } catch (e) {
     // The CN document is a convenience record — never fail an approval because of it.
+    // But it must not be SILENT: with no CN the dashboard never deducts this return,
+    // which overstates revenue. Tell an admin so it can be reconciled by hand.
     console.error("approveReturn: CN document generation failed:", e);
+    try {
+      await createNotification({
+        targetRole: "admin",
+        type: "return_approval",
+        title: "Credit note NOT created",
+        message: `Return ${ret.voucherNumber} was approved but its credit note failed to generate. Revenue stays overstated until this is reconciled by hand.`,
+        link: "/approvals",
+        entityType: "return", entityId: ret.id, createdBy: userId,
+      });
+    } catch { /* a notification failure must not fail the approval either */ }
   }
 
   // 4. Finalize.

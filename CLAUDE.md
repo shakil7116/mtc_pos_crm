@@ -17,14 +17,14 @@ npm run dev       # dev server, port 5050
 npm run build     # client (vite) + server (esbuild) → dist/
 npm run start     # run the production build
 npm run check     # tsc typecheck (covers tests too) — MUST be clean before any commit
-npm test          # 109 assertions: vitest money suite + the three verifiers
+npm test          # 119 assertions: vitest money suite + the three verifiers
 npm run db:push   # push schema changes (drizzle-kit)
 ```
 
 Narrower runs:
 
 ```bash
-npm run test:unit     # vitest only (55 money assertions)
+npm run test:unit     # vitest only (65 money assertions)
 npm run test:verify   # the three parser/matching verifiers (54 assertions)
 npm run test:watch    # vitest in watch mode
 ```

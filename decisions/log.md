@@ -50,3 +50,58 @@ until then.
 to publish by default.
 
 **Consequence:** `master` sits 1 commit ahead of `origin` until the visibility change lands.
+
+---
+
+## 2026-08-26 — Credit note records the credit GIVEN, not the goods returned
+
+**Context:** `approveReturn` set the credit-note total to `refundAmt || rvTotal`.
+`ReturnModal` only sums items in `original` condition into the refund, so an
+all-damaged return produces `refundAmount = 0` while `rvTotal` is the full goods
+value. The `||` then fell through to the goods value.
+
+**Decision:** The CN total is the credit the customer actually received.
+An explicit `0` stays `0`. Only a NULL/absent `refundAmount` — legacy rows written
+before the field existed — falls back to the goods value. Extracted as the pure,
+tested `creditNoteTotal()`.
+
+**Why:** The dashboard deducts CN totals from revenue. A damage claim where the
+customer got nothing back was deducting the full goods value, understating revenue
+by money the business legitimately kept.
+
+**Consequence:** Damage-claim returns no longer reduce reported revenue. Returns
+with a real refund are unchanged. Historical CN rows already written are NOT
+retro-corrected — only new approvals use the new rule.
+
+---
+
+## 2026-08-26 — Approval refuses before it writes
+
+**Context:** `approveReturn` reversed stock first and checked funds second. A funds
+failure left the goods back on the shelf with the return still `pending`, and the
+idempotency guard only catches `status === "approved"` — so approving again
+reversed the same stock a second time.
+
+**Decision:** All refusals (no store for stock rows, insufficient funds) run in a
+pre-flight block before the first write. `ensureFunds` is read-only, so moving it
+earlier changes nothing on the happy path.
+
+**Why:** A rejected approval must leave the return exactly as it found it.
+
+**Consequence:** A return with stock rows but no `storeId` now throws instead of
+paying the refund and losing the inventory. That error is visible to the approver.
+
+---
+
+## 2026-08-26 — A failed credit note raises an admin notification
+
+**Context:** CN generation is wrapped in `try/catch` that only logged to console.
+A failure meant the return was approved, stock reversed, refund paid — and no CN,
+so the dashboard never deducted the return.
+
+**Decision:** Keep not failing the approval (deliberate), but raise an admin
+notification saying revenue is overstated until reconciled by hand.
+
+**Why:** Silent revenue overstatement is worse than a noisy failure.
+
+**Consequence:** `creditNoteId` stays null and is detectable; an admin is told.
