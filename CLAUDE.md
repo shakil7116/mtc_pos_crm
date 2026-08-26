@@ -46,6 +46,15 @@ testable.
 - `shared/schema.ts` — Drizzle tables, single source of truth for types.
 - `shared/permissions.ts` — nav access + role gates. Client and server both read it.
 - `scripts/` — one-off migrations (`*.mjs`) and verifiers (`verify-*.ts`).
+- `tests/` — vitest suites. Never touch the DB.
+
+Documentation:
+
+- `CLAUDE.md` — this file. Conventions and landmines. Read first.
+- `connections.md` — every external system, what breaks without it.
+- `decisions/log.md` — why things are the way they are. Log decisions here.
+- `references/` — the master spec, per-page status audit, go-live checklist.
+- `archives/` — Jul 2026 session logs. History only, NOT current truth.
 
 ## Rules that must not be broken
 
