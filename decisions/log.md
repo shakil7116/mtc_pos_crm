@@ -153,3 +153,23 @@ checked the flag. One mis-set environment variable and anyone could become admin
 
 **Consequence:** Belt and braces — the flag is `0` in `.env` today and the bypass
 is now structurally impossible in a production build regardless.
+
+---
+
+## 2026-08-26 — The "8 duplicate routes" finding was wrong
+
+**Context:** A review agent reported that `server/routes.ts` registers 8 paths
+twice and that Express silently runs only the first handler, making the second
+dead code. This was recorded in `CLAUDE.md` as a landmine and reported to the owner.
+
+**Decision:** Retracted. It is not a bug and nothing was changed.
+
+**Why:** Lines 416-473 are demo-mode fallthrough guards. Each checks
+`dbAvailable()` (`!!process.env.DATABASE_URL`, routes.ts:116). With no database it
+answers from the in-memory demo store; otherwise it calls `next()` and the real
+handler runs. All eight were verified to call `next()`. Both registrations are
+live, in sequence — the standard Express middleware pattern.
+
+**Consequence:** Deleting the "second" handler would have deleted the real
+business logic for creating documents, customers, returns and settings. The
+CLAUDE.md entry now warns against exactly that.

@@ -94,10 +94,13 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 
 - **Restart the dev server after any server-side edit.** Hot reload does not pick it up.
   New routes 404 and old logic keeps running. This wastes hours if you forget.
-- **`server/routes.ts` registers 8 paths twice** (`POST /api/customers`, `POST`/`PUT`/
-  `DELETE /api/documents/:id`, `/convert`, `/payments`, `POST /api/returns`,
-  `POST /api/settings`). Express silently runs only the FIRST handler. Pre-existing.
-  Check which one is live before editing either.
+- **Eight paths appear registered twice in `server/routes.ts` — this is NOT a bug.**
+  Lines 416-473 are demo-mode fallthrough guards: if `dbAvailable()` is false
+  (`DATABASE_URL` unset) they serve from the in-memory demo store, otherwise they
+  call `next()` and the REAL handler further down runs. Both handlers are live, in
+  sequence. Do not "clean up" the second one — you would delete the real logic.
+  Affected: `POST /api/documents`, `PUT`/`DELETE /api/documents/:id`, `/convert`,
+  `/payments`, `POST /api/customers`, `POST /api/returns`, `POST /api/settings`.
 - **`DATABASE_URL` must stay on the Supabase Session Pooler** (`...pooler.supabase.com`,
   IPv4). The direct `db.<ref>.supabase.co` host is IPv6-only and dies whenever the
   network has no IPv6 route. Symptom: every request 500s, boot log shows `❌ DB: host not found`.
