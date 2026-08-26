@@ -17,14 +17,14 @@ npm run dev       # dev server, port 5050
 npm run build     # client (vite) + server (esbuild) → dist/
 npm run start     # run the production build
 npm run check     # tsc typecheck (covers tests too) — MUST be clean before any commit
-npm test          # 119 assertions: vitest money suite + the three verifiers
+npm test          # 132 assertions: vitest money suite + the three verifiers
 npm run db:push   # push schema changes (drizzle-kit)
 ```
 
 Narrower runs:
 
 ```bash
-npm run test:unit     # vitest only (65 money assertions)
+npm run test:unit     # vitest only (78 money assertions)
 npm run test:verify   # the three parser/matching verifiers (54 assertions)
 npm run test:watch    # vitest in watch mode
 ```
@@ -92,7 +92,8 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 - **`DATABASE_URL` must stay on the Supabase Session Pooler** (`...pooler.supabase.com`,
   IPv4). The direct `db.<ref>.supabase.co` host is IPv6-only and dies whenever the
   network has no IPv6 route. Symptom: every request 500s, boot log shows `❌ DB: host not found`.
-- **`ALLOW_DEV_HEADERS=1` bypasses auth entirely.** Must stay `0` outside local dev.
+- **`ALLOW_DEV_HEADERS=1` bypasses auth** in non-production. It is now also gated on
+  `NODE_ENV !== "production"`, so it cannot be switched on in prod by mistake. Still keep it `0`.
 - **The GitHub repo is public** (`shakil7116/mtc_pos_crm`). Never commit real business
   data — cost prices, customer records, store addresses, `.env`.
 

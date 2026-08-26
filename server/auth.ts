@@ -111,7 +111,11 @@ export async function authMiddleware(req: Request, _res: Response, next: NextFun
   } catch { /* invalid/expired token → unauthenticated */ }
 
   // Dev/test harness fallback — explicit opt-in only, never in production.
-  if (!req.user && process.env.ALLOW_DEV_HEADERS === "1" && req.headers["x-user-role"]) {
+  // NODE_ENV is checked as well as the flag: the comment above used to be the only
+  // thing keeping this out of production. One mis-set env var and anyone could send
+  // x-user-role: admin and be an admin. Now the code enforces what the comment claims.
+  if (!req.user && process.env.NODE_ENV !== "production" &&
+      process.env.ALLOW_DEV_HEADERS === "1" && req.headers["x-user-role"]) {
     req.user = {
       id: Number(req.headers["x-user-id"]) || 0,
       role: normalizeRole((req.headers["x-user-role"] as string) || undefined),

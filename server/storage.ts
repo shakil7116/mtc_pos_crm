@@ -661,6 +661,17 @@ export async function getProductStock(productId: number, storeId: number): Promi
   return parseFloat(row?.qty || "0");
 }
 
+/** Resolve a stock movement against the current on-hand quantity.
+ *  Stock can never go negative, so a delta that would take it below zero is
+ *  clamped - and `applied` then differs from what was requested. Callers must
+ *  record `applied`, not the request, or the audit trail stops reconciling with
+ *  the inventory it is supposed to explain. */
+export function applyStockDelta(current: number, qtyChange: number): { newQty: number; applied: number; clamped: boolean } {
+  const newQty = Math.max(0, current + qtyChange);
+  const applied = newQty - current;
+  return { newQty, applied, clamped: applied !== qtyChange };
+}
+
 export async function adjustStock(
   productId: number, storeId: number, qtyChange: number,
   type: string, reason?: string, referenceId?: number, userId?: number,
@@ -668,18 +679,26 @@ export async function adjustStock(
   const existing = await db.select().from(inventory)
     .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
 
+  const current = existing.length === 0 ? 0 : parseFloat(existing[0].qty || "0");
+  const { newQty, applied, clamped } = applyStockDelta(current, qtyChange);
+
   if (existing.length === 0) {
-    await db.insert(inventory).values({
-      productId, storeId, qty: String(Math.max(0, qtyChange)),
-    });
+    await db.insert(inventory).values({ productId, storeId, qty: String(newQty) });
   } else {
-    const current = parseFloat(existing[0].qty || "0");
     await db.update(inventory)
-      .set({ qty: String(Math.max(0, current + qtyChange)), updatedAt: new Date() })
+      .set({ qty: String(newQty), updatedAt: new Date() })
       .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
   }
+
+  // Record what ACTUALLY moved. Recording the request instead let inventory and
+  // its own audit trail disagree, and stockAdjustments.qtyChange feeds the stock
+  // movement report (routes.ts), so the discrepancy was reaching a real report.
   await db.insert(stockAdjustments).values({
-    productId, storeId, qtyChange: String(qtyChange), type, reason, referenceId, userId,
+    productId, storeId, qtyChange: String(applied), type,
+    reason: clamped
+      ? [reason, "[clamped: requested " + qtyChange + ", applied " + applied + " - stock cannot go negative]"].filter(Boolean).join(" ")
+      : reason,
+    referenceId, userId,
   });
 }
 
@@ -3629,6 +3648,14 @@ export async function createOwnerLoan(data: {
 }) {
   const method = data.method === "Bank Transfer" ? "Bank Transfer" : "Cash";
   const type = data.type;
+
+  // LOAN_TYPES existed but was never enforced: an unknown type slipped past both
+  // guards below, was inserted, and landed in the default cashflow category as
+  // money IN - miscategorising money out as money in.
+  if (!LOAN_TYPES.has(type)) {
+    throw new Error(
+      "Unknown cash/loan type \"" + type + "\". Expected one of: " + Array.from(LOAN_TYPES).join(", ") + ".");
+  }
 
   // ── Linked settlements (repayment→injection, collection→lend_out) MUST name
   //    their parent and can never exceed its remaining balance. This is what

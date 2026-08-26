@@ -62,7 +62,7 @@ describe("methodInstrument", () => {
 
 describe("InsufficientFundsError", () => {
   it("is a real Error so route handlers can catch it", () => {
-    const e = new InsufficientFundsError("cash", 500, 100, "Return refund RV-001");
+    const e = new InsufficientFundsError("cash", 100, 500);
     expect(e).toBeInstanceOf(Error);
     expect(e.name).toBe("InsufficientFundsError");
   });

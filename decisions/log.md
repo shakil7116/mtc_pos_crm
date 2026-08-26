@@ -105,3 +105,51 @@ notification saying revenue is overstated until reconciled by hand.
 **Why:** Silent revenue overstatement is worse than a noisy failure.
 
 **Consequence:** `creditNoteId` stays null and is detectable; an admin is told.
+
+---
+
+## 2026-08-26 — Stock audit records what moved, not what was asked for
+
+**Context:** `adjustStock` clamped inventory with `Math.max(0, current + qtyChange)`
+but wrote the full unclamped `qtyChange` into `stockAdjustments`. Removing 10 units
+when only 5 were on hand left inventory at 0 and the audit trail claiming -10.
+`stockAdjustments.qtyChange` is summed by the stock-movement report in `routes.ts`,
+so the discrepancy reached a real report.
+
+**Decision:** Record the applied delta. Extracted as the pure, tested
+`applyStockDelta(current, qtyChange)` returning `{ newQty, applied, clamped }`.
+When a clamp occurs the reason string says what was requested versus applied.
+
+**Why:** An audit trail that does not reconcile with the thing it audits is worse
+than no audit trail — it looks authoritative and is wrong.
+
+**Consequence:** Historical rows are not retro-corrected. New movements reconcile:
+`current + applied === newQty`, always.
+
+---
+
+## 2026-08-26 — Unknown cash/loan types are refused
+
+**Context:** `LOAN_TYPES` was exported but never checked. An unknown or misspelled
+type passed both guards, was inserted, and fell into the default cashflow category
+as money **in** — so money going out could be booked as money coming in.
+
+**Decision:** `createOwnerLoan` throws on any type not in `LOAN_TYPES`, naming the
+five valid ones.
+
+**Why:** Silent miscategorisation of direction corrupts the cash position.
+
+---
+
+## 2026-08-26 — The dev-header auth bypass is gated on NODE_ENV
+
+**Context:** `server/auth.ts` let any request set `x-user-role` when
+`ALLOW_DEV_HEADERS=1`. The comment said "never in production" but the code only
+checked the flag. One mis-set environment variable and anyone could become admin.
+
+**Decision:** The condition now also requires `NODE_ENV !== "production"`.
+
+**Why:** A comment is not a control. The code should enforce what it claims.
+
+**Consequence:** Belt and braces — the flag is `0` in `.env` today and the bypass
+is now structurally impossible in a production build regardless.
