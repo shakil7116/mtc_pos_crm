@@ -17,7 +17,7 @@ npm run dev       # dev server, port 5050
 npm run build     # client (vite) + server (esbuild) → dist/
 npm run start     # run the production build
 npm run check     # tsc typecheck (covers tests too) — MUST be clean before any commit
-npm test          # 132 assertions: vitest money suite + the three verifiers
+npm test          # THE GATE: tsc + 132 assertions. Must pass before every commit.
 npm run db:push   # push schema changes (drizzle-kit)
 ```
 
@@ -108,7 +108,8 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 
 ## Working agreements
 
-- `npm run check` must pass before every commit. No exceptions.
+- `npm test` must pass before every commit. No exceptions. It runs the typecheck
+  first, so a green test run cannot hide a type error (that mistake has been made).
 - Ask me for screenshots rather than driving the browser to take them.
 - New pages must be `React.lazy()` — do not revert to eager imports.
 - List endpoints stay lean (base64 logos/photos nulled out). Detail endpoints keep them.

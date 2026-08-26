@@ -56,7 +56,7 @@ describe("loan type constants", () => {
   });
 
   it("keeps every OUT type inside the known set", () => {
-    for (const t of LOAN_OUT_TYPES) expect(LOAN_TYPES.has(t)).toBe(true);
+    for (const t of Array.from(LOAN_OUT_TYPES)) expect(LOAN_TYPES.has(t)).toBe(true);
   });
 
   it("treats injection and collection as money IN", () => {
