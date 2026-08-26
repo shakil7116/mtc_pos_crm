@@ -1664,6 +1664,35 @@ export class OverpaymentError extends Error {
   }
 }
 
+/** Net money actually collected on a document = payments minus refunds.
+    Refund rows must NOT count as collected, or a refund would flip an invoice
+    back to "paid". Money columns are drizzle numeric -> strings at runtime. */
+export function netCollected(pays: Array<{ amount?: any; isRefund?: any }>): number {
+  return pays.reduce((s, p) => s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+}
+
+/** Balance still owed. May be negative only if data is already corrupt; callers
+    clamp for display, never for the comparison. */
+export function remainingBalance(total: any, pays: Array<{ amount?: any; isRefund?: any }>): number {
+  return parseFloat(total || "0") - netCollected(pays);
+}
+
+/** Epsilon for accepting a payment (QAR, 1 fils). */
+export const PAYMENT_EPSILON = 0.01;
+/** Epsilon for flipping a document to paid/partial. */
+export const STATUS_EPSILON = 0.005;
+
+/** Would this non-refund payment push net collected past the total? */
+export function isOverpayment(amount: any, total: any, pays: Array<{ amount?: any; isRefund?: any }>): boolean {
+  return Number(amount) > remainingBalance(total, pays) + PAYMENT_EPSILON;
+}
+
+/** Payment status ladder. Epsilon absorbs float drift so partials that sum to
+    the total correctly flip to "paid" (e.g. 1944.999999 >= 1945). */
+export function paymentStatusFor(total: number, totalPaid: number): "paid" | "partial" | "unpaid" {
+  return total > 0 && totalPaid >= total - STATUS_EPSILON ? "paid" : totalPaid > STATUS_EPSILON ? "partial" : "unpaid";
+}
+
 export async function createPayment(data: InsertPayment): Promise<Payment> {
   // Overpayment guard — a real customer payment (not a refund) may never push the
   // net collected past the invoice total. Refunds reduce the balance and are exempt;
@@ -1675,9 +1704,8 @@ export async function createPayment(data: InsertPayment): Promise<Payment> {
     if (d && d.type === "INV" && d.status !== "void" && d.status !== "returned") {
       const prior = await db.select({ amount: payments.amount, isRefund: payments.isRefund })
         .from(payments).where(eq(payments.documentId, data.documentId));
-      const netPaid = prior.reduce((s, p) => s + ((p as any).isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
-      const remaining = parseFloat(d.total || "0") - netPaid;
-      if (Number(data.amount) > remaining + 0.01) {
+      const remaining = remainingBalance(d.total, prior);
+      if (isOverpayment(data.amount, d.total, prior)) {
         throw new OverpaymentError(d.number || String(data.documentId), remaining, Number(data.amount));
       }
     }
@@ -1707,15 +1735,14 @@ export async function createPayment(data: InsertPayment): Promise<Payment> {
       const allPays = await getPayments(data.documentId);
       // Net collected = payments minus refunds. Refund rows (isRefund) must NOT
       // count as money collected, or a refund would flip an invoice to "paid".
-      const totalPaid = allPays.reduce(
-        (s, p) => s + (p.isRefund ? -1 : 1) * parseFloat(p.amount || "0"), 0);
+      const totalPaid = netCollected(allPays);
       const total = parseFloat(doc.total || "0");
       // Never overwrite a terminal status (a void/returned invoice stays that way).
       if (doc.status !== "void" && doc.status !== "returned") {
         // Compare with a small epsilon so cumulative partial payments that sum to the
         // total (across any number of payments / days) correctly flip to "paid" despite
         // floating-point drift (e.g. 1944.999999 ≥ 1945).
-        const status = total > 0 && totalPaid >= total - 0.005 ? "paid" : totalPaid > 0.005 ? "partial" : "unpaid";
+        const status = paymentStatusFor(total, totalPaid);
         await updateDocument(data.documentId, { status });
       }
     }
@@ -3927,7 +3954,7 @@ export type ProfitAgg = {
 /** Fold per-document profit/COGS + paid status into the canonical real/expected
     aggregates. `profitByDoc` should be the item-level sum; when a doc has no items
     it falls back to (total − cogs) so nothing is silently dropped. */
-function aggregateInvoiceProfit(
+export function aggregateInvoiceProfit(
   docs: Array<{ id: number; total: any; status: any }>,
   profitByDoc: Record<number, number>,
   cogsByDoc: Record<number, number>,

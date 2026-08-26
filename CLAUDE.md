@@ -16,17 +16,25 @@ it — do not lecture.
 npm run dev       # dev server, port 5050
 npm run build     # client (vite) + server (esbuild) → dist/
 npm run start     # run the production build
-npm run check     # tsc typecheck — MUST be clean before any commit
+npm run check     # tsc typecheck (covers tests too) — MUST be clean before any commit
+npm test          # 109 assertions: vitest money suite + the three verifiers
 npm run db:push   # push schema changes (drizzle-kit)
 ```
 
-Verifiers (pure logic, no DB and no API key needed):
+Narrower runs:
 
 ```bash
-npx tsx scripts/verify-line-parser.ts
-npx tsx scripts/verify-matching.ts
-npx tsx scripts/verify-scan-pipeline.ts
+npm run test:unit     # vitest only (55 money assertions)
+npm run test:verify   # the three parser/matching verifiers (54 assertions)
+npm run test:watch    # vitest in watch mode
 ```
+
+Tests never touch the database. `tests/setup.ts` deletes `DATABASE_URL`, so an
+accidental query hits the localhost placeholder and fails fast instead of
+reaching live Supabase. Money logic is tested through the pure helpers
+(`netCollected`, `remainingBalance`, `isOverpayment`, `paymentStatusFor`,
+`aggregateInvoiceProfit`) — add new money maths as a pure helper so it stays
+testable.
 
 ## Layout
 
@@ -103,5 +111,4 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 - No pagination on `/api/documents`.
 - No COGS cost snapshot — profit recomputes against *current* cost, so historical
   margins silently drift when supplier prices change.
-- No automated test suite beyond the three `verify-*` scripts.
 - `test123` still works as a password. Run `scripts/force-password-reset.mjs` at go-live.
