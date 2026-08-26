@@ -84,7 +84,9 @@ interface Customer {
   active: boolean;
 }
 interface CustomerBalance { balance: number; creditLimit: number; totalInvoiced: number; totalPaid: number; }
-interface Product { id: number; sku: string; name: string; category: string; unit: string; salePrice: number; wholesalePrice?: number; costPrice: number; active: boolean; locationStoreId?: number | null; locationArea?: string | null; locationRack?: string | null; locationShelf?: string | null; imageUrl?: string | null; }
+// sku and category really are nullable in the DB — typing them as plain strings
+// is what let an unguarded .toLowerCase() ship. Keep the type honest.
+interface Product { id: number; sku: string | null; name: string; category: string | null; unit: string; salePrice: number; wholesalePrice?: number; costPrice: number; minStockQty?: number | string | null; active: boolean; locationStoreId?: number | null; locationArea?: string | null; locationRack?: string | null; locationShelf?: string | null; imageUrl?: string | null; }
 interface Store { id: number; nameEn: string; nameAr: string; type: string; active: boolean; ownerStoreId?: number | null; }
 interface ExistingDocument {
   id: number; type: string; number: string; date: string;
@@ -283,17 +285,24 @@ export default function DocumentEditor({ type, params }: Props) {
   };
   const { data: stores = [] } = useQuery<Store[]>({ queryKey: ["stores"], queryFn: () => safeArray("/api/stores") });
   const userStoreId = user?.storeId ?? null;
+  // Where this bill may pull stock from: the user's own store + every warehouse.
+  // Warehouses are shared floor space, not a branch's private stock, and staff
+  // move between them — so no ownerStoreId scoping. Other stores stay out.
   const allowedLocations = useMemo(() => {
     if (isAdmin) return stores.filter((s) => s.active);
     if (!userStoreId) return stores.filter((s) => s.active);
-    return stores.filter((s) => s.active && (
-      s.id === userStoreId ||
-      (s.type === "warehouse" && s.ownerStoreId === userStoreId) ||
-      (s.type === "warehouse" && s.ownerStoreId == null)
-    ));
+    return stores.filter((s) => s.active && (s.id === userStoreId || s.type === "warehouse"));
   }, [stores, isAdmin, userStoreId]);
   const { data: customers = [] } = useQuery<Customer[]>({ queryKey: ["customers"], queryFn: () => safeArray("/api/customers") });
   const { data: products = [] } = useQuery<Product[]>({ queryKey: ["products"], queryFn: () => safeArray("/api/products") });
+  // Live stock, same source Quick Sale uses. The server already narrows this to
+  // what the signed-in user may see, so no extra scoping is needed here.
+  const { data: inventoryRows = [] } = useQuery<any[]>({
+    queryKey: ["/api/inventory"],
+    queryFn: () => safeArray("/api/inventory"),
+    staleTime: 15_000,
+    refetchOnWindowFocus: true,
+  });
   const { data: existingDoc } = useQuery<ExistingDocument>({
     queryKey: ["document", editId],
     queryFn: () => fetch(`/api/documents/${editId}`).then((r) => r.json()),
@@ -506,10 +515,41 @@ export default function DocumentEditor({ type, params }: Props) {
   };
 
   // ── Product dialog ──
-  const filteredProducts = products.filter((p) =>
-    p.active && (p.name.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.sku.toLowerCase().includes(productSearch.toLowerCase()) ||
-      p.category.toLowerCase().includes(productSearch.toLowerCase())));
+  // On-hand qty per product across every location this bill may pull from.
+  const allowedLocationIds = useMemo(
+    () => new Set(allowedLocations.map((s) => s.id)),
+    [allowedLocations],
+  );
+  const stockByProduct = useMemo(() => {
+    const m = new Map<number, number>();
+    (inventoryRows as any[]).forEach((r) => {
+      const pid = r.productId ?? r.product?.id;
+      if (pid == null || !allowedLocationIds.has(r.storeId)) return;
+      m.set(pid, (m.get(pid) || 0) + (Number(r.qty) || 0));
+    });
+    return m;
+  }, [inventoryRows, allowedLocationIds]);
+
+  // A Credit Note / Return Invoice brings stock back, so the thing being returned
+  // is often at zero by definition — those must keep listing the whole catalogue.
+  // Everything that takes stock OUT lists only what is really on hand.
+  const stockGated = docType === "INV" || docType === "QT" || docType === "DN";
+
+  // sku and category are nullable in the schema — a CSV row imported without a
+  // code creates exactly that, and an unguarded .toLowerCase() then throws while
+  // filtering, which takes the whole editor down the moment someone types.
+  const filteredProducts = products.filter((p) => {
+    if (!p.active) return false;
+    if (stockGated && !((stockByProduct.get(p.id) || 0) > 0)) return false;
+    const q = productSearch.toLowerCase();
+    if (!q) return true;
+    return (p.name || "").toLowerCase().includes(q) ||
+      (p.sku || "").toLowerCase().includes(q) ||
+      (p.category || "").toLowerCase().includes(q);
+  });
+  const hiddenNoStock = stockGated
+    ? products.filter((p) => p.active && !((stockByProduct.get(p.id) || 0) > 0)).length
+    : 0;
   // Price tier: wholesale customers (contractor/corporate/government) get the
   // wholesale price when set; walk-in/retail get the retail price. Staff can still
   // override the line price after it is added.
@@ -531,7 +571,7 @@ export default function DocumentEditor({ type, params }: Props) {
         const net = existing.discountType === "QAR" ? Math.max(0, existing.price - existing.discountAmount) : existing.price * (1 - existing.discountAmount / 100);
         return base.map((i) => i.id === existing.id ? { ...i, qty: q, amount: Math.max(0, q * net) } : i);
       }
-      const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku, description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0, locationStoreId: p.locationStoreId ?? null };
+      const newItem: LineItem = { id: uid(), productId: p.id, sku: p.sku ?? "", description: p.name, qty: 1, unit: p.unit || "PCS", price: sp, discountType: "QAR", discountAmount: 0, amount: sp, originalPrice: sp, costPrice: Number(p.costPrice) || 0, locationStoreId: p.locationStoreId ?? null };
       return [...base, newItem];
     });
   };
@@ -901,17 +941,27 @@ export default function DocumentEditor({ type, params }: Props) {
           {/* ── POS Product Grid: always visible, tap a card to add / bump qty ── */}
           <aside className="lg:sticky lg:top-6 self-start bg-white rounded-2xl shadow-sm border border-slate-100 p-3 flex flex-col print:hidden" style={{ maxHeight: "calc(100vh - 7rem)" }}>
             <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-2 px-1">Product Grid</p>
+            {stockGated && hiddenNoStock > 0 && (
+              <p className="text-[10px] text-slate-400 mb-2 px-1 leading-snug">
+                In stock only · {hiddenNoStock} out-of-stock product{hiddenNoStock === 1 ? "" : "s"} hidden
+              </p>
+            )}
             <div className="relative mb-2">
               <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
               <Input className="pl-8 h-9 text-sm" placeholder="Search product / SKU…" value={productSearch} onChange={(e) => setProductSearch(e.target.value)} />
             </div>
             <div className="overflow-y-auto flex-1 -mx-1 px-1">
               {filteredProducts.length === 0 ? (
-                <p className="text-xs text-slate-400 text-center py-8">No products.</p>
+                <p className="text-xs text-slate-400 text-center py-8">
+                  {productSearch.trim()
+                    ? "No product matches that."
+                    : stockGated ? "Nothing in stock at your locations." : "No products."}
+                </p>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
                   {filteredProducts.slice(0, 60).map((p) => {
                     const inCart = items.filter((i) => i.productId === p.id).reduce((s, i) => s + i.qty, 0);
+                    const onHand = stockByProduct.get(p.id) || 0;
                     return (
                       <button key={p.id} onClick={() => addProductToItems(p)}
                         className={`relative text-left rounded-xl border p-2 transition ${inCart > 0 ? "border-emerald-300 bg-emerald-50" : "border-slate-200 hover:border-slate-400 hover:shadow-sm"}`}>
@@ -920,6 +970,11 @@ export default function DocumentEditor({ type, params }: Props) {
                           : <div className="w-full h-14 rounded-lg bg-slate-100 mb-1.5 flex items-center justify-center text-slate-300"><PackagePlus size={20} /></div>}
                         <p className="text-[11px] font-semibold leading-tight line-clamp-2 min-h-[28px]">{p.name}</p>
                         <p className="text-[11px] font-bold text-[#d4a017] mt-0.5">QAR {Number(p.salePrice || 0).toFixed(2)}</p>
+                        {stockGated && (
+                          <p className={`text-[10px] mt-0.5 ${onHand <= Number(p.minStockQty || 0) ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
+                            {onHand} {p.unit || "PCS"} on hand
+                          </p>
+                        )}
                         <span className={`absolute top-1 right-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full text-[10px] font-bold ${inCart > 0 ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"}`}>{inCart > 0 ? inCart : "+"}</span>
                       </button>
                     );
@@ -1295,7 +1350,14 @@ export default function DocumentEditor({ type, params }: Props) {
           </div>
           <div className="overflow-y-auto flex-1 -mx-1 px-1">
             {filteredProducts.length === 0 ? (
-              <div className="text-center text-muted-foreground py-10">No products found.</div>
+              <div className="text-center text-muted-foreground py-10 space-y-1">
+                <p>{productSearch.trim() ? "No products found." : "Nothing in stock at your locations."}</p>
+                {stockGated && hiddenNoStock > 0 && (
+                  <p className="text-xs">
+                    {hiddenNoStock} out-of-stock product{hiddenNoStock === 1 ? " is" : "s are"} hidden. Receive or transfer stock in from Inventory to bill {hiddenNoStock === 1 ? "it" : "them"}.
+                  </p>
+                )}
+              </div>
             ) : (
               <div className="space-y-1">
                 {filteredProducts.map((p) => {
@@ -1305,7 +1367,10 @@ export default function DocumentEditor({ type, params }: Props) {
                     {p.imageUrl && <img src={p.imageUrl} alt="" className="w-10 h-10 rounded object-cover border shrink-0" />}
                     <div className="min-w-0 flex-1">
                       <span className="font-medium">{p.name}</span>
-                      <div className="text-xs text-muted-foreground mt-0.5">SKU: {p.sku} · {p.category} · {p.unit}</div>
+                      <div className="text-xs text-muted-foreground mt-0.5">
+                        SKU: {p.sku || "—"} · {p.category || "—"} · {p.unit}
+                        {stockGated && <> · <span className="font-medium text-slate-700">{stockByProduct.get(p.id) || 0} on hand</span></>}
+                      </div>
                       {(p.locationStoreId || p.locationArea) && (
                         <div className="text-[11px] text-emerald-700 mt-0.5 truncate">
                           📍 {[

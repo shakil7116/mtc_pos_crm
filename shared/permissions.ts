@@ -10,7 +10,7 @@ export function normalizeRole(r?: string | null): Role {
 export type NavKey =
   | "dashboard" | "documents" | "customers" | "inventory" | "suppliers"
   | "reports" | "messages" | "settings"
-  | "deliveries" | "expenses" | "finance" | "maintenance" | "approvals";
+  | "deliveries" | "expenses" | "finance" | "maintenance" | "approvals" | "assistant";
 
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
   dashboard:   ["admin", "manager", "worker", "salesman", "driver"],
@@ -26,6 +26,9 @@ export const NAV_ACCESS: Record<NavKey, Role[]> = {
   finance:     ["admin", "manager", "salesman"],
   maintenance: ["admin", "manager", "worker"],
   approvals:   ["admin", "manager", "worker", "salesman"],
+  // The assistant gates money per-tool, so a salesman can use it for customer
+  // and stock questions without seeing business profit.
+  assistant:   ["admin", "manager", "salesman"],
 };
 
 export function canAccess(role: Role, key: NavKey): boolean {
@@ -52,6 +55,7 @@ const PATH_NAV: { prefix: string; key: NavKey }[] = [
   { prefix: "/maintenance", key: "maintenance" },
   { prefix: "/cheques", key: "finance" },
   { prefix: "/approvals", key: "approvals" },
+  { prefix: "/assistant", key: "assistant" },
 ];
 
 export function navKeyForPath(path: string): NavKey | null {

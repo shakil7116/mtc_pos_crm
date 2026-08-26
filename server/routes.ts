@@ -11,7 +11,8 @@ import {
   createTask, getTasks, updateTask, deleteTask,
   getCustomers, searchCustomers, getCustomer, createCustomer, updateCustomer, getCustomerBalance,
   getProducts, searchProducts, getProduct, createProduct, updateProduct,
-  getInventory, adjustStock, getLowStockItems,
+  getProductAliases, createProductAlias, deleteProductAlias, matchProductNames, getMatchCatalogue, AliasConflictError,
+  getInventory, adjustStock, getLowStockItems, getProductQtyAt,
   createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer, getTransferSettlement,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
@@ -53,6 +54,11 @@ import {
   getStaffPayroll, createStaffPayrollEntry, deleteStaffPayrollEntry, updateUserSalary, getStaffPayrollSummary,
   ensureFunds,
 } from "./storage";
+import { matchProduct } from "./matching";
+import { registerAssistantRoutes } from "./assistantRoutes";
+import { extractText, ocrStatus } from "./ocr";
+import { parseInvoiceText } from "./lineParser";
+import { analyseCsv, commitRows, type CommitRow } from "./productImport";
 import { normalizeRole } from "@shared/permissions";
 import {
   login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword, registerOwner, recoverPassword,
@@ -62,6 +68,14 @@ import {
 // Role from the verified JWT (req.user). No token → no role → every gate fails
 // closed with 403. (authMiddleware honors ALLOW_DEV_HEADERS=1 for the dev/test
 // harness only; that flag must be absent in production.)
+function requireAdminOrManager(req: Request, res: Response): boolean {
+  if (!["admin", "manager"].includes(normalizeRoleStrict(req))) {
+    res.status(403).json({ message: "Admin or manager only" });
+    return false;
+  }
+  return true;
+}
+
 function normalizeRoleStrict(req: Request): string {
   return req.user ? normalizeRole(req.user.role) : "";
 }
@@ -1754,12 +1768,234 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   // INVENTORY
   // ══════════════════════════════════════════════════════════════
 
+  // AI Overview assistant — chat + the confirmed-send endpoint.
+  registerAssistantRoutes(app);
+
+  // ══════════════════════════════════════════════════════════════
+  // SCAN TO INVENTORY
+  // File → text → columns → matched against the catalogue. Only the first step
+  // may need a model; everything after it is deterministic, which is why a weak
+  // transcription degrades into "check this row" rather than into wrong data.
+  // ══════════════════════════════════════════════════════════════
+
+  app.get("/api/inventory/scan/status", (_req: Request, res: Response) => {
+    res.json(ocrStatus());
+  });
+
+  app.post("/api/inventory/scan", upload.single("file"), async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(normalizeRoleStrict(req)))
+      return res.status(403).json({ message: "Admin or manager only" });
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
+
+    const tmpPath = req.file.path;
+    try {
+      const buffer = fs.readFileSync(tmpPath);
+      const extracted = await extractText(buffer, req.file.originalname, req.file.mimetype);
+      const parsed = parseInvoiceText(extracted.text);
+
+      if (!parsed.lines.length) {
+        return res.status(422).json({
+          message: "No product rows could be read from that file.",
+          extractedText: extracted.text.slice(0, 2000),
+          source: extracted.source,
+          skipped: parsed.skipped,
+        });
+      }
+
+      // Every parsed description is matched against the catalogue in one pass.
+      const matches = await matchProductNames(
+        parsed.lines.map((l) => ({ description: l.description })), { limit: 4 },
+      );
+
+      const rows = parsed.lines.map((line, i) => {
+        const m = matches[i];
+        return {
+          ...line,
+          match: {
+            decision: m.decision,
+            productId: m.productId,
+            candidates: m.candidates.map((c) => ({ productId: c.productId, name: c.name, sku: c.sku, score: c.score, reason: c.reason })),
+          },
+        };
+      });
+
+      res.json({
+        source: extracted.source,
+        provider: extracted.provider ?? null,
+        method: parsed.method,
+        warnings: extracted.warnings,
+        skipped: parsed.skipped,
+        rows,
+        summary: {
+          total: rows.length,
+          matched: rows.filter((r) => r.match.decision === "auto").length,
+          review: rows.filter((r) => r.match.decision === "review").length,
+          unknown: rows.filter((r) => r.match.decision === "none").length,
+          withWarnings: rows.filter((r) => r.warnings.length).length,
+        },
+      });
+    } catch (e) {
+      res.status(400).json({ message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      try { if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath); } catch { /* temp file */ }
+    }
+  });
+
+  // Apply a reviewed scan. Only what the human confirmed is written, and each
+  // row says explicitly whether it links to an existing product or makes a new
+  // one — the server never re-decides that.
+  app.post("/api/inventory/scan/commit", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(normalizeRoleStrict(req)))
+      return res.status(403).json({ message: "Admin or manager only" });
+
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ message: "Nothing to apply." });
+
+    const storeId = req.body?.storeId ? Number(req.body.storeId) : null;
+    const addStock = req.body?.addStock === true;
+    const supplierId = req.body?.supplierId ? Number(req.body.supplierId) : null;
+    if (addStock && !storeId) return res.status(400).json({ message: "Choose a location to receive stock into." });
+
+    const applied: any[] = [];
+    const failed: any[] = [];
+
+    for (const row of rows) {
+      const description = String(row?.description || "").trim();
+      const quantity = Number(row?.quantity) || 0;
+      const cost = Number(row?.unitPrice) || 0;
+      try {
+        if (!description) throw new Error("No description.");
+
+        let productId: number | null = row?.productId ? Number(row.productId) : null;
+        let created = false;
+
+        if (!productId) {
+          if (!(cost > 0)) throw new Error("A new product needs a cost price above zero.");
+          const salePrice = Number(row?.salePrice) > 0 ? String(Number(row.salePrice)) : String(cost);
+          const made = await createProduct({
+            name: description.toUpperCase(),
+            unit: String(row?.unit || "PCS").toUpperCase(),
+            costPrice: String(cost),
+            salePrice,
+            wholesalePrice: salePrice,
+            minStockQty: "0",
+            ...(supplierId ? { supplierId } : {}),
+          } as any);
+          productId = made.id;
+          created = true;
+        } else if (cost > 0 && row?.updateCost === true) {
+          // Only when the reviewer ticked it — a purchase price is not
+          // automatically the new standing cost.
+          await updateProduct(productId, { costPrice: String(cost) } as any);
+        }
+
+        // A confirmed link teaches the matcher, so this wording is recognised
+        // instantly next time instead of going back into the review queue.
+        if (!created && productId && row?.rememberAlias === true) {
+          try {
+            await createProductAlias({
+              productId, alias: description, source: "ocr", confirmedBy: req.user?.id ?? null,
+            });
+          } catch { /* an existing or conflicting alias must not fail the receipt */ }
+        }
+
+        if (addStock && quantity > 0 && storeId && productId) {
+          await adjustStock(productId, storeId, quantity, "add", "Received from scanned invoice", productId, req.user?.id || undefined);
+        }
+
+        applied.push({ description, productId, created, stockAdded: addStock ? quantity : 0 });
+      } catch (e) {
+        failed.push({ description, reason: e instanceof Error ? e.message : String(e) });
+      }
+    }
+
+    res.json({ ok: true, applied, failed, createdCount: applied.filter((a) => a.created).length,
+      linkedCount: applied.filter((a) => !a.created).length, failedCount: failed.length });
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // PRODUCT ALIASES & MATCHING
+  // "PVC GOLMALA" and "PVC TROWEL" are one item; recording that stops a scanned
+  // supplier invoice from creating a duplicate product. See server/matching.ts
+  // for why a shower mixer is NOT an alias of a faucet.
+  // ══════════════════════════════════════════════════════════════
+
+  app.get("/api/product-aliases", async (req: Request, res: Response) => {
+    try {
+      const productId = req.query.productId ? Number(req.query.productId) : undefined;
+      res.json(await getProductAliases(productId));
+    } catch (e) { res.status(500).json({ message: String(e) }); }
+  });
+
+  // Confirming an alias reshapes the catalogue, so it is a manager-or-above call.
+  app.post("/api/product-aliases", async (req: Request, res: Response) => {
+    if (!["admin", "manager"].includes(normalizeRoleStrict(req)))
+      return res.status(403).json({ message: "Admin or manager only" });
+    try {
+      const { productId, alias, source } = req.body || {};
+      if (!productId || !alias) return res.status(400).json({ message: "productId and alias are required" });
+      const row = await createProductAlias({
+        productId: Number(productId),
+        alias: String(alias),
+        source: source || "manual",
+        confirmedBy: req.user?.id ?? null,
+      });
+      res.status(201).json(row);
+    } catch (e) {
+      // A clash means the same words already point at a different product —
+      // a 409 so the UI can show "already used by X" instead of a dead 500.
+      if (e instanceof AliasConflictError) return res.status(409).json({ message: e.message });
+      res.status(500).json({ message: String(e) });
+    }
+  });
+
+  app.delete("/api/product-aliases/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      await deleteProductAlias(Number(req.params.id));
+      res.json({ ok: true });
+    } catch (e) { res.status(500).json({ message: String(e) }); }
+  });
+
+  // Rank incoming descriptions (OCR lines, CSV rows, a typed search) against the
+  // catalogue. Read-only — it decides nothing and writes nothing. Each result
+  // carries decision: auto | review | none, so the caller can apply the certain
+  // ones and put the rest in front of a human.
+  app.post("/api/products/match", async (req: Request, res: Response) => {
+    try {
+      const raw = req.body?.items ?? req.body?.descriptions;
+      const items = Array.isArray(raw)
+        ? raw.map((it: any) => (typeof it === "string"
+            ? { description: it, sku: null }
+            : { description: String(it?.description ?? it?.name ?? ""), sku: it?.sku ?? null }))
+        : [];
+      if (!items.length) return res.status(400).json({ message: "items[] is required" });
+      if (items.length > 200) return res.status(400).json({ message: "Too many items (max 200 per call)" });
+      const results = await matchProductNames(items, { limit: Number(req.body?.limit) || 5 });
+      res.json({
+        results,
+        summary: {
+          total: results.length,
+          auto: results.filter((r) => r.decision === "auto").length,
+          review: results.filter((r) => r.decision === "review").length,
+          none: results.filter((r) => r.decision === "none").length,
+        },
+      });
+    } catch (e) { res.status(500).json({ message: String(e) }); }
+  });
+
   app.get("/api/inventory", async (req: Request, res: Response) => {
     try {
       const locked = lockedStoreId(req);
       const storeId = locked ?? (req.query.storeId ? Number(req.query.storeId) : undefined);
-      const includeWarehouses = req.query.includeWarehouses === "true";
-      const rows = await getInventory(storeId, includeWarehouses);
+      // Staff are not tied to one building — the same person bills in the shop one
+      // day and counts stock in a warehouse the next. So a store-locked user sees
+      // their own store plus every warehouse: without it, warehouse stock is
+      // invisible to the person writing the invoice, who then cannot pull from it
+      // and cannot flag a wrong count to the manager. Other STORES stay out — a
+      // branch still does not sell another branch's shelf stock.
+      const includeWarehouses = locked ? true : req.query.includeWarehouses === "true";
+      const rows = await getInventory(storeId, includeWarehouses, locked ? "all" : "owned");
       res.json(rows);
     } catch (err) {
       res.status(500).json({ message: String(err) });
@@ -3400,71 +3636,64 @@ ALL item descriptions in UPPERCASE. No explanation.` }
   });
 
   // ── CSV bulk import (products + customers). Admin only. Upsert on sku/phone. ──
-  app.post("/api/products/import", upload.single("file"), async (req: Request, res: Response) => {
-    if (!requireAdmin(req, res)) return;
+  // ── Product CSV import: analyse, then apply ─────────────────────────────
+  // Two steps on purpose. These files are written outside the system (a
+  // spreadsheet, or an AI assistant), so they cannot know this business's real
+  // store names — the location is chosen here instead, against the live list.
+  // Nothing is written until the reviewed rows come back to /commit, which also
+  // means a bad file can simply be fixed and re-sent with no half-applied mess.
+  app.post("/api/products/import/preview", upload.single("file"), async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    if (!req.file) return res.status(400).json({ message: "No file uploaded" });
     try {
-      if (!req.file) return res.status(400).json({ message: "No file uploaded" });
-      const rows = parseCsv(fs.readFileSync(req.file.path, "utf8"));
+      const text = fs.readFileSync(req.file.path, "utf8");
       fs.unlink(req.file.path, () => {});
-      const existing = await getProducts();
-      const bySku = new Map(existing.filter((p) => p.sku).map((p) => [String(p.sku).toLowerCase(), p]));
-      const allStores = await getStores();
-      const allSuppliers = await getSuppliers();
-      let created = 0, updated = 0;
-      const rejected: { row: number; sku: string; name: string; reason: string }[] = [];
-      let i = 0;
-      for (const r of rows) {
-        i++;
-        const name = r.name || r["product name"] || r.description;
-        if (!name && !r.sku) continue; // wholly blank line — skip silently
-        const col = ((...keys: string[]) => { for (const k of keys) { if (r[k]) return r[k]; } return ""; });
-        const rawSale = col("sale_price", "saleprice", "sale price");
-        const rawCost = col("cost_price", "costprice", "cost price");
-        // Reject rows with missing/zero critical values instead of importing them as 0
-        // (a 0-cost product reports 100% profit; a 0 sale price sells for free).
-        const num = (v: string) => { const n = parseFloat(String(v).replace(/[^0-9.\-]/g, "")); return Number.isFinite(n) ? n : NaN; };
-        const bad: string[] = [];
-        if (!name) bad.push("missing name");
-        if (!(num(rawCost) > 0)) bad.push(`cost price is ${rawCost === "" ? "empty" : rawCost} (must be > 0)`);
-        if (!(num(rawSale) > 0)) bad.push(`sale price is ${rawSale === "" ? "empty" : rawSale} (must be > 0)`);
-        if (bad.length) { rejected.push({ row: i, sku: r.sku || "", name: name || "", reason: bad.join("; ") }); continue; }
-        const body: any = {
-          sku: r.sku || null, name: name || "(unnamed)", category: r.category || null, unit: r.unit || "PCS",
-          salePrice: rawSale,
-          wholesalePrice: col("wholesale_price", "wholesaleprice", "wholesale price") || rawSale,
-          costPrice: rawCost,
-          minStockQty: col("min_stock_qty", "minstockqty", "min stock qty", "minstock") || "0",
-        };
-        const supplierName = col("supplier_name", "suppliername", "supplier");
-        if (supplierName) {
-          const sup = allSuppliers.find((s: any) => (s.name || "").toLowerCase() === supplierName.toLowerCase());
-          if (sup) body.supplierId = sup.id;
-        }
-        const locName = col("location", "location_store", "location store", "locationstore");
-        if (locName) {
-          const st = allStores.find((s: any) => s.nameEn.toLowerCase() === String(locName).toLowerCase());
-          if (st) body.locationStoreId = st.id;
-        }
-        const area = col("location_area", "area", "location area");
-        const rack = col("location_rack", "rack", "location rack");
-        const shelf = col("location_shelf", "shelf", "location shelf");
-        if (area) body.locationArea = area;
-        if (rack) body.locationRack = rack;
-        if (shelf) body.locationShelf = shelf;
-        const match = r.sku ? bySku.get(String(r.sku).toLowerCase()) : null;
-        if (match) { await updateProduct(match.id, body); updated++; }
-        else {
-          const row = await createProduct(body);
-          const initialQty = Number(col("initial_qty", "initialqty", "initial qty", "opening_qty", "openingqty", "quantity", "qty")) || 0;
-          const storeId = body.locationStoreId ? Number(body.locationStoreId) : null;
-          if (initialQty > 0 && storeId) {
-            await adjustStock(row.id, storeId, initialQty, "add", "Opening stock (CSV import)", row.id, req.user?.id || undefined);
-          }
-          created++;
-        }
+      const parsed = parseCsv(text);
+      if (!parsed.length) return res.status(400).json({ message: "That file has no data rows." });
+
+      const analysis = await analyseCsv(parsed);
+      if (!analysis.rows.length) return res.status(400).json({ message: "No usable product rows found in that file." });
+
+      const stores = (await getStores()).filter((s: any) => s.active !== false);
+      res.json({
+        ...analysis,
+        stores: stores.map((s: any) => ({ id: s.id, name: s.nameEn, type: s.type })),
+      });
+    } catch (e) {
+      try { if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path); } catch { /* temp */ }
+      res.status(500).json({ message: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
+  app.post("/api/products/import/commit", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    const rows: CommitRow[] = Array.isArray(req.body?.rows) ? req.body.rows : [];
+    if (!rows.length) return res.status(400).json({ message: "Nothing to apply." });
+
+    const defaultStoreId = req.body?.storeId ? Number(req.body.storeId) : null;
+    const needsLocation = rows.some((r) => Number(r.quantity) > 0 && !r.storeId);
+    if (needsLocation && !defaultStoreId) {
+      return res.status(400).json({ message: "Choose a location for the stock before applying." });
+    }
+    if (defaultStoreId) {
+      const stores = await getStores();
+      if (!stores.some((s: any) => s.id === defaultStoreId)) {
+        return res.status(400).json({ message: "That location does not exist." });
       }
-      res.json({ ok: true, created, updated, rejected, rejectedCount: rejected.length, total: rows.length });
-    } catch (e) { res.status(500).json({ message: String(e) }); }
+    }
+
+    try {
+      const result = await commitRows(rows, { defaultStoreId, userId: req.user?.id || undefined });
+      res.json({
+        ok: true,
+        ...result,
+        createdCount: result.created.length,
+        updatedCount: result.updated.length,
+        failedCount: result.failed.length,
+      });
+    } catch (e) {
+      res.status(500).json({ message: e instanceof Error ? e.message : String(e) });
+    }
   });
 
   app.post("/api/customers/import", upload.single("file"), async (req: Request, res: Response) => {

@@ -27,6 +27,7 @@ import {
   CheckCircle2,
   XCircle,
   ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import { useTheme } from "@/contexts/ThemeContext";
 import { cn } from "@/lib/utils";
@@ -75,6 +76,7 @@ type NavItem = {
 
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard", icon: LayoutDashboard, key: "dashboard" },
+  { path: "/assistant", label: "AI Overview", icon: Sparkles, key: "assistant" },
   { path: "/quick-sale", label: "Quick Sale", icon: Zap, key: "documents" },
   { path: "/documents", label: "Documents", icon: FileText, key: "documents" },
   { path: "/customers", label: "Customers", icon: Users, key: "customers" },

@@ -16,3 +16,7 @@ vite.config.ts.*
 # Logs / temp
 *.log
 /tmp
+
+# Real business data — never commit (repo is public)
+stock-import.csv
+/*-import.csv

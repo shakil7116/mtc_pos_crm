@@ -195,6 +195,27 @@ export const products = pgTable("products", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ─── Product Aliases ─────────────────────────────────────────────────────────
+// One physical product, many names. "PVC GOLMALA" is the trade name for the
+// same item the catalogue calls "PVC TROWEL"; "RUNNER CHANNEL" and "TRACK
+// CHANNEL" are one product. Recording those equivalences here is what stops a
+// scanned supplier invoice from creating a second copy of a product you already
+// stock (duplicates split the stock count and skew profit-per-product).
+//
+// Only TRUE equivalence belongs here — same physical item, different name.
+// "SHOWER MIXER" and "FAUCET" must NOT be aliases: a shower mixer is a *kind
+// of* faucet, and treating them as interchangeable ships the wrong goods. That
+// relationship goes in products.category. See server/matching.ts.
+export const productAliases = pgTable("product_aliases", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").notNull().references(() => products.id),
+  alias: text("alias").notNull(),           // as typed/scanned, stored UPPERCASE
+  aliasNorm: text("alias_norm").notNull(),  // normalizeName(alias) — UNIQUE, the lookup key
+  source: text("source").notNull().default("manual"), // manual | ocr | import | ai
+  confirmedBy: integer("confirmed_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ─── Inventory ───────────────────────────────────────────────────────────────
 export const inventory = pgTable("inventory", {
   id: serial("id").primaryKey(),
@@ -788,6 +809,7 @@ export const insertUserSchema = createInsertSchema(users).omit({ id: true, creat
 export const insertTaskSchema = createInsertSchema(tasks).omit({ id: true, createdAt: true, completedAt: true });
 export const insertCustomerSchema = createInsertSchema(customers).omit({ id: true, createdAt: true });
 export const insertProductSchema = createInsertSchema(products).omit({ id: true, createdAt: true });
+export const insertProductAliasSchema = createInsertSchema(productAliases).omit({ id: true, createdAt: true, aliasNorm: true });
 export const insertInventorySchema = createInsertSchema(inventory).omit({ id: true, updatedAt: true });
 export const insertSupplierSchema = createInsertSchema(suppliers).omit({ id: true, createdAt: true });
 export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, createdAt: true, updatedAt: true });
@@ -830,7 +852,9 @@ export type InsertTask = z.infer<typeof insertTaskSchema>;
 export type Customer = typeof customers.$inferSelect;
 export type InsertCustomer = z.infer<typeof insertCustomerSchema>;
 export type Product = typeof products.$inferSelect;
+export type ProductAlias = typeof productAliases.$inferSelect;
 export type InsertProduct = z.infer<typeof insertProductSchema>;
+export type InsertProductAlias = z.infer<typeof insertProductAliasSchema>;
 export type Inventory = typeof inventory.$inferSelect;
 export type InsertInventory = z.infer<typeof insertInventorySchema>;
 export type Supplier = typeof suppliers.$inferSelect;

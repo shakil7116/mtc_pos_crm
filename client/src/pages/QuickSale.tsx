@@ -113,12 +113,14 @@ export default function QuickSale() {
   // Sell from the user's own store, else the first active store location.
   const storeId = user?.storeId ?? stores.find((s: any) => s.type === "store" && s.active !== false)?.id ?? stores[0]?.id ?? null;
 
-  // Store IDs relevant to Quick Sale: user's store + its owned warehouses.
+  // Store IDs this till can sell from: the user's store + every warehouse.
+  // Warehouses are shared — staff rotate through them and bills get pulled from
+  // them — so they are not scoped by ownerStoreId. Other stores stay out.
   const relevantStoreIds = useMemo(() => {
     if (!storeId) return new Set<number>();
     const ids = new Set<number>([storeId]);
     (stores as any[]).forEach((s) => {
-      if (s.type === "warehouse" && (s.ownerStoreId === storeId || s.ownerStoreId == null)) ids.add(s.id);
+      if (s.type === "warehouse" && s.active !== false) ids.add(s.id);
     });
     return ids;
   }, [storeId, stores]);
@@ -203,8 +205,21 @@ export default function QuickSale() {
     const q = search.trim().toLowerCase();
     const list = (products as Product[]).filter((p) => p.active !== false && productsWithStock.has(p.id));
     if (!q) return list.slice(0, 40);
-    return list.filter((p) => p.name.toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q)).slice(0, 40);
+    return list.filter((p) => (p.name || "").toLowerCase().includes(q) || (p.sku || "").toLowerCase().includes(q)).slice(0, 40);
   }, [products, search, productsWithStock]);
+
+  // Quick Sale only lists what this store can actually hand over, so a product
+  // stocked somewhere else vanishes with no explanation. Count what was dropped
+  // and say so — "nothing here" and "it's all in another branch" are not the
+  // same problem, and only one of them is fixed by a transfer.
+  const hiddenNoStock = useMemo(
+    () => (products as Product[]).filter((p) => p.active !== false && !productsWithStock.has(p.id)).length,
+    [products, productsWithStock],
+  );
+  const sellingStoreName = useMemo(
+    () => (stores as any[]).find((s) => s.id === storeId)?.nameEn ?? "this location",
+    [stores, storeId],
+  );
 
   const total = cart.reduce((s, l) => s + l.price * l.qty, 0);
   // Block charge until every multi-location line has a location picked.
@@ -403,6 +418,11 @@ export default function QuickSale() {
               className="pl-9 h-12 text-base"
             />
           </div>
+          {hiddenNoStock > 0 && filtered.length > 0 && (
+            <p className="text-[11px] text-muted-foreground px-1">
+              Showing stock at <span className="font-medium">{sellingStoreName}</span> · {hiddenNoStock} product{hiddenNoStock === 1 ? "" : "s"} hidden with no stock here.
+            </p>
+          )}
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 max-h-[60vh] overflow-y-auto pr-1">
             {filtered.map((p) => (
               <button
@@ -421,7 +441,16 @@ export default function QuickSale() {
               </button>
             ))}
             {filtered.length === 0 && (
-              <p className="col-span-full text-center text-sm text-muted-foreground py-8">No products match "{search}".</p>
+              <div className="col-span-full text-center py-8 space-y-1">
+                <p className="text-sm text-muted-foreground">
+                  {search.trim() ? `No products match "${search}".` : `No products in stock at ${sellingStoreName}.`}
+                </p>
+                {hiddenNoStock > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    {hiddenNoStock} product{hiddenNoStock === 1 ? " is" : "s are"} hidden — no stock at {sellingStoreName}. Transfer stock in from Inventory to sell {hiddenNoStock === 1 ? "it" : "them"} here.
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>

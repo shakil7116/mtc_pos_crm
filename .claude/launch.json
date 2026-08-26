@@ -8,6 +8,13 @@
       "port": 5050,
       "autoPort": true,
       "env": { "NODE_ENV": "development", "PORT": "5050" }
+    },
+    {
+      "name": "prod",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["dist/index.cjs"],
+      "port": 5050,
+      "env": { "NODE_ENV": "production", "PORT": "5050" }
     }
   ]
 }

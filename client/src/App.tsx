@@ -40,6 +40,7 @@ const CashLoans = lazy(() => import("@/pages/CashLoans"));
 const Maintenance = lazy(() => import("@/pages/Maintenance"));
 const Finance = lazy(() => import("@/pages/Finance"));
 const PickQueue = lazy(() => import("@/pages/PickQueue"));
+const Assistant = lazy(() => import("@/pages/Assistant"));
 const NotFound = lazy(() => import("@/pages/not-found"));
 
 // Shown briefly while a route's chunk downloads (usually a few hundred ms, once).
@@ -139,6 +140,7 @@ function ProtectedApp() {
         <Route path="/messages" component={Messages} />
         <Route path="/pick-queue" component={PickQueue} />
         <Route path="/approvals" component={Approvals} />
+        <Route path="/assistant" component={Assistant} />
         <Route path="/expenses" component={Expenses} />
         <Route path="/cash-loans" component={() => <CashLoans />} />
         <Route path="/maintenance" component={Maintenance} />

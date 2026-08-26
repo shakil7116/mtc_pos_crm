@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -2272,7 +2273,6 @@ function Section7({ toast, qc }: { toast: any; qc: any }) {
 ════════════════════════════════════════════════════════════════════ */
 function Section8({ toast }: { toast: any }) {
   const [syncing, setSyncing] = useState(false);
-  const productsImportRef = useRef<HTMLInputElement>(null);
   const customersImportRef = useRef<HTMLInputElement>(null);
 
   /* Generic CSV download of a given endpoint */
@@ -2398,36 +2398,21 @@ function Section8({ toast }: { toast: any }) {
             </Button>
           </div>
 
-          {/* Import Products */}
+          {/* Import Products — moved to Inventory, which is where the location is chosen */}
           <div className="border border-border rounded-xl p-4 space-y-3">
             <p className="text-sm font-medium">Import Products</p>
             <div className="bg-muted/30 rounded-lg p-3 text-xs text-muted-foreground space-y-1">
-              <p className="font-medium text-foreground">Expected CSV columns:</p>
               <p>
-                <code>sku, name, category, unit, sale_price, wholesale_price, cost_price, min_stock_qty, supplier_name, location_area, location_rack, location_shelf, initial_qty</code>
+                Product import now lives on the <span className="font-medium text-foreground">Inventory</span> page, so
+                the file can be previewed and the stock location chosen before anything is saved.
               </p>
-              <p>First row must be the header. All prices in QAR. Only <code>name</code> or <code>sku</code> is required.</p>
             </div>
-            <input
-              type="file"
-              accept=".csv"
-              ref={productsImportRef}
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleImport(file, "/api/products/import", "file");
-                if (productsImportRef.current) productsImportRef.current.value = "";
-              }}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => productsImportRef.current?.click()}
-              className="gap-2"
-            >
-              <Upload className="w-3.5 h-3.5" />
-              Import Products CSV
-            </Button>
+            <Link href="/inventory">
+              <Button variant="outline" size="sm" className="gap-2">
+                <Upload className="w-3.5 h-3.5" />
+                Go to Inventory
+              </Button>
+            </Link>
           </div>
 
           {/* Import Customers */}

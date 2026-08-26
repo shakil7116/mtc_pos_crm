@@ -1,7 +1,7 @@
 import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import {
-  settings, stores, users, customers, products, inventory, suppliers,
+  settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
   documentCounters, damageClaims,
@@ -14,6 +14,7 @@ import {
   type User, type InsertUser,
   type Customer, type InsertCustomer,
   type Product, type InsertProduct,
+  type ProductAlias, type InsertProductAlias,
   type Inventory, type InsertInventory,
   type Supplier, type InsertSupplier,
   type Document, type InsertDocument, type DocumentWithItems, type CreateDocumentRequest,
@@ -33,6 +34,7 @@ import {
   type ArrangementNote, type ArrangementNoteItem,
 } from "@shared/schema";
 import { eq, desc, asc, and, or, gte, lte, lt, ne, isNull, sql, inArray } from "drizzle-orm";
+import { normalizeName, matchProduct, type MatchResult, type MatchCandidateInput } from "./matching";
 
 export { chatStorage } from "./replit_integrations/chat/storage";
 
@@ -509,13 +511,131 @@ export async function updateProduct(id: number, data: Partial<InsertProduct>): P
   return row;
 }
 
+// ─── Product Aliases & matching ──────────────────────────────────────────────
+// See server/matching.ts for the rules. In short: an alias asserts two names are
+// the SAME physical item, so a bad alias silently merges two SKUs and corrupts
+// both stock and COGS. Every write below is guarded against that.
+
+export class AliasConflictError extends Error {
+  constructor(public alias: string, public conflictsWith: string) {
+    super(`"${alias}" already refers to ${conflictsWith}`);
+    this.name = "AliasConflictError";
+  }
+}
+
+export async function getProductAliases(productId?: number): Promise<(ProductAlias & { productName: string })[]> {
+  const rows = await db.select({ a: productAliases, productName: products.name })
+    .from(productAliases)
+    .innerJoin(products, eq(productAliases.productId, products.id))
+    .where(productId ? eq(productAliases.productId, productId) : undefined)
+    .orderBy(asc(products.name), asc(productAliases.alias));
+  return rows.map((r) => ({ ...r.a, productName: r.productName }));
+}
+
+export async function createProductAlias(
+  data: { productId: number; alias: string; source?: string; confirmedBy?: number | null },
+): Promise<ProductAlias> {
+  const alias = String(data.alias || "").trim().toUpperCase();
+  const aliasNorm = normalizeName(alias);
+  if (!aliasNorm) throw new Error("Alias is empty");
+
+  const target = await getProduct(data.productId);
+  if (!target) throw new Error(`Product ${data.productId} not found`);
+
+  // An alias that is already some OTHER product's own name would make the same
+  // string resolve two ways. Refuse rather than pick a winner.
+  const [nameClash] = await db.select({ id: products.id, name: products.name })
+    .from(products)
+    .where(and(eq(products.active, true), ne(products.id, data.productId),
+      sql`${products.name} = ${alias}`))
+    .limit(1);
+  if (nameClash) throw new AliasConflictError(alias, `the product "${nameClash.name}"`);
+
+  // Already claimed by another product?
+  const [existing] = await db.select({ a: productAliases, productName: products.name })
+    .from(productAliases)
+    .innerJoin(products, eq(productAliases.productId, products.id))
+    .where(eq(productAliases.aliasNorm, aliasNorm))
+    .limit(1);
+  if (existing) {
+    if (existing.a.productId === data.productId) return existing.a; // idempotent re-confirm
+    throw new AliasConflictError(alias, `"${existing.productName}"`);
+  }
+
+  const [row] = await db.insert(productAliases).values({
+    productId: data.productId,
+    alias,
+    aliasNorm,
+    source: data.source || "manual",
+    confirmedBy: data.confirmedBy ?? null,
+  }).returning();
+  return row;
+}
+
+export async function deleteProductAlias(id: number): Promise<void> {
+  await db.delete(productAliases).where(eq(productAliases.id, id));
+}
+
+/** Active catalogue with every confirmed alias attached — the input the matcher ranks. */
+export async function getMatchCatalogue(): Promise<MatchCandidateInput[]> {
+  const [rows, aliases] = await Promise.all([
+    db.select({ id: products.id, name: products.name, sku: products.sku })
+      .from(products).where(eq(products.active, true)),
+    db.select({ productId: productAliases.productId, alias: productAliases.alias }).from(productAliases),
+  ]);
+  const byProduct = new Map<number, string[]>();
+  for (const a of aliases) {
+    const list = byProduct.get(a.productId);
+    if (list) list.push(a.alias); else byProduct.set(a.productId, [a.alias]);
+  }
+  return rows.map((p) => ({ productId: p.id, name: p.name, sku: p.sku, aliases: byProduct.get(p.id) || [] }));
+}
+
+/**
+ * Match a batch of incoming descriptions against the catalogue in one pass —
+ * the catalogue is loaded once, not per line, so a 40-line scanned invoice is
+ * a single query.
+ */
+export async function matchProductNames(
+  queries: { description: string; sku?: string | null }[],
+  opts: { limit?: number } = {},
+): Promise<MatchResult[]> {
+  const catalogue = await getMatchCatalogue();
+  return queries.map((q) => matchProduct(q.description, catalogue, { sku: q.sku, limit: opts.limit }));
+}
+
 // ─── Inventory ───────────────────────────────────────────────────────────────
-export async function getInventory(storeId?: number, includeWarehouses?: boolean): Promise<(Inventory & { product: Product; store: Store })[]> {
+
+/** Quantity of one product at one location. Used to report before/after on an import. */
+export async function getProductQtyAt(productId: number, storeId: number): Promise<number> {
+  const [row] = await db.select({ qty: inventory.qty }).from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
+  return row ? Number(row.qty || 0) : 0;
+}
+/**
+ * Stock rows, optionally narrowed to one store.
+ *
+ * warehouseScope decides what "and its warehouses" means:
+ *   "owned" — only warehouses whose ownerStoreId is this store. Used by the
+ *             Inventory store-group filter, where the question really is
+ *             "what does this branch own".
+ *   "all"   — every warehouse, whoever owns it. This is the scope a person
+ *             selling gets, because staff rotate between the shop and the
+ *             warehouses; a biller who cannot see warehouse stock cannot pull
+ *             from it and cannot warn anyone when the count looks wrong.
+ */
+export async function getInventory(
+  storeId?: number,
+  includeWarehouses?: boolean,
+  warehouseScope: "owned" | "all" = "owned",
+): Promise<(Inventory & { product: Product; store: Store })[]> {
   let filter: any = undefined;
   if (storeId) {
     if (includeWarehouses) {
-      const owned = await db.select({ id: stores.id }).from(stores)
-        .where(and(eq(stores.ownerStoreId, storeId), eq(stores.type, "warehouse")));
+      const whFilter = warehouseScope === "all"
+        ? eq(stores.type, "warehouse")
+        : and(eq(stores.ownerStoreId, storeId), eq(stores.type, "warehouse"));
+      const owned = await db.select({ id: stores.id }).from(stores).where(whFilter);
       const ids = [storeId, ...owned.map(r => r.id)];
       filter = inArray(inventory.storeId, ids);
     } else {

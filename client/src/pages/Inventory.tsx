@@ -15,6 +15,8 @@ import {
   Warehouse,
   Store,
   ClipboardList,
+  Upload,
+  ScanLine,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -56,6 +58,8 @@ import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/C
 import { validateSku, validatePositivePrice, validateNonNegative } from "@/lib/validation";
 import { Link, useSearch } from "wouter";
 import TransferModal from "@/components/TransferModal";
+import ScanToInventory from "@/components/ScanToInventory";
+import ImportProductsCsv from "@/components/ImportProductsCsv";
 import TransferVoucher from "@/components/TransferVoucher";
 
 /* ─────────────────────────────────────────
@@ -2338,6 +2342,8 @@ export default function Inventory() {
   }
 
   const [adjOpen, setAdjOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
@@ -2364,6 +2370,18 @@ export default function Inventory() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          {isAdmin && (
+            <>
+              <Button variant="outline" onClick={() => setImportOpen(true)} className="gap-2 rounded-lg">
+                <Upload className="w-4 h-4" />
+                Import CSV
+              </Button>
+              <Button variant="outline" onClick={() => setScanOpen(true)} className="gap-2 rounded-lg">
+                <ScanLine className="w-4 h-4" />
+                Scan Invoice
+              </Button>
+            </>
+          )}
           <Button variant="outline" onClick={exportCsv} className="gap-2 rounded-lg">
             <FileText className="w-4 h-4" />
             Export CSV
@@ -2378,6 +2396,10 @@ export default function Inventory() {
           </button>
         </div>
       </div>
+
+      <ImportProductsCsv open={importOpen} onClose={() => setImportOpen(false)} />
+
+      <ScanToInventory open={scanOpen} onClose={() => setScanOpen(false)} stores={stores} suppliers={suppliers} />
 
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} stores={stores} products={products} prefill={transferPrefill} />
 
