@@ -173,3 +173,43 @@ live, in sequence — the standard Express middleware pattern.
 **Consequence:** Deleting the "second" handler would have deleted the real
 business logic for creating documents, customers, returns and settings. The
 CLAUDE.md entry now warns against exactly that.
+
+---
+
+## 2026-08-26 — DELETE /api/documents/:id is admin-only and refuses money documents
+
+**Context:** The endpoint hard-deleted a document with no role check, no status
+check and no window check, while `POST /api/documents/:id/void` right below it has
+an ownership gate, a role gate and a time window. Any authenticated user — including
+a driver — could permanently erase any invoice and its line items. No client code
+calls the endpoint at all.
+
+**Decision:** Admin only. INV/RV/CN are refused outright with `code: "USE_VOID"`.
+Anything with payments recorded is refused with `code: "HAS_PAYMENTS"`.
+
+**Why:** Deleting an invoice destroys the financial record with no stock reversal,
+no refund and no audit trail. Voiding is the correct operation and already exists.
+
+---
+
+## 2026-08-26 — COGS is pinned at the moment of sale
+
+**Context:** Profit joined `documentItems` to `products` and read `costPrice` at
+REPORT time. Changing a supplier's cost silently rewrote the margin on every invoice
+ever sold — a price rise could turn a historically profitable invoice into a loss.
+
+**Decision:** New column `document_items.cost_at_sale`, written by `createDocument`
+and the item-rewrite path in `updateDocument` via `snapshotCosts()`. All ten profit
+read sites resolve through the pure, tested `resolveItemCost(costAtSale, currentCost)`.
+
+**Why:** Historical margin must be a fact, not a recalculation against today's prices.
+
+**Consequence:** Existing rows stay NULL and fall back to current cost, so historical
+reports are unchanged rather than retro-corrected. Every sale from now on is pinned.
+`scripts/migrate-cogs-snapshot.mjs` must run before this code is deployed — the
+queries select the new column. The fallback is deliberately kept forever, not a
+temporary shim, because legacy rows genuinely have no pinned cost.
+
+**Not changed:** the `cashMap` block in `/api/customers/:id/analytics` still reads
+current cost. That view is explicitly about *current* pricing (`currentSalePrice`,
+`currentWholesalePrice`), so current cost is correct there.

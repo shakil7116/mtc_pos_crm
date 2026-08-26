@@ -303,6 +303,11 @@ export const documentItems = pgTable("document_items", {
   discountType: text("discount_type").default("QAR"),
   discountAmount: numeric("discount_amount").default("0"),
   amount: numeric("amount").notNull(),
+  // COGS SNAPSHOT: the product cost at the moment this line was sold. Profit used to
+  // re-read products.cost_price at REPORT time, so a supplier price change silently
+  // rewrote every historical margin. NULL on rows written before this column existed —
+  // those fall back to the current cost (see resolveItemCost in server/storage.ts).
+  costAtSale: numeric("cost_at_sale"),
   // Physical location this line is pulled from (per-line, staff-only — NEVER printed on
   // the customer copy). Drives per-location stock deduction + Delivery Note pick grouping.
   locationStoreId: integer("location_store_id").references(() => stores.id),

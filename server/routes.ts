@@ -16,7 +16,7 @@ import {
   createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer, getTransferSettlement,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
-  getPayments, createPayment,
+  getPayments, createPayment, resolveItemCost,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -972,6 +972,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         sku: documentItems.sku,
         unit: documentItems.unit,
         costPrice: products.costPrice,
+        costAtSale: documentItems.costAtSale,
         productName: products.name,
         category: products.category,
         currentSalePrice: products.salePrice,
@@ -993,7 +994,7 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
         const key = it.productId ? `pid:${it.productId}` : `desc:${(it.description || "").toUpperCase()}`;
         const qty = parseFloat(it.qty || "0");
         const amount = parseFloat(it.amount || "0");
-        const cost = parseFloat(it.costPrice || "0");
+        const cost = resolveItemCost(it.costAtSale, it.costPrice);
         const unitPrice = parseFloat(it.price || "0");
         const itemCost = qty * cost;
         const itemProfit = amount - itemCost;
@@ -1320,8 +1321,34 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
   });
 
+  // Hard delete DESTROYS the financial record - no stock reversal, no refund, no
+  // audit trail. An invoice is VOIDED (see /void below), never deleted. This
+  // endpoint previously had no role check, no status check and no window check,
+  // so any authenticated user - including a driver - could permanently erase any
+  // invoice. No client code calls it.
   app.delete("/api/documents/:id", async (req: Request, res: Response) => {
     try {
+      if (reqRole(req) !== "admin") {
+        return res.status(403).json({ message: "Only an admin can delete a document." });
+      }
+      const doc: any = await getDocument(Number(req.params.id));
+      if (!doc) return res.status(404).json({ message: "Document not found" });
+
+      // Money-bearing documents are never deletable.
+      if (["INV", "RV", "CN"].includes(String(doc.type))) {
+        return res.status(400).json({
+          message: `A ${doc.type} cannot be deleted - that would destroy the financial record. Void it instead.`,
+          code: "USE_VOID",
+        });
+      }
+      const pays = await getPayments(Number(req.params.id));
+      if (pays.length) {
+        return res.status(400).json({
+          message: "This document has payments recorded against it and cannot be deleted.",
+          code: "HAS_PAYMENTS",
+        });
+      }
+
       await deleteDocument(Number(req.params.id));
       res.status(204).send();
     } catch (err) {
@@ -3074,14 +3101,15 @@ ALL item descriptions in UPPERCASE. No explanation.` }
         const { inArray } = await import("drizzle-orm");
         const items = await db.select({
           documentId: S.documentItems.documentId, qty: S.documentItems.qty,
-          amount: S.documentItems.amount, cost: S.products.costPrice, category: S.products.category,
+          amount: S.documentItems.amount, cost: S.products.costPrice,
+          costAtSale: S.documentItems.costAtSale, category: S.products.category,
         }).from(S.documentItems)
           .leftJoin(S.products, eq(S.documentItems.productId, S.products.id))
           .where(inArray(S.documentItems.documentId, invIds));
         const profitByDoc: Record<number, number> = {};
         for (const it of items as any[]) {
           profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) +
-            (parseFloat(it.amount || "0") - parseFloat(it.cost || "0") * parseFloat(it.qty || "0"));
+            (parseFloat(it.amount || "0") - resolveItemCost(it.costAtSale, it.cost) * parseFloat(it.qty || "0"));
           const cat = it.category || "Other";
           salesByCategoryMap[cat] = (salesByCategoryMap[cat] || 0) + parseFloat(it.amount || "0");
         }
@@ -3146,7 +3174,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
 
       // ── Product intelligence: top / worst by profit + top customers ──
       const allItems = invIds.length
-        ? await db.select({ productId: S.documentItems.productId, description: S.documentItems.description, qty: S.documentItems.qty, amount: S.documentItems.amount, cost: S.products.costPrice })
+        ? await db.select({ productId: S.documentItems.productId, description: S.documentItems.description, qty: S.documentItems.qty, amount: S.documentItems.amount, cost: S.products.costPrice, costAtSale: S.documentItems.costAtSale })
             .from(S.documentItems).leftJoin(S.products, eq(S.documentItems.productId, S.products.id))
             .where((await import("drizzle-orm")).inArray(S.documentItems.documentId, invIds))
         : [];
@@ -3154,7 +3182,7 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       for (const it of allItems as any[]) {
         const key = it.description || String(it.productId);
         const a = prodAgg[key] || { name: it.description || "?", qty: 0, revenue: 0, profit: 0 };
-        const rev = parseFloat(it.amount || "0"), pr = rev - parseFloat(it.cost || "0") * parseFloat(it.qty || "0");
+        const rev = parseFloat(it.amount || "0"), pr = rev - resolveItemCost(it.costAtSale, it.cost) * parseFloat(it.qty || "0");
         a.qty += parseFloat(it.qty || "0"); a.revenue += rev; a.profit += pr;
         prodAgg[key] = a;
       }

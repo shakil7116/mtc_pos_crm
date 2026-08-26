@@ -17,14 +17,14 @@ npm run dev       # dev server, port 5050
 npm run build     # client (vite) + server (esbuild) → dist/
 npm run start     # run the production build
 npm run check     # tsc typecheck (covers tests too) — MUST be clean before any commit
-npm test          # THE GATE: tsc + 132 assertions. Must pass before every commit.
+npm test          # THE GATE: tsc + 142 assertions. Must pass before every commit.
 npm run db:push   # push schema changes (drizzle-kit)
 ```
 
 Narrower runs:
 
 ```bash
-npm run test:unit     # vitest only (78 money assertions)
+npm run test:unit     # vitest only (88 money assertions)
 npm run test:verify   # the three parser/matching verifiers (54 assertions)
 npm run test:watch    # vitest in watch mode
 ```
@@ -58,7 +58,11 @@ Documentation:
 
 ## Rules that must not be broken
 
-**Money and profit.** Gross profit is *item-level*: `Σ(item.amount − item.cost × qty)`.
+**Money and profit.** Gross profit is *item-level*: `Σ(item.amount − item.cost × qty)`,
+where `item.cost` is `resolveItemCost(costAtSale, products.costPrice)` — the cost PINNED
+at the moment of sale, falling back to current cost only for rows written before
+`document_items.cost_at_sale` existed. Never read `products.costPrice` directly in a
+profit calculation or supplier price changes will rewrite history again.
 Never `total − COGS`. `aggregateInvoiceProfit()` in `server/storage.ts` is the only
 source — Finance, Reports and Dashboard all read it so they cannot disagree.
 Real profit = PAID invoices only. Expected profit = all non-void.
@@ -122,7 +126,8 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 
 ## Known open items
 
+- `scripts/migrate-cogs-snapshot.mjs` MUST be run before deploying — the profit
+  queries now select `document_items.cost_at_sale` and will fail until it exists.
+
 - No pagination on `/api/documents`.
-- No COGS cost snapshot — profit recomputes against *current* cost, so historical
-  margins silently drift when supplier prices change.
 - `test123` still works as a password. Run `scripts/force-password-reset.mjs` at go-live.

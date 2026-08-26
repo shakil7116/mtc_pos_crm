@@ -1090,6 +1090,34 @@ export async function cancelTransfer(id: number, userId?: number): Promise<any> 
   return { ok: true };
 }
 
+/** Cost of a sold line. Prefers the snapshot frozen at the moment of sale;
+ *  falls back to the product CURRENT cost only for rows written before the
+ *  cost_at_sale column existed. Never returns NaN.
+ *
+ *  Without this, changing a supplier cost silently rewrote the margin on every
+ *  invoice ever sold, because profit re-read products.costPrice at report time. */
+export function resolveItemCost(costAtSale: any, currentCost: any): number {
+  if (costAtSale !== null && costAtSale !== undefined && costAtSale !== "") {
+    const pinned = Number(costAtSale);
+    if (Number.isFinite(pinned)) return pinned;
+  }
+  const current = Number(currentCost);
+  return Number.isFinite(current) ? current : 0;
+}
+
+/** Current cost of every referenced product, keyed by id. Read at WRITE time so
+ *  the cost that applied at sale is what gets stored on the line. */
+async function snapshotCosts(items: Array<{ productId?: any }>): Promise<Record<number, string>> {
+  const ids = Array.from(new Set(
+    (items || []).map((i) => Number(i?.productId)).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return {};
+  const rows = await db.select({ id: products.id, costPrice: products.costPrice })
+    .from(products).where(inArray(products.id, ids));
+  const out: Record<number, string> = {};
+  for (const r of rows) out[r.id] = String(r.costPrice ?? "0");
+  return out;
+}
+
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {
   // ── Customer gate — every invoice (cash + credit) must have a linked customer.
   // Blocks anonymous invoices at the API layer, not just in the UI.
@@ -1206,6 +1234,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
 
   const items: DocumentItem[] = [];
   if (req.items.length > 0) {
+    const costSnap = await snapshotCosts(req.items as any[]);
     const inserted = await db.insert(documentItems).values(
       req.items.map(item => ({
         documentId: doc.id,
@@ -1218,6 +1247,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         discountType: item.discountType,
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
+        costAtSale: costSnap[Number(item.productId)] ?? null,
         locationStoreId: (item as any).locationStoreId ?? null,
       }))
     ).returning();
@@ -1545,6 +1575,7 @@ export async function updateDocumentItems(documentId: number, items: Omit<Insert
   }
   await db.delete(documentItems).where(eq(documentItems.documentId, documentId));
   if (items.length > 0) {
+    const costSnap = await snapshotCosts(items as any[]);
     await db.insert(documentItems).values(
       items.map(item => ({
         documentId,
@@ -1557,6 +1588,7 @@ export async function updateDocumentItems(documentId: number, items: Omit<Insert
         discountType: item.discountType,
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
+        costAtSale: costSnap[Number(item.productId)] ?? null,
         locationStoreId: (item as any).locationStoreId ?? null,
       }))
     );
@@ -3851,13 +3883,13 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
     const items = await db.select({
       documentId: documentItems.documentId, description: documentItems.description,
       qty: documentItems.qty, amount: documentItems.amount,
-      cost: products.costPrice, category: products.category,
+      cost: products.costPrice, costAtSale: documentItems.costAtSale, category: products.category,
     }).from(documentItems)
       .leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
 
     for (const it of items as any[]) {
-      const itemCost = parseFloat(it.cost || "0") * parseFloat(it.qty || "0");
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * parseFloat(it.qty || "0");
       const itemRev = parseFloat(it.amount || "0");
       const itemProfit = itemRev - itemCost;
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
@@ -4059,16 +4091,17 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
   if (ids.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty, price: documentItems.price,
-      amount: documentItems.amount, description: documentItems.description, cost: products.costPrice,
+      amount: documentItems.amount, description: documentItems.description, cost: products.costPrice, costAtSale: documentItems.costAtSale,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
     for (const it of items as any[]) {
-      const c = Number(it.cost || 0) * Number(it.qty || 0);
+      const unitCost = resolveItemCost(it.costAtSale, it.cost);
+      const c = unitCost * Number(it.qty || 0);
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + c;
       (itemsByDoc[it.documentId] ||= []).push({
         description: it.description, qty: Number(it.qty || 0), price: Number(it.price || 0),
-        cost: Number(it.cost || 0), amount: Number(it.amount || 0),
-        profit: Number((Number(it.amount || 0) - Number(it.cost || 0) * Number(it.qty || 0)).toFixed(2)),
+        cost: unitCost, amount: Number(it.amount || 0),
+        profit: Number((Number(it.amount || 0) - c).toFixed(2)),
       });
     }
   }
@@ -4099,11 +4132,11 @@ export async function getProfitSummary() {
   if (ids.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
     for (const it of items as any[]) {
-      const itemCost = Number(it.cost || 0) * Number(it.qty || 0);
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * Number(it.qty || 0);
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
       profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + (Number(it.amount || 0) - itemCost);
     }
@@ -4134,11 +4167,11 @@ export async function getLocationOverview(start: string, end: string) {
   if (invIds.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, invIds));
     for (const it of items as any[]) {
-      const itemCost = Number(it.cost || 0) * Number(it.qty || 0);
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * Number(it.qty || 0);
       const itemProfit = Number(it.amount || 0) - itemCost;
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
       profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + itemProfit;
@@ -4315,13 +4348,13 @@ export async function getCustomerOverview() {
   if (paidWindowIds.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, paidWindowIds));
     for (const it of items as any[]) {
       const qty = parseFloat(it.qty || "0");
       const rev = parseFloat(it.amount || "0");
-      const cogs = qty * parseFloat(it.cost || "0");
+      const cogs = qty * resolveItemCost(it.costAtSale, it.cost);
       marginByInv.set(it.documentId, (marginByInv.get(it.documentId) || 0) + (rev - cogs));
       qtyByInv.set(it.documentId, (qtyByInv.get(it.documentId) || 0) + qty);
     }
