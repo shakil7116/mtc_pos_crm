@@ -20,3 +20,7 @@ vite.config.ts.*
 # Real business data — never commit (repo is public)
 stock-import.csv
 /*-import.csv
+
+# Database backups — the ENTIRE business record. Never commit.
+backups/
+*.json.gz

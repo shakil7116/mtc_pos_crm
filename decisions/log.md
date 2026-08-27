@@ -233,3 +233,37 @@ cannot tell whether it is working, blocked on a lock, or dead.
 current cost — exactly as intended, historical reports unchanged. Verified live with
 `npm run test:live`: real QAR 19504.17 / expected QAR 24508.95 across 85 invoices and
 169 lines, no NaN, and `getProfitSummary` reconciles with `getProfitDetail` to the fils.
+
+---
+
+## 2026-08-27 — Backups are self-hosted logical dumps, not pg_dump
+
+**Context:** Supabase's own retention was the only copy of the entire financial
+record. This machine has no PostgreSQL client tools installed — no `pg_dump`, no
+`psql`, no Postgres install at all.
+
+**Decision:** `scripts/backup-db.mjs` uses the `pg` driver the app already depends
+on. It reads every table plus all 41 sequence positions and writes one verified
+gzipped JSON file. `scripts/restore-db.mjs` reloads it, dry-run by default.
+
+**Why not pg_dump:** it would make the backup depend on the owner installing and
+maintaining PostgreSQL client tools. A backup procedure with a setup prerequisite is
+a backup procedure that does not get run.
+
+**Why sequences are captured separately:** they are not table data. Without them a
+restore resets every id counter to 1 and new inserts collide with restored rows.
+`document_counters` is an ordinary table so invoice numbering was already covered;
+the 41 `*_id_seq` sequences were not.
+
+**Why the backup self-verifies:** it reads the file back and compares row counts
+before reporting success. A backup that was never read back is not a backup.
+
+**Consequence:** `backups/` is gitignored — the repo is public and one of these
+files is the whole business. It sits inside OneDrive, so each backup syncs to
+different hardware automatically. Not yet scheduled: `BACKUP.md` carries the
+`schtasks` command, which needs an Administrator terminal.
+
+**Known limitation, stated plainly:** the restore has been VALIDATED (dry run passes
+against production: 41/41 tables, 0 column mismatches, 0 FK cycles) but never
+REHEARSED against a live target. That needs a scratch database. Until it is done, the
+restore is a validated plan, not a proven procedure.

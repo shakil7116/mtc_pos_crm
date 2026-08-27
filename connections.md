@@ -81,6 +81,10 @@ and the message a human approved.
 ## Not connected
 
 No payment gateway, no accounting-software sync, no email provider, no error
-tracking (Sentry or similar), no uptime monitoring, no automated backups beyond
-whatever Supabase's plan provides. **Verify the Supabase backup retention before
-go-live** — that is currently the only copy of the business's data.
+tracking (Sentry or similar), no uptime monitoring.
+
+**Backups: covered, but not yet scheduled.** `npm run backup` takes a full verified
+logical backup to `backups/` (gitignored, OneDrive-synced). See [BACKUP.md](BACKUP.md)
+for the restore procedure and how to schedule it. Supabase's own retention is no
+longer the only copy — but nothing runs it automatically yet, so it is only as good
+as the last time someone typed the command.

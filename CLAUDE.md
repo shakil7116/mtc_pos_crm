@@ -28,6 +28,8 @@ npm run test:unit     # vitest only (88 money assertions)
 npm run test:verify   # the three parser/matching verifiers (54 assertions)
 npm run test:watch    # vitest in watch mode
 npm run test:live     # read-only smoke test against the REAL db (not in the gate)
+npm run backup        # full verified backup -> backups/ (see BACKUP.md)
+npm run backup:restore-check   # dry-run a restore; writes nothing
 ```
 
 Tests never touch the database. `tests/setup.ts` deletes `DATABASE_URL`, so an
@@ -53,6 +55,7 @@ Documentation:
 
 - `CLAUDE.md` — this file. Conventions and landmines. Read first.
 - `connections.md` — every external system, what breaks without it.
+- `BACKUP.md` — how to back up and restore the database. Read it BEFORE you need it.
 - `decisions/log.md` — why things are the way they are. Log decisions here.
 - `references/` — the master spec, per-page status audit, go-live checklist.
 - `archives/` — Jul 2026 session logs. History only, NOT current truth.
