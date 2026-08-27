@@ -213,3 +213,23 @@ temporary shim, because legacy rows genuinely have no pinned cost.
 **Not changed:** the `cashMap` block in `/api/customers/:id/analytics` still reads
 current cost. That view is explicitly about *current* pricing (`currentSalePrice`,
 `currentWholesalePrice`), so current cost is correct there.
+
+---
+
+## 2026-08-27 — COGS migration applied to production
+
+**Context:** `document_items.cost_at_sale` had to exist before the new profit code
+could run. The first version of the migration script used `pg.Pool` with no timeouts
+and hung for three minutes with no output. TCP to the pooler was verified open and a
+`pg.Client` connected in one second, so the fault was the script, not the network.
+
+**Decision:** Rewrote the script to use `pg.Client` with explicit
+`connectionTimeoutMillis` and `statement_timeout`, plus per-step logging.
+
+**Why:** A migration that hangs silently is worse than one that fails loudly — you
+cannot tell whether it is working, blocked on a lock, or dead.
+
+**Result:** Column added. 404 `document_items` rows, 0 pinned, 404 falling back to
+current cost — exactly as intended, historical reports unchanged. Verified live with
+`npm run test:live`: real QAR 19504.17 / expected QAR 24508.95 across 85 invoices and
+169 lines, no NaN, and `getProfitSummary` reconciles with `getProfitDetail` to the fils.

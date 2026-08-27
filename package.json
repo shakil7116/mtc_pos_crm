@@ -12,7 +12,8 @@
     "test": "tsc --noEmit && vitest run && npm run test:verify",
     "test:watch": "vitest",
     "test:unit": "vitest run",
-    "test:verify": "tsx scripts/verify-line-parser.ts && tsx scripts/verify-matching.ts && tsx scripts/verify-scan-pipeline.ts"
+    "test:verify": "tsx scripts/verify-line-parser.ts && tsx scripts/verify-matching.ts && tsx scripts/verify-scan-pipeline.ts",
+    "test:live": "tsx scripts/verify-cogs-live.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

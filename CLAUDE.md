@@ -27,6 +27,7 @@ Narrower runs:
 npm run test:unit     # vitest only (88 money assertions)
 npm run test:verify   # the three parser/matching verifiers (54 assertions)
 npm run test:watch    # vitest in watch mode
+npm run test:live     # read-only smoke test against the REAL db (not in the gate)
 ```
 
 Tests never touch the database. `tests/setup.ts` deletes `DATABASE_URL`, so an
@@ -126,8 +127,6 @@ conflicts hard-block. Low confidence goes to human review — never auto-merge.
 
 ## Known open items
 
-- `scripts/migrate-cogs-snapshot.mjs` MUST be run before deploying — the profit
-  queries now select `document_items.cost_at_sale` and will fail until it exists.
 
 - No pagination on `/api/documents`.
 - `test123` still works as a password. Run `scripts/force-password-reset.mjs` at go-live.
