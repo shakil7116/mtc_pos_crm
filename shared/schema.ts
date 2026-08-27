@@ -29,6 +29,11 @@ export const settings = pgTable("settings", {
   pdcThreshold: numeric("pdc_threshold").default("4000"),      // VOID refunds ≥ this go out as PDC
   returnPdcThreshold: numeric("return_pdc_threshold").default("5000"), // RETURN refunds ≥ this → PDC or online (manager decides)
   returnApprovalThreshold: numeric("return_approval_threshold").default("1000"), // returns OVER this need manager/admin; at/under → salesman can process
+  // Discounts OVER this need a manager PIN; at or under it a salesman just gives it.
+  // A walk-in customer will not stand at the counter waiting for an approval, so a
+  // blocking gate on every small discount costs real sales. Small ones flow, big
+  // ones stop — and every discount is recorded against whoever gave it either way.
+  discountApprovalThreshold: numeric("discount_approval_threshold").default("100"),
   showPoField: boolean("show_po_field").default(true), // show the PO Number field on the invoice builder
   voidWindowHours: integer("void_window_hours").default(12),   // hours an invoice stays voidable
   creditTerms: integer("credit_terms").array().default([30, 60, 90]),

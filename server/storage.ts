@@ -1250,9 +1250,12 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
   }
 
   // ── Discount / price-change gate (money integrity) ──
-  // A salesman lowering a line price or applying a discount needs a manager's
-  // on-the-spot approval (supervisor PIN). Admin/manager price freely. The client
-  // prompts for the PIN, but this server check is what actually enforces it.
+  // Admin and manager price freely. A salesman may discount up to
+  // settings.discountApprovalThreshold with NO approval — a walk-in customer will
+  // not wait at the counter while someone finds a manager, and a blocking gate on
+  // every small discount costs more in lost sales than it saves in margin.
+  // Above the threshold a manager PIN is required. Either way the discount is
+  // recorded against whoever created the invoice, so nothing is invisible.
   let pricingApprovedBy: number | null = null;
   if (req.type === "INV") {
     const invItems: any[] = (req.items as any[]) || [];
@@ -1264,17 +1267,31 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
     if (footerDisc || lineReduced) {
       const actor = req.createdBy ? await getUser(req.createdBy) : null;
       const isBoss = actor ? ["admin", "manager"].includes(String(actor.role)) : false;
+
+      // How much was actually given away: the footer discount plus every line discount,
+      // plus any line sold under its original price.
+      const lineGiven = invItems.reduce((sum, i) => {
+        const explicit = Number(i.discountAmount || 0);
+        const cut = i.originalPrice != null
+          ? Math.max(0, (Number(i.originalPrice) - Number(i.price)) * Number(i.qty || 0))
+          : 0;
+        return sum + explicit + cut;
+      }, 0);
+      const givenAway = Number((Number((req as any).discountAmount || 0) + lineGiven).toFixed(2));
+      const { discountApprovalThreshold } = await getBusinessRules();
+      const withinSalesmanLimit = givenAway <= discountApprovalThreshold + 0.005;
       // A manager approving this action (e.g. an over-limit sale replayed from the
       // Approvals inbox) authorizes any bundled discount too — no PIN needed then.
       const authorizer = (req as any).authorizedBy ? await getUser(Number((req as any).authorizedBy)) : null;
       const authorizerIsBoss = authorizer ? ["admin", "manager"].includes(String(authorizer.role)) : false;
-      if (!isBoss) {
+      if (!isBoss && !withinSalesmanLimit) {
         if (authorizerIsBoss) {
           pricingApprovedBy = authorizer!.id;
         } else {
           const approver = await getManagerByPin(String((req as any).pricingOverridePin || ""));
           if (!approver) {
-            throw new PricingApprovalRequiredError("A discount or price change needs a manager's approval — ask a manager to enter their PIN.");
+            throw new PricingApprovalRequiredError(
+              `This discount is QAR ${givenAway.toFixed(2)}, over the QAR ${discountApprovalThreshold.toFixed(2)} a salesman may give. A manager PIN is needed.`);
           }
           pricingApprovedBy = approver.id;
         }
@@ -1699,12 +1716,13 @@ export async function deleteDocument(id: number): Promise<void> {
 
 // Business rules (11A) — read live from Settings so the admin can change them
 // anytime without code. Falls back to spec defaults if Settings row is missing.
-export async function getBusinessRules(): Promise<{ pdcThreshold: number; returnPdcThreshold: number; returnApprovalThreshold: number; voidWindowHours: number; pdcAlertDays: number; maintenanceChequeThreshold: number }> {
+export async function getBusinessRules(): Promise<{ pdcThreshold: number; returnPdcThreshold: number; returnApprovalThreshold: number; discountApprovalThreshold: number; voidWindowHours: number; pdcAlertDays: number; maintenanceChequeThreshold: number }> {
   const s: any = await getSettings();
   return {
     pdcThreshold: Number(s?.pdcThreshold ?? 4000),               // VOID refunds only
     returnPdcThreshold: Number(s?.returnPdcThreshold ?? 5000),   // RETURN refunds (separate rule)
     returnApprovalThreshold: Number(s?.returnApprovalThreshold ?? 1000), // returns OVER this need manager
+    discountApprovalThreshold: Number(s?.discountApprovalThreshold ?? 100), // discounts OVER this need a manager PIN
     voidWindowHours: Number(s?.voidWindowHours ?? 12),
     pdcAlertDays: Number(s?.pdcAlertDays ?? 3),
     maintenanceChequeThreshold: Number(s?.maintenanceChequeThreshold ?? 10000),
