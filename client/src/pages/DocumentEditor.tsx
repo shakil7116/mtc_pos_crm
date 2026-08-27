@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { canPickForSale, isStockCounted } from "@shared/stockGate";
 import { createPortal } from "react-dom";
 import { useRoute, useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -540,7 +541,9 @@ export default function DocumentEditor({ type, params }: Props) {
   // filtering, which takes the whole editor down the moment someone types.
   const filteredProducts = products.filter((p) => {
     if (!p.active) return false;
-    if (stockGated && !((stockByProduct.get(p.id) || 0) > 0)) return false;
+    // The rule lives in shared/stockGate.ts and is unit tested. An UNCOUNTED
+    // product has an UNKNOWN quantity, not a zero one, so it is never gated.
+    if (!canPickForSale(p as any, stockByProduct.get(p.id) || 0, stockGated)) return false;
     const q = productSearch.toLowerCase();
     if (!q) return true;
     return (p.name || "").toLowerCase().includes(q) ||
@@ -548,7 +551,8 @@ export default function DocumentEditor({ type, params }: Props) {
       (p.category || "").toLowerCase().includes(q);
   });
   const hiddenNoStock = stockGated
-    ? products.filter((p) => p.active && !((stockByProduct.get(p.id) || 0) > 0)).length
+    ? products.filter((p) => !canPickForSale(p as any, stockByProduct.get(p.id) || 0, true)
+        && p.active).length
     : 0;
   // Price tier: wholesale customers (contractor/corporate/government) get the
   // wholesale price when set; walk-in/retail get the retail price. Staff can still
@@ -970,11 +974,13 @@ export default function DocumentEditor({ type, params }: Props) {
                           : <div className="w-full h-14 rounded-lg bg-slate-100 mb-1.5 flex items-center justify-center text-slate-300"><PackagePlus size={20} /></div>}
                         <p className="text-[11px] font-semibold leading-tight line-clamp-2 min-h-[28px]">{p.name}</p>
                         <p className="text-[11px] font-bold text-[#d4a017] mt-0.5">QAR {Number(p.salePrice || 0).toFixed(2)}</p>
-                        {stockGated && (
+                        {stockGated && (!isStockCounted(p as any) ? (
+                          <p className="text-[10px] mt-0.5 text-slate-400 italic">stock not counted</p>
+                        ) : (
                           <p className={`text-[10px] mt-0.5 ${onHand <= Number(p.minStockQty || 0) ? "text-amber-600 font-semibold" : "text-slate-400"}`}>
                             {onHand} {p.unit || "PCS"} on hand
                           </p>
-                        )}
+                        ))}
                         <span className={`absolute top-1 right-1 inline-flex items-center justify-center min-w-[20px] h-5 px-1 rounded-full text-[10px] font-bold ${inCart > 0 ? "bg-emerald-600 text-white" : "bg-slate-900 text-white"}`}>{inCart > 0 ? inCart : "+"}</span>
                       </button>
                     );
@@ -1369,7 +1375,9 @@ export default function DocumentEditor({ type, params }: Props) {
                       <span className="font-medium">{p.name}</span>
                       <div className="text-xs text-muted-foreground mt-0.5">
                         SKU: {p.sku || "—"} · {p.category || "—"} · {p.unit}
-                        {stockGated && <> · <span className="font-medium text-slate-700">{stockByProduct.get(p.id) || 0} on hand</span></>}
+                        {stockGated && (!isStockCounted(p as any)
+                          ? <> · <span className="italic text-slate-400">stock not counted</span></>
+                          : <> · <span className="font-medium text-slate-700">{stockByProduct.get(p.id) || 0} on hand</span></>)}
                       </div>
                       {(p.locationStoreId || p.locationArea) && (
                         <div className="text-[11px] text-emerald-700 mt-0.5 truncate">

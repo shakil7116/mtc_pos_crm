@@ -190,6 +190,13 @@ export const products = pgTable("products", {
   locationRack: text("location_rack"),   // from managed list location_racks
   locationShelf: text("location_shelf"), // from managed list location_shelves
   imageUrl: text("image_url"),           // optional product photo (Phase 9)
+  // STOCK COUNTED? True for the handful of fast movers that get counted and kept
+  // accurate. FALSE for the long tail: thousands of items that sell a few pieces a
+  // month and are not worth counting. An uncounted product keeps its cost and sale
+  // price, so profit on it is still exact - only its QUANTITY is unknown. It is
+  // therefore never hidden from the sales picker, never raises a low-stock alert,
+  // and is reported as "unknown" in stock valuation rather than counted as zero.
+  trackStock: boolean("track_stock").notNull().default(true),
   customData: jsonb("custom_data").default({}), // admin-defined custom fields (dynamic schema)
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),

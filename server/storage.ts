@@ -705,6 +705,9 @@ export async function adjustStock(
 export async function getLowStockItems(): Promise<(Inventory & { product: Product; store: Store })[]> {
   const all = await getInventory();
   return all.filter(item => {
+    // An uncounted product has an unknown quantity. Alerting on it would bury the
+    // real alerts under thousands of items nobody maintains.
+    if ((item.product as any)?.trackStock === false) return false;
     const qty = parseFloat(item.qty || "0");
     const min = parseFloat(item.product.minStockQty || "0");
     return qty <= min && min > 0;
