@@ -3446,6 +3446,141 @@ export async function updateSupplierOrder(
 // Partial receive: staff selects which items/qty arrived. Adds only the received
 // delta to inventory, tracks receivedQty per line, and flips status to
 // partial / received. Full receipt starts the payment-terms clock.
+/** ONE-STEP GOODS RECEIPT — for a delivery that turns up without a purchase order.
+ *
+ *  The normal path is create PO -> send -> receive. That is three steps, and this
+ *  business takes deliveries of its fast movers every single morning. A three-step
+ *  process for a daily event does not get followed, and the moment it is skipped the
+ *  counted stock starts drifting.
+ *
+ *  This does the whole thing in one call, but it does NOT fork the logic: it creates a
+ *  real supplier order already marked "sent" and then receives against it through the
+ *  same receiveSupplierOrderItems() everything else uses. So payment terms, payables,
+ *  the supplier ledger and the stock audit all behave identically to a formal PO.
+ *
+ *  It can also create products it has never seen, so an unfamiliar item on a delivery
+ *  note seeds the catalogue instead of blocking the receipt.
+ *
+ *  updateCost (default true) refreshes products.costPrice to what you actually just
+ *  paid. That is only safe because document_items.cost_at_sale pins the cost of every
+ *  past sale — see resolveItemCost. Without that pinning this would rewrite history. */
+export async function quickGoodsReceipt(data: {
+  supplierId: number;
+  storeId: number;
+  items: Array<{
+    productId?: number; name: string; sku?: string; qty: number;
+    unit?: string; cost?: number; salePrice?: number; category?: string;
+  }>;
+  supplierInvoiceNumber?: string;
+  supplierInvoiceAmount?: number;
+  paymentTermsDays?: number;
+  notes?: string;
+  updateCost?: boolean;
+  userId?: number;
+}) {
+  if (!data.supplierId) throw new Error("A supplier is required to receive goods.");
+  if (!data.storeId) throw new Error("A destination location is required — stock has to land somewhere.");
+  const rawItems = (data.items || []).filter((i) => i && i.name && Number(i.qty) > 0);
+  if (!rawItems.length) throw new Error("Add at least one line with a quantity greater than zero.");
+  for (const i of rawItems) {
+    if (i.cost !== undefined && i.cost !== null && Number(i.cost) < 0) {
+      throw new Error(`Cost cannot be negative (${i.name}).`);
+    }
+  }
+
+  const catalogue = await getProducts();
+  const bySku = new Map<string, any>();
+  const byName = new Map<string, any>();
+  for (const p of catalogue as any[]) {
+    if (p.sku) bySku.set(String(p.sku).trim().toUpperCase(), p);
+    if (p.name) byName.set(String(p.name).trim().toUpperCase(), p);
+  }
+
+  const productsCreated: Array<{ id: number; name: string }> = [];
+  const costsUpdated: Array<{ id: number; name: string; from: number; to: number }> = [];
+  const lines: Array<{ productId: number; name: string; qty: number; unit: string; cost: number }> = [];
+
+  for (const it of rawItems) {
+    const nameKey = String(it.name).trim().toUpperCase();
+    const skuKey = it.sku ? String(it.sku).trim().toUpperCase() : "";
+    let product: any = null;
+
+    if (it.productId) {
+      product = (catalogue as any[]).find((p) => p.id === Number(it.productId)) || null;
+    }
+    if (!product && skuKey) product = bySku.get(skuKey) || null;
+    if (!product) product = byName.get(nameKey) || null;
+
+    if (!product) {
+      product = await createProduct({
+        name: it.name, sku: it.sku || null, unit: it.unit || "PCS",
+        category: it.category || null,
+        costPrice: String(Number(it.cost) || 0),
+        salePrice: String(Number(it.salePrice) || 0),
+        supplierId: data.supplierId,
+        locationStoreId: data.storeId,
+      } as any);
+      productsCreated.push({ id: product.id, name: product.name });
+      if (product.sku) bySku.set(String(product.sku).toUpperCase(), product);
+      byName.set(String(product.name).toUpperCase(), product);
+    }
+
+    lines.push({
+      productId: product.id,
+      name: product.name,
+      qty: Number(it.qty),
+      unit: it.unit || product.unit || "PCS",
+      cost: it.cost !== undefined && it.cost !== null ? Number(it.cost) : Number(product.costPrice || 0),
+    });
+
+    // Refresh the standing cost when this delivery came in at a different price.
+    if (data.updateCost !== false && it.cost !== undefined && it.cost !== null) {
+      const from = Number(product.costPrice || 0);
+      const to = Number(it.cost);
+      if (Number.isFinite(to) && Math.abs(to - from) > 0.005) {
+        await updateProduct(product.id, { costPrice: String(to) } as any);
+        costsUpdated.push({ id: product.id, name: product.name, from, to });
+      }
+    }
+  }
+
+  const poNumber = await getNextDocNumber("PO");
+  const order = await createSupplierOrder({
+    supplierId: data.supplierId,
+    poNumber,
+    storeId: data.storeId,
+    status: "sent",            // skip draft — the goods are physically here
+    paymentTermsDays: data.paymentTermsDays ?? 0,
+    notes: data.notes || `Goods received directly (no prior PO).`,
+    items: lines as any,
+  });
+
+  // Receive every line in full, through the SAME path a formal PO uses.
+  const received = await receiveSupplierOrderItems(
+    order.id, data.storeId,
+    lines.map((l, index) => ({ index, productId: l.productId, qty: l.qty })),
+    data.userId,
+  );
+
+  if (data.supplierInvoiceNumber || data.supplierInvoiceAmount !== undefined) {
+    await db.update(supplierOrders).set({
+      supplierInvoiceNumber: data.supplierInvoiceNumber ?? null,
+      supplierInvoiceAmount: data.supplierInvoiceAmount !== undefined
+        ? String(data.supplierInvoiceAmount) : null,
+    } as any).where(eq(supplierOrders.id, order.id));
+  }
+
+  const totalValue = lines.reduce((s2, l) => s2 + l.qty * l.cost, 0);
+  return {
+    order: received,
+    poNumber,
+    productsCreated,
+    costsUpdated,
+    received: lines.map((l) => ({ productId: l.productId, name: l.name, qty: l.qty, cost: l.cost })),
+    totalValue: Number(totalValue.toFixed(2)),
+  };
+}
+
 export async function receiveSupplierOrderItems(
   id: number,
   storeId: number,

@@ -16,7 +16,7 @@ import {
   createTransfer, updateTransfer, getTransfers, approveTransfer, receiveTransfer, cancelTransfer, getTransferSettlement,
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
-  getPayments, createPayment, resolveItemCost,
+  getPayments, createPayment, resolveItemCost, quickGoodsReceipt,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -2695,6 +2695,35 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json(await receiveSupplierOrder(Number(req.params.id), storeId, uid));
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Quick Goods Receipt ────────────────────────────────────────
+  // A delivery arrives with no purchase order — the daily reality for fast movers.
+  // Records it in ONE step: stock in, supplier payable, cost refreshed, catalogue
+  // seeded for anything new. Internally it still creates and receives a real PO, so
+  // the supplier ledger and stock audit are identical to the formal route.
+  app.post("/api/goods-receipt", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const body = req.body || {};
+      const locked = lockedStoreId(req);
+      const result = await quickGoodsReceipt({
+        supplierId: Number(body.supplierId),
+        storeId: locked ?? Number(body.storeId),
+        items: Array.isArray(body.items) ? body.items : [],
+        supplierInvoiceNumber: body.supplierInvoiceNumber,
+        supplierInvoiceAmount: body.supplierInvoiceAmount !== undefined
+          ? Number(body.supplierInvoiceAmount) : undefined,
+        paymentTermsDays: body.paymentTermsDays !== undefined
+          ? Number(body.paymentTermsDays) : undefined,
+        notes: body.notes,
+        updateCost: body.updateCost !== false,
+        userId: req.user?.id || undefined,
+      });
+      res.status(201).json(result);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
