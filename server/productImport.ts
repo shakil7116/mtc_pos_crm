@@ -30,6 +30,14 @@ export interface AnalysedRow {
   wholesalePrice: number | null;
   minStockQty: number | null;
   quantity: number;
+  /** Did the file give a quantity for this row?
+   *  A NUMBER (including 0) means someone counted it -> stock is tracked.
+   *  BLANK means nobody has counted it -> quantity unknown, stock not tracked.
+   *  This is how the long tail gets registered without anyone counting it. */
+  counted: boolean;
+  /** True when the file carried an explicit counted/stock_counted column, so an
+   *  UPDATE may change the flag. Without it we never flip an existing product. */
+  countedExplicit: boolean;
   supplierName: string | null;
   supplierId: number | null;
 
@@ -48,7 +56,7 @@ export interface AnalysedRow {
 export interface AnalysisResult {
   rows: AnalysedRow[];
   headers: string[];
-  summary: { total: number; create: number; update: number; reject: number; withQty: number };
+  summary: { total: number; create: number; update: number; reject: number; withQty: number; counted: number; notCounted: number };
   /** File-level problems worth showing above the table. */
   fileWarnings: string[];
 }
@@ -71,6 +79,7 @@ const H = {
   minStockQty: ["min_stock_qty", "minstockqty", "min stock qty", "minstock", "min qty", "reorder level"],
   quantity: ["initial_qty", "initialqty", "initial qty", "opening_qty", "openingqty", "quantity", "qty", "stock"],
   supplier: ["supplier_name", "suppliername", "supplier"],
+  counted: ["counted", "stock_counted", "stockcounted", "stock counted", "track_stock", "trackstock"],
 };
 
 function pick(row: Record<string, string>, keys: string[]): string {
@@ -112,7 +121,14 @@ export async function analyseCsv(csvRows: Record<string, string>[]): Promise<Ana
     const name = pick(r, H.name);
     const salePrice = num(pick(r, H.salePrice));
     const costPrice = num(pick(r, H.costPrice));
-    const quantity = num(pick(r, H.quantity)) ?? 0;
+    // Blank quantity is NOT zero. Blank means 'nobody counted this'.
+    const rawQty = pick(r, H.quantity);
+    const quantity = num(rawQty) ?? 0;
+    const rawCounted = pick(r, H.counted);
+    const countedExplicit = rawCounted !== "";
+    const counted = countedExplicit
+      ? /^(y|yes|true|1|counted|tracked)$/i.test(rawCounted)
+      : rawQty !== "";          // a number (even 0) means it was counted
     const supplierName = pick(r, H.supplier) || null;
 
     const base: AnalysedRow = {
@@ -120,7 +136,7 @@ export async function analyseCsv(csvRows: Record<string, string>[]): Promise<Ana
       salePrice, costPrice,
       wholesalePrice: num(pick(r, H.wholesalePrice)),
       minStockQty: num(pick(r, H.minStockQty)),
-      quantity, supplierName, supplierId: null,
+      quantity, counted, countedExplicit, supplierName, supplierId: null,
       action: "create", matchedProductId: null, matchedProductName: null, matchReason: null,
       candidates: [], rejectReason: null, warnings,
     };
@@ -167,6 +183,7 @@ export async function analyseCsv(csvRows: Record<string, string>[]): Promise<Ana
       const earlier = rows.find((x) => x.row === dupRow);
       if (earlier) {
         earlier.quantity += quantity;
+        earlier.counted = earlier.counted || counted;
         earlier.warnings.push(`Row ${rowNo} is the same item — quantities combined (${earlier.quantity} total).`);
         fileWarnings.push(`Row ${rowNo} repeats row ${dupRow} ("${name}"). They have been combined into one line.`);
         return;
@@ -212,6 +229,8 @@ export async function analyseCsv(csvRows: Record<string, string>[]): Promise<Ana
       update: rows.filter((r) => r.action === "update").length,
       reject: rows.filter((r) => r.action === "reject").length,
       withQty: rows.filter((r) => r.quantity > 0).length,
+      counted: rows.filter((r) => r.counted && r.action !== "reject").length,
+      notCounted: rows.filter((r) => !r.counted && r.action !== "reject").length,
     },
   };
 }
@@ -227,6 +246,8 @@ export interface CommitRow {
   wholesalePrice?: number | null;
   minStockQty?: number | null;
   quantity?: number;
+  counted?: boolean;
+  countedExplicit?: boolean;
   supplierId?: number | null;
   /** null → create a new product. */
   productId: number | null;
@@ -279,6 +300,10 @@ export async function commitRows(
           salePrice: String(sale),
           wholesalePrice: String(Number(r.wholesalePrice) > 0 ? r.wholesalePrice : sale),
           minStockQty: String(Number(r.minStockQty) > 0 ? r.minStockQty : 0),
+          // Blank quantity in the file -> nobody counted this -> quantity unknown.
+          // It still bills correctly (cost and price are set), it just is not
+          // gated on stock and raises no low-stock alert.
+          trackStock: r.counted !== false,
           ...(r.supplierId ? { supplierId: r.supplierId } : {}),
           ...(r.storeId ?? opts.defaultStoreId ? { locationStoreId: r.storeId ?? opts.defaultStoreId } : {}),
         } as any);
@@ -297,11 +322,17 @@ export async function commitRows(
         if (Number(r.wholesalePrice) > 0) patch.wholesalePrice = String(r.wholesalePrice);
         if (Number(r.minStockQty) > 0) patch.minStockQty = String(r.minStockQty);
         if (r.supplierId) patch.supplierId = r.supplierId;
+        // Only an explicit counted/stock_counted column may flip an existing
+        // product. A blank quantity on a re-import must never silently untrack
+        // something the owner already counted.
+        if (r.countedExplicit) patch.trackStock = r.counted !== false;
         if (Object.keys(patch).length) await updateProduct(productId, patch);
         out.updated.push({ row: r.row, name, productId });
       }
 
-      const qty = Number(r.quantity) || 0;
+      // An uncounted row has an UNKNOWN quantity, so there is no opening stock to
+      // write. Writing 0 would be a claim nobody made.
+      const qty = r.counted === false ? 0 : Number(r.quantity) || 0;
       if (qty > 0) {
         const storeId = r.storeId ?? opts.defaultStoreId;
         if (!storeId) {

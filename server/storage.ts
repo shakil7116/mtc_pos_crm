@@ -672,6 +672,100 @@ export function applyStockDelta(current: number, qtyChange: number): { newQty: n
   return { newQty, applied, clamped: applied !== qtyChange };
 }
 
+/** STOCKTAKE — set stock to the number a human actually counted on the shelf.
+ *
+ *  adjustStock() takes a DELTA: "add 17", "remove 3". A person counting a shelf does
+ *  not know the delta, they know the total: "there are 47". Making them subtract in
+ *  their head is where counting errors come from.
+ *
+ *  This writes the absolute figure and records the VARIANCE — what the system
+ *  believed minus what was actually there. That variance is the useful number: it is
+ *  shrinkage, breakage, or an unrecorded sale, and it is invisible if you only ever
+ *  post deltas.
+ *
+ *  Counting an item also marks it tracked. Before a count its quantity was unknown;
+ *  afterwards it is a real number, so low-stock alerts and valuation now apply. */
+export async function setStockCount(data: {
+  productId: number;
+  storeId: number;
+  countedQty: number;
+  userId?: number;
+  note?: string;
+}): Promise<{ productId: number; storeId: number; before: number; after: number; variance: number }> {
+  const productId = Number(data.productId);
+  const storeId = Number(data.storeId);
+  const counted = Number(data.countedQty);
+
+  if (!productId) throw new Error("A product is required to record a count.");
+  if (!storeId) throw new Error("A location is required — a count is always of one shelf.");
+  if (!Number.isFinite(counted)) throw new Error("The counted quantity must be a number.");
+  if (counted < 0) throw new Error("A counted quantity cannot be negative — you cannot have less than none.");
+
+  const [product] = await db.select().from(products).where(eq(products.id, productId));
+  if (!product) throw new Error("Product not found.");
+
+  const existing = await db.select().from(inventory)
+    .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
+
+  const wasTracked = (product as any).trackStock !== false;
+  // An untracked product had no meaningful quantity, so there is nothing to vary from.
+  const before = existing.length && wasTracked ? parseFloat(existing[0].qty || "0") : 0;
+  const variance = Number((counted - before).toFixed(4));
+
+  if (existing.length === 0) {
+    await db.insert(inventory).values({ productId, storeId, qty: String(counted) });
+  } else {
+    await db.update(inventory)
+      .set({ qty: String(counted), updatedAt: new Date() })
+      .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
+  }
+
+  // Counting it makes the quantity real from now on.
+  if (!wasTracked) await db.update(products).set({ trackStock: true } as any).where(eq(products.id, productId));
+
+  const reasonBits = [
+    wasTracked
+      ? `Counted ${counted}; system had ${before} (variance ${variance >= 0 ? "+" : ""}${variance})`
+      : `First count: ${counted} (was not previously tracked)`,
+  ];
+  if (data.note) reasonBits.push(data.note);
+
+  await db.insert(stockAdjustments).values({
+    productId, storeId,
+    qtyChange: String(variance),
+    type: "count",
+    reason: reasonBits.join(" — "),
+    userId: data.userId,
+  });
+
+  return { productId, storeId, before, after: counted, variance };
+}
+
+/** Count a whole shelf in one go. Each line is independent: one bad line does not
+ *  lose the rest of the shelf, it comes back in `failed` with its reason. */
+export async function setStockCountBatch(
+  storeId: number,
+  counts: Array<{ productId: number; countedQty: number; note?: string }>,
+  userId?: number,
+) {
+  const applied: Awaited<ReturnType<typeof setStockCount>>[] = [];
+  const failed: { productId: number; reason: string }[] = [];
+  for (const c of counts || []) {
+    try {
+      applied.push(await setStockCount({ ...c, storeId, userId }));
+    } catch (e) {
+      failed.push({ productId: c?.productId, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  const totalVariance = Number(applied.reduce((s2, a) => s2 + a.variance, 0).toFixed(2));
+  return {
+    applied, failed,
+    counted: applied.length,
+    discrepancies: applied.filter((a) => Math.abs(a.variance) > 0.0001).length,
+    totalVariance,
+  };
+}
+
 export async function adjustStock(
   productId: number, storeId: number, qtyChange: number,
   type: string, reason?: string, referenceId?: number, userId?: number,

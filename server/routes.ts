@@ -17,6 +17,7 @@ import {
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
   getPayments, createPayment, resolveItemCost, quickGoodsReceipt,
+  setStockCount, setStockCountBatch,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -2044,6 +2045,43 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Stocktake ──────────────────────────────────────────────────
+  // SET stock to what a person counted, rather than adding a delta. Someone
+  // counting a shelf knows "there are 47", not "add 17" - making them do the
+  // subtraction is where counting errors come from. The variance (system vs
+  // actual) is recorded, because that gap is shrinkage and is otherwise invisible.
+  app.post("/api/stock-count", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await setStockCount({
+        productId: Number(req.body?.productId),
+        storeId: locked ?? Number(req.body?.storeId),
+        countedQty: Number(req.body?.countedQty),
+        note: req.body?.note,
+        userId: req.user?.id || undefined,
+      }));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // A whole shelf at once. Lines are independent so one bad line does not lose
+  // the rest of the walk.
+  app.post("/api/stock-count/batch", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      const storeId = locked ?? Number(req.body?.storeId);
+      if (!storeId) return res.status(400).json({ message: "A location is required for a stock count." });
+      const counts = Array.isArray(req.body?.counts) ? req.body.counts : [];
+      if (!counts.length) return res.status(400).json({ message: "Nothing to count." });
+      res.json(await setStockCountBatch(storeId, counts, req.user?.id || undefined));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 

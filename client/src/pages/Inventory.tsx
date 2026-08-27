@@ -17,6 +17,8 @@ import {
   ClipboardList,
   Upload,
   ScanLine,
+  Truck,
+  ClipboardCheck,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,6 +62,8 @@ import { Link, useSearch } from "wouter";
 import TransferModal from "@/components/TransferModal";
 import ScanToInventory from "@/components/ScanToInventory";
 import ImportProductsCsv from "@/components/ImportProductsCsv";
+import GoodsReceiptDialog from "@/components/GoodsReceiptDialog";
+import StockCountDialog from "@/components/StockCountDialog";
 import TransferVoucher from "@/components/TransferVoucher";
 
 /* ─────────────────────────────────────────
@@ -629,6 +633,7 @@ type ProductForm = {
   costPrice: string;
   minStockQty: string;
   openingQty: string;
+  trackStock: boolean;
   supplierId: string;
   active: boolean;
   locationStoreId: string;
@@ -648,6 +653,7 @@ const BLANK_PRODUCT: ProductForm = {
   costPrice: "",
   openingQty: "",
   minStockQty: "",
+  trackStock: true,
   supplierId: "",
   active: true,
   locationStoreId: "",
@@ -685,6 +691,7 @@ function ProductDialog({
           costPrice: editProduct.costPrice != null ? String(editProduct.costPrice) : "",
           minStockQty: editProduct.minStockQty != null ? String(editProduct.minStockQty) : "",
           openingQty: "", // current stock is managed via adjustments on existing products
+          trackStock: (editProduct as any).trackStock !== false,
           supplierId: editProduct.supplierId != null ? String(editProduct.supplierId) : "",
           active: editProduct.active !== false,
           locationStoreId: editProduct.locationStoreId != null ? String(editProduct.locationStoreId) : "",
@@ -777,6 +784,7 @@ function ProductDialog({
       wholesalePrice: form.wholesalePrice ? parseFloat(form.wholesalePrice) : null,
       costPrice: form.costPrice ? parseFloat(form.costPrice) : null,
       minStockQty: form.minStockQty ? parseFloat(form.minStockQty) : null,
+      trackStock: form.trackStock,
       // Opening stock — only on create; seeds inventory at the product's location.
       ...(!isEdit && form.openingQty ? { openingQty: parseFloat(form.openingQty) } : {}),
       supplierId: form.supplierId ? Number(form.supplierId) : null,
@@ -936,6 +944,28 @@ function ProductDialog({
               {errors.minStockQty && (
                 <p className="text-xs text-red-500">{errors.minStockQty}</p>
               )}
+            </div>
+            {/* The shop carries ~4,000 products but only 30-40 sell regularly. Only
+                those few are worth counting. The rest are registered so they can be
+                billed with the right cost, while their quantity stays unknown. */}
+            <div className="sm:col-span-2">
+              <div className="flex items-start gap-3 rounded-lg border p-3 bg-muted/30">
+                <Switch
+                  id="p-track"
+                  checked={form.trackStock}
+                  onCheckedChange={(v) => set("trackStock", v as any)}
+                />
+                <div className="space-y-1">
+                  <Label htmlFor="p-track" className="cursor-pointer">
+                    {form.trackStock ? "Stock is counted" : "Stock is NOT counted"}
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    {form.trackStock
+                      ? "The quantity is real and kept up to date. This product is hidden from the sales screen once it reaches zero, and can raise a low-stock alert."
+                      : "The quantity is unknown and nobody maintains it. It still bills with the correct cost, so profit stays exact — it just always appears on the sales screen, raises no low-stock alert, and is left out of stock valuation. Use this for rarely-sold items you have not counted."}
+                  </p>
+                </div>
+              </div>
             </div>
             <div className="space-y-1.5">
               <Label>Supplier</Label>
@@ -2344,6 +2374,8 @@ export default function Inventory() {
   const [adjOpen, setAdjOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [countOpen, setCountOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
@@ -2372,6 +2404,15 @@ export default function Inventory() {
         <div className="flex gap-2 shrink-0">
           {isAdmin && (
             <>
+              {/* Every-morning jobs come first: a delivery arrives, or a shelf gets counted. */}
+              <Button onClick={() => setReceiptOpen(true)} className="gap-2 rounded-lg">
+                <Truck className="w-4 h-4" />
+                Record Delivery
+              </Button>
+              <Button variant="outline" onClick={() => setCountOpen(true)} className="gap-2 rounded-lg">
+                <ClipboardCheck className="w-4 h-4" />
+                Count Stock
+              </Button>
               <Button variant="outline" onClick={() => setImportOpen(true)} className="gap-2 rounded-lg">
                 <Upload className="w-4 h-4" />
                 Import CSV
@@ -2400,6 +2441,8 @@ export default function Inventory() {
       <ImportProductsCsv open={importOpen} onClose={() => setImportOpen(false)} />
 
       <ScanToInventory open={scanOpen} onClose={() => setScanOpen(false)} stores={stores} suppliers={suppliers} />
+      <GoodsReceiptDialog open={receiptOpen} onClose={() => setReceiptOpen(false)} stores={stores} suppliers={suppliers} />
+      <StockCountDialog open={countOpen} onClose={() => setCountOpen(false)} stores={stores} />
 
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} stores={stores} products={products} prefill={transferPrefill} />
 

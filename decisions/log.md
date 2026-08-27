@@ -267,3 +267,36 @@ different hardware automatically. Not yet scheduled: `BACKUP.md` carries the
 against production: 41/41 tables, 0 column mismatches, 0 FK cycles) but never
 REHEARSED against a live target. That needs a scratch database. Until it is done, the
 restore is a validated plan, not a proven procedure.
+
+---
+
+## 2026-08-27 — Go-live inventory model: count the few, register the many
+
+**Context:** The shop carries ~4,000 products but only 30-40 sell regularly. The
+owner could not count everything without closing, and the shop cannot close.
+
+**Decision:** Four pieces, built together:
+
+1. `products.track_stock` — counted vs not counted. An uncounted product has an
+   UNKNOWN quantity, not zero: it always appears in the sales picker, bills with the
+   correct cost, raises no low-stock alert, and is excluded from valuation.
+2. Quick Goods Receipt — one screen for a delivery with no purchase order.
+3. Stocktake (`setStockCount`) — type the counted total, not a delta. Records the
+   variance against what the system believed.
+4. CSV import — a BLANK quantity now means "not counted" rather than zero.
+
+**Why:** counting the long tail costs more than knowing it is worth. Profit does not
+need it — cost is recorded per sale, so gross profit is exact from the first invoice.
+Only stock valuation needs a full count, and that can complete over weeks while the
+shop trades.
+
+**Why "set" and not "add":** a person at a shelf knows "there are 47", not "add 17".
+Forcing the subtraction is what causes counting errors — an automated cleanup in this
+very session posted a delta against the wrong product and put a real quantity to 0.
+Both wrong quantities were later corrected THROUGH setStockCount, which left a proper
+audit row.
+
+**Consequence:** blank-vs-zero in the CSV now carries meaning, so the import had to
+stop coercing blank to 0. An explicit `counted` column can override it. On UPDATE the
+flag only changes when that column is present — a re-import must never silently
+untrack something already counted.
