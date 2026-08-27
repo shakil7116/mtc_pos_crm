@@ -1035,6 +1035,7 @@ function Section3({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="admin">Admin / Owner</SelectItem>
+                    <SelectItem value="ceo">CEO (view only)</SelectItem>
                     <SelectItem value="manager">Manager</SelectItem>
                     <SelectItem value="salesman">Salesman</SelectItem>
                     <SelectItem value="worker">General Worker</SelectItem>

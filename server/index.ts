@@ -6,7 +6,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { checkDbConnection } from "./db";
 import { createServer } from "http";
-import { corsMiddleware, errorHandler, apiAuthGate } from "./middleware";
+import { corsMiddleware, errorHandler, apiAuthGate, readOnlyGate } from "./middleware";
 import { authMiddleware } from "./auth";
 
 const app = express();
@@ -40,6 +40,8 @@ app.use(cookieParser());
 // Role comes from the token — never from client headers (dev fallback only via ALLOW_DEV_HEADERS=1).
 app.use(authMiddleware);
 app.use(apiAuthGate);
+// Viewer roles (ceo) are refused every write here, before any route runs.
+app.use(readOnlyGate);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {

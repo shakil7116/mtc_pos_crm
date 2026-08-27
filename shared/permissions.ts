@@ -1,4 +1,8 @@
-export const ROLES = ["admin", "manager", "worker", "salesman", "driver"] as const;
+// "ceo" is a VIEWER: universal like admin (never store-locked) but read-only.
+// It exists so an owner or investor can watch the money without being able to
+// touch anything. Read-only is enforced server-side by readOnlyGate, not by
+// hiding menu items — hiding a page does not stop a direct API call.
+export const ROLES = ["admin", "ceo", "manager", "worker", "salesman", "driver"] as const;
 export type Role = (typeof ROLES)[number];
 export function normalizeRole(r?: string | null): Role {
   if (r === "staff") return "salesman";
@@ -13,17 +17,17 @@ export type NavKey =
   | "deliveries" | "expenses" | "finance" | "maintenance" | "approvals" | "assistant";
 
 export const NAV_ACCESS: Record<NavKey, Role[]> = {
-  dashboard:   ["admin", "manager", "worker", "salesman", "driver"],
+  dashboard:   ["admin", "ceo", "manager", "worker", "salesman", "driver"],
   documents:   ["admin", "manager", "worker", "salesman"],
   customers:   ["admin", "manager", "worker", "salesman"],
   inventory:   ["admin", "manager", "worker", "salesman"],
   suppliers:   ["admin", "manager", "salesman"],
-  reports:     ["admin", "manager", "salesman"],
+  reports:     ["admin", "ceo", "manager", "salesman"],
   messages:    ["admin", "manager", "salesman"],
   settings:    ["admin"],
   deliveries:  ["admin", "manager", "worker", "driver"],
   expenses:    ["admin", "manager", "worker", "salesman"],
-  finance:     ["admin", "manager", "salesman"],
+  finance:     ["admin", "ceo", "manager", "salesman"],
   maintenance: ["admin", "manager", "worker"],
   approvals:   ["admin", "manager", "worker", "salesman"],
   // The assistant gates money per-tool, so a salesman can use it for customer
@@ -66,6 +70,7 @@ export function navKeyForPath(path: string): NavKey | null {
 
 export const ROLE_HOME: Record<Role, string> = {
   admin: "/",
+  ceo: "/",
   manager: "/",
   worker: "/",
   salesman: "/",
@@ -84,6 +89,7 @@ export function businessDate(now: Date = new Date(), openTime = "05:00"): string
 
 export const ROLE_LABEL: Record<Role, string> = {
   admin: "Admin / Owner",
+  ceo: "CEO (view only)",
   manager: "Manager",
   worker: "General Worker",
   salesman: "Salesman",

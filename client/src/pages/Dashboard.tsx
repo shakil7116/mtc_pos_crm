@@ -236,7 +236,9 @@ export default function Dashboard() {
   // The difference is authority on ACTION pages/endpoints (admin can change critical
   // system settings; manager cannot), not what the dashboard shows. So `isAdmin`
   // here gates the full-overview VIEW and includes manager.
-  const isAdmin = user?.role === "admin" || user?.role === "manager";
+  // The CEO is a viewer: same full dashboard, never store-locked, but every write
+  // is refused server-side by readOnlyGate.
+  const isAdmin = user?.role === "admin" || user?.role === "manager" || user?.role === "ceo";
 
   // Role dashboards (Module 8) — each role gets its own location-filtered view.
   if (user?.role === "driver") return <DriverDashboard />;

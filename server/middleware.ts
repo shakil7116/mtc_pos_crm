@@ -73,6 +73,32 @@ export const apiAuthGate: RequestHandler = (req, res, next) => {
   return jsonError(res, 401, "Authentication required");
 };
 
+/** Roles that may look but never touch. */
+const READ_ONLY_ROLES = new Set(["ceo"]);
+
+/** Things anyone may do to their OWN account — not business writes. */
+const SELF_SERVICE_PATHS = new Set([
+  "/api/auth/logout",
+  "/api/auth/change-password",
+  "/api/auth/change-pin",
+]);
+
+/** A viewer account must not be able to change anything, anywhere.
+ *
+ *  Hiding pages in the navigation is NOT enough — the menu is client-side, and a
+ *  direct API call would sail straight past it. This refuses every write at the
+ *  door instead, which also means routes added in future are covered without
+ *  anyone remembering to guard them. */
+export const readOnlyGate: RequestHandler = (req, res, next) => {
+  if (!req.path.startsWith("/api/")) return next();
+  const role = String((req as any).user?.role || "");
+  if (!READ_ONLY_ROLES.has(role)) return next();
+  if (req.method === "GET" || req.method === "HEAD" || req.method === "OPTIONS") return next();
+  if (SELF_SERVICE_PATHS.has(req.path)) return next();
+  return jsonError(res, 403,
+    "This account can see the business but cannot change anything.");
+};
+
 /** Catch-all for unmatched /api routes — prevents HTML responses on API calls. */
 export const apiNotFoundHandler: RequestHandler = (req, res) => {
   jsonError(res, 404, `API route not found: ${req.method} ${req.originalUrl}`, {
