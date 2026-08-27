@@ -1,0 +1,49 @@
+{
+  "name": "MTC POS & CRM",
+  "short_name": "MTC POS",
+  "description": "Point of sale, stock and customer accounts for MTC Building Materials, Doha.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Invoice",
+      "short_name": "Invoice",
+      "url": "/documents/new/INV",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Inventory",
+      "short_name": "Stock",
+      "url": "/inventory",
+      "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }]
+    }
+  ]
+}

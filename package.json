@@ -15,7 +15,8 @@
     "test:verify": "tsx scripts/verify-line-parser.ts && tsx scripts/verify-matching.ts && tsx scripts/verify-scan-pipeline.ts",
     "test:live": "tsx scripts/verify-cogs-live.ts",
     "backup": "node scripts/backup-db.mjs",
-    "backup:restore-check": "node scripts/restore-db.mjs"
+    "backup:restore-check": "node scripts/restore-db.mjs",
+    "icons": "node scripts/make-pwa-icons.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

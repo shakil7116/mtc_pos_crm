@@ -15,3 +15,19 @@ window.fetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
 };
 
 createRoot(document.getElementById("root")!).render(<App />);
+
+// ── Installable app ─────────────────────────────────────────────────────────
+// Registered in PRODUCTION ONLY. In dev a service worker sits between Vite and
+// the browser and makes hot reload behave in ways that waste hours.
+//
+// The worker never caches /api — see client/public/sw.js. Stock, prices and
+// balances must be live or someone sells stock that is gone.
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch((err) => {
+      // Not fatal: the app works perfectly without it, it just will not install
+      // or open offline.
+      console.warn("Service worker registration failed:", err);
+    });
+  });
+}
