@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import {
@@ -98,8 +99,46 @@ export async function getUserByName(name: string): Promise<User | undefined> {
   return row;
 }
 
-export async function createUser(data: InsertUser): Promise<User> {
-  const [row] = await db.insert(users).values(data).returning();
+/** Create a staff account.
+ *
+ *  This used to insert whatever it was handed. The Settings form sent no username
+ *  and no password, so it produced accounts that could NEVER log in — login looks
+ *  a user up by username, and a null username matches nothing. Two real accounts
+ *  were created that way before anyone noticed.
+ *
+ *  So the credentials are demanded here, at the only place accounts are made. */
+export async function createUser(
+  data: InsertUser & { password?: string },
+): Promise<User> {
+  const { password, ...rest } = data as any;
+  const patch: any = { ...rest };
+
+  const uname = String(patch.username || "").trim().toLowerCase();
+  if (uname.length < 3) throw new Error("A username of at least 3 characters is required — without one this account could never log in.");
+  if (uname.split(" ").length > 1) throw new Error("Username cannot contain spaces.");
+  const clash = await db.select().from(users).where(eq(users.username, uname));
+  if (clash.length) throw new Error(`Username "${uname}" is already taken.`);
+  patch.username = uname;
+
+  if (!patch.passwordHash) {
+    if (String(password || "").length < 8) {
+      throw new Error("A starting password of at least 8 characters is required.");
+    }
+    patch.passwordHash = bcrypt.hashSync(String(password), 10);
+  }
+
+  // Same PIN rules as changing one later. A PIN approves discounts, so two people
+  // sharing one makes every approval unattributable.
+  const pin = String(patch.pin || "").trim();
+  if (!/^[0-9]{4,6}$/.test(pin)) throw new Error("PIN must be 4 to 6 digits.");
+  if (WEAK_PINS.has(pin) || new Set(pin).size === 1) {
+    throw new Error("Choose a less obvious PIN — not a sequence like 1234 or the same digit repeated.");
+  }
+  const pinClash = await db.select().from(users).where(eq(users.pin, pin));
+  if (pinClash.length) throw new Error("That PIN is already used by someone else — every person needs their own.");
+  patch.pin = pin;
+
+  const [row] = await db.insert(users).values(patch).returning();
   return row;
 }
 

@@ -766,7 +766,12 @@ function Section3({
     role: "salesman" as string,
     storeId: "" as string,
     pin: "",
+    // Without these two the account is created but can never log in — login looks
+    // the user up BY USERNAME, and a null username matches nothing.
+    username: "",
+    password: "",
   });
+  const [showAddPw, setShowAddPw] = useState(false);
 
   const [pinDialog, setPinDialog] = useState<{
     open: boolean;
@@ -790,12 +795,18 @@ function Section3({
       fetch("/api/users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, storeId: body.storeId ? Number(body.storeId) : null }),
+        body: JSON.stringify({
+          ...body,
+          storeId: body.storeId ? Number(body.storeId) : null,
+          username: body.username.trim().toLowerCase(),
+          // They pick their own on first login.
+          mustChangePassword: true,
+        }),
       }).then((r) => r.json()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/users"] });
       setAddOpen(false);
-      setAddForm({ name: "", role: "salesman", storeId: "", pin: "" });
+      setAddForm({ name: "", role: "salesman", storeId: "", pin: "", username: "", password: "" });
       toast({ title: "Staff member added" });
     },
     onError: () => toast({ title: "Failed to add staff", variant: "destructive" }),
@@ -1061,6 +1072,32 @@ function Section3({
                   </SelectContent>
                 </Select>
               </Field>
+              <Field label="Username (for logging in)">
+                <Input
+                  value={addForm.username}
+                  onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value.replace(/s/g, "").toLowerCase() }))}
+                  placeholder="e.g. store2.manager"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field label="Starting password">
+                <div className="relative">
+                  <Input
+                    type={showAddPw ? "text" : "password"}
+                    value={addForm.password}
+                    onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
+                    placeholder="They change it on first login"
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAddPw((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  >
+                    {showAddPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </Field>
               <Field label="PIN (4–6 digits)">
                 <div className="relative">
                   <Input
@@ -1086,7 +1123,12 @@ function Section3({
               </Button>
               <Button
                 onClick={() => addMut.mutate(addForm)}
-                disabled={addMut.isPending || !addForm.name || addForm.pin.length < 4}
+                disabled={
+                  addMut.isPending || !addForm.name ||
+                  addForm.pin.length < 4 ||
+                  addForm.username.trim().length < 3 ||
+                  addForm.password.length < 8
+                }
                 className="gap-2"
               >
                 {addMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
