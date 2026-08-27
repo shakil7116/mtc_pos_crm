@@ -812,6 +812,45 @@ function Section3({
     onError: () => toast({ title: "Failed to add staff", variant: "destructive" }),
   });
 
+  // Turning access off goes through its own route so any live session dies at once,
+  // rather than lasting until their token happens to expire.
+  const activeMut = useMutation({
+    mutationFn: async ({ id, active }: { id: number; active: boolean }) => {
+      const r = await fetch(`/api/users/${id}/active`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        credentials: "include", body: JSON.stringify({ active }),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body?.message || "Could not change access.");
+      return body;
+    },
+    onSuccess: (_d, v) => {
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: v.active ? "Access restored" : "Access removed" });
+    },
+    onError: (e: any) => toast({ title: "Not changed", description: e?.message, variant: "destructive" }),
+  });
+
+  // Erasing an account only works for someone who never did anything. The server
+  // refuses otherwise and explains why — that message is what gets shown here.
+  const deleteMut = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`/api/users/${id}`, { method: "DELETE", credentials: "include" });
+      if (r.status === 204) return true;
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body?.message || "Could not remove this account.");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: "Account removed" });
+    },
+    onError: (e: any) => toast({
+      title: "Cannot remove this account",
+      description: e?.message,
+      variant: "destructive",
+    }),
+  });
+
   const updateMut = useMutation({
     mutationFn: ({ id, ...body }: Partial<User> & { id: number; pin?: string }) =>
       fetch(`/api/users/${id}`, {
@@ -1003,12 +1042,29 @@ function Section3({
                             variant="ghost"
                             size="sm"
                             className="text-xs h-7 px-2"
-                            disabled={u.id === currentUserId}
+                            disabled={u.id === currentUserId || activeMut.isPending}
                             onClick={() =>
-                              updateMut.mutate({ id: u.id, active: !u.active })
+                              activeMut.mutate({ id: u.id, active: !u.active })
                             }
                           >
                             {u.active ? "Disable" : "Enable"}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="text-xs h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            disabled={u.id === currentUserId || deleteMut.isPending}
+                            onClick={() => {
+                              if (!window.confirm(
+                                `Remove ${u.name} completely?\n\n` +
+                                "This only works if they have never created an invoice, taken a payment " +
+                                "or moved stock. If they have, use Disable instead — that removes their " +
+                                "access while keeping the record of what they did."
+                              )) return;
+                              deleteMut.mutate(u.id);
+                            }}
+                          >
+                            Remove
                           </Button>
                         </div>
                       </td>

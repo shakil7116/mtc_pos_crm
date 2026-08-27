@@ -142,6 +142,92 @@ export async function createUser(
   return row;
 }
 
+/** Remove a staff member.
+ *
+ *  TWO different things, and the difference matters:
+ *
+ *  DEACTIVATE (active: false) is the normal one. They cannot log in — login checks
+ *  active — they drop off the staff list, but every invoice they ever raised still
+ *  says they raised it. Use this for someone who left.
+ *
+ *  DELETE erases the row. Thirty-two tables reference users: invoices, payments,
+ *  stock movements, approvals, deliveries. Deleting someone who has worked would
+ *  either fail on a foreign key or, if forced, destroy the record of who sold what.
+ *  An accounts trail that loses its names is not an accounts trail.
+ *
+ *  So a delete is allowed ONLY for an account that has never done anything — a
+ *  typo, a duplicate, someone created by mistake. Everyone else is deactivated,
+ *  and this says so rather than failing with a database error. */
+export async function deleteUser(id: number, actingUserId?: number): Promise<{ deleted: true }> {
+  const [u] = await db.select().from(users).where(eq(users.id, id));
+  if (!u) throw new Error("User not found.");
+
+  if (actingUserId && id === actingUserId) {
+    throw new Error("You cannot delete your own account.");
+  }
+
+  if (u.role === "admin") {
+    const admins = await db.select().from(users).where(and(eq(users.role, "admin"), eq(users.active, true)));
+    if (admins.length <= 1) {
+      throw new Error("This is the last admin account — deleting it would lock everyone out.");
+    }
+  }
+
+  // Has this person actually done anything? Count the trails that matter most; the
+  // foreign-key catch below covers the rest.
+  const [docs] = await db.select({ n: sql<number>`count(*)::int` }).from(documents).where(eq(documents.createdBy, id));
+  const [pays] = await db.select({ n: sql<number>`count(*)::int` }).from(payments).where(eq(payments.recordedBy, id));
+  const [moves] = await db.select({ n: sql<number>`count(*)::int` }).from(stockAdjustments).where(eq(stockAdjustments.userId, id));
+  const work = Number(docs?.n || 0) + Number(pays?.n || 0) + Number(moves?.n || 0);
+
+  if (work > 0) {
+    const bits = [
+      Number(docs?.n || 0) ? `${docs.n} document(s)` : null,
+      Number(pays?.n || 0) ? `${pays.n} payment(s)` : null,
+      Number(moves?.n || 0) ? `${moves.n} stock movement(s)` : null,
+    ].filter(Boolean).join(", ");
+    throw new Error(
+      `${u.name} cannot be deleted — ${bits} are recorded against this account, and ` +
+      `erasing it would remove the record of who did that work. Deactivate the account ` +
+      `instead: they lose access immediately and the history stays intact.`);
+  }
+
+  try {
+    await db.delete(users).where(eq(users.id, id));
+  } catch (e: any) {
+    // 23503 = foreign key violation: they are referenced by something not counted above.
+    if (e?.code === "23503") {
+      throw new Error(
+        `${u.name} is still linked to other records, so the account cannot be erased. ` +
+        `Deactivate it instead — they lose access and the history stays intact.`);
+    }
+    throw e;
+  }
+  return { deleted: true };
+}
+
+/** Turn access on or off without touching a single record they created. */
+export async function setUserActive(id: number, active: boolean, actingUserId?: number): Promise<User> {
+  const [u] = await db.select().from(users).where(eq(users.id, id));
+  if (!u) throw new Error("User not found.");
+  if (!active && actingUserId && id === actingUserId) {
+    throw new Error("You cannot deactivate your own account.");
+  }
+  if (!active && u.role === "admin") {
+    const admins = await db.select().from(users).where(and(eq(users.role, "admin"), eq(users.active, true)));
+    if (admins.length <= 1) throw new Error("This is the last active admin — deactivating it would lock everyone out.");
+  }
+  const [row] = await db.update(users).set({ active }).where(eq(users.id, id)).returning();
+  // Bump the token version so any live session dies now, rather than lasting until
+  // their token happens to expire. Same mechanism invalidateUserSessions uses.
+  if (!active) {
+    await db.update(users)
+      .set({ tokenVersion: (Number((u as any).tokenVersion) || 0) + 1 })
+      .where(eq(users.id, id));
+  }
+  return row;
+}
+
 export async function updateUser(id: number, data: Partial<InsertUser>): Promise<User> {
   const [target] = await db.select().from(users).where(eq(users.id, id));
   if (!target) throw new Error("User not found.");

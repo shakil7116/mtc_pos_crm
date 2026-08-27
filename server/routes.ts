@@ -17,7 +17,7 @@ import {
   getSuppliers, getSupplier, createSupplier, updateSupplier,
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
   getPayments, createPayment, resolveItemCost, quickGoodsReceipt,
-  setStockCount, setStockCountBatch,
+  setStockCount, setStockCountBatch, deleteUser, setUserActive,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -583,6 +583,35 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       }
       const { pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...safe } = row;
       res.json(safe);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Turn access on or off. This is the normal way to remove someone who has left:
+  // they cannot log in from this moment, and every invoice they raised still says
+  // they raised it.
+  app.post("/api/users/:id/active", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const row = await setUserActive(
+        Number(req.params.id), req.body?.active !== false, req.user?.id);
+      const { pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...safe } = row;
+      res.json(safe);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Erase the account entirely. Only possible for someone who never did anything —
+  // storage refuses if any work is recorded against them, and says to deactivate
+  // instead. Deleting a person who has sold things would destroy the record of who
+  // sold what.
+  app.delete("/api/users/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      await deleteUser(Number(req.params.id), req.user?.id);
+      res.status(204).send();
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
