@@ -32,10 +32,15 @@ export interface OcrProvider {
 
 async function openAiCompatible(
   url: string, key: string, model: string, base64: string, mimeType: string,
+  extraHeaders?: Record<string, string>,
 ): Promise<string> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    headers: {
+      Authorization: `Bearer ${key}`,
+      "Content-Type": "application/json",
+      ...(extraHeaders || {}),
+    },
     body: JSON.stringify({
       model,
       messages: [{
@@ -117,6 +122,48 @@ export const PROVIDERS: OcrProvider[] = [
     },
   },
   {
+    // OpenRouter, pre-filled for convenience since it is the most common.
+    // For ANY other router use the "custom" provider below.
+    // Pick the model with OCR_MODEL, e.g. "google/gemini-2.0-flash-exp:free".
+    id: "openrouter",
+    label: "OpenRouter",
+    keyVar: "OPENROUTER_API_KEY",
+    note: "One key, many vision models. Set OCR_MODEL to choose which.",
+    transcribe: (b, m, model) => openAiCompatible(
+      "https://openrouter.ai/api/v1/chat/completions",
+      process.env.OPENROUTER_API_KEY!,
+      model || process.env.OCR_MODEL || "google/gemini-2.0-flash-exp:free", b, m,
+      { "HTTP-Referer": "https://github.com/shakil7116/mtc_pos_crm", "X-Title": "MTC POS" }),
+  },
+  {
+    // ANY OpenAI-compatible gateway — OmniRoute, Nara, a self-hosted proxy, or a
+    // router that does not exist yet. Nearly all of them speak this same wire
+    // format, so one entry covers the lot instead of a new provider per vendor.
+    //
+    //   OCR_PROVIDER=custom
+    //   OCR_BASE_URL=https://your-router/api/v1/chat/completions
+    //   OCR_API_KEY=...
+    //   OCR_MODEL=vendor/model-name
+    //
+    // OCR_BASE_URL may be given as the root (…/v1) — the chat path is appended.
+    id: "custom",
+    label: "Custom gateway",
+    keyVar: "OCR_API_KEY",
+    note: "Any OpenAI-compatible router. Needs OCR_BASE_URL and OCR_MODEL.",
+    transcribe: (b, m, model) => {
+      let base = (process.env.OCR_BASE_URL || "").trim();
+      while (base.endsWith("/")) base = base.slice(0, -1);
+      if (!base) throw new Error(
+        "OCR_PROVIDER=custom needs OCR_BASE_URL — the full chat-completions URL of your router.");
+      const chosen = model || process.env.OCR_MODEL;
+      if (!chosen) throw new Error(
+        "OCR_PROVIDER=custom needs OCR_MODEL — routers host many models and cannot pick one for you.");
+      const url = base.endsWith("/chat/completions") ? base : base + "/chat/completions";
+      return openAiCompatible(url, process.env.OCR_API_KEY!, chosen, b, m,
+        { "HTTP-Referer": "https://github.com/shakil7116/mtc_pos_crm", "X-Title": "MTC POS" });
+    },
+  },
+  {
     id: "groq",
     label: "Groq",
     keyVar: "GROQ_API_KEY",
@@ -134,12 +181,15 @@ const keyPresent = (v: string) => !!(process.env[v] || "").trim();
  * one with a key wins, in the order above (best transcription first).
  */
 export function activeProvider(): OcrProvider | null {
+  // "custom" needs a base URL as well as a key, or it cannot reach anything.
+  const usable = (p: OcrProvider) =>
+    keyPresent(p.keyVar) && (p.id !== "custom" || keyPresent("OCR_BASE_URL"));
   const pinned = (process.env.OCR_PROVIDER || "").trim().toLowerCase();
   if (pinned) {
     const p = PROVIDERS.find((x) => x.id === pinned);
-    return p && keyPresent(p.keyVar) ? p : null;
+    return p && usable(p) ? p : null;
   }
-  return PROVIDERS.find((p) => keyPresent(p.keyVar)) || null;
+  return PROVIDERS.find(usable) || null;
 }
 
 export function ocrStatus() {
@@ -150,7 +200,8 @@ export function ocrStatus() {
     imageExtraction: !!active,
     activeProvider: active ? { id: active.id, label: active.label } : null,
     providers: PROVIDERS.map((p) => ({
-      id: p.id, label: p.label, keyVar: p.keyVar, note: p.note, configured: keyPresent(p.keyVar),
+      id: p.id, label: p.label, keyVar: p.keyVar, note: p.note,
+      configured: keyPresent(p.keyVar) && (p.id !== "custom" || keyPresent("OCR_BASE_URL")),
     })),
   };
 }
@@ -201,7 +252,7 @@ export async function extractText(
     if (!provider) {
       throw new Error(
         "This PDF is a scanned image and no OCR provider is configured. "
-        + "Add one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY or GROQ_API_KEY to .env, "
+        + "Add one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY to .env, "
         + "or export the invoice as CSV/text.",
       );
     }
@@ -217,7 +268,7 @@ export async function extractText(
     if (!provider) {
       throw new Error(
         "No OCR provider is configured, so images cannot be read yet. "
-        + "Add one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY or GROQ_API_KEY to .env and restart. "
+        + "Add one of ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY, GROQ_API_KEY or OPENROUTER_API_KEY to .env and restart. "
         + "CSV, TXT and text-based PDFs work without one.",
       );
     }
