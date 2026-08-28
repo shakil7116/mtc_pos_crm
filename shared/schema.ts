@@ -259,7 +259,10 @@ export const documents = pgTable("documents", {
   storeId: integer("store_id").references(() => stores.id),
   status: text("status").notNull().default("unpaid"),
   // unpaid | partial | paid | returned | partial_return | converted | void
-  transactionMode: text("transaction_mode").default("real"), // real | demo
+  // real = an ordinary trade | demo = practice, counts for nothing
+  // opening = a balance carried in from before the system. Counts towards what is
+  // OWED but never towards PROFIT — see shared/transactionMode.ts.
+  transactionMode: text("transaction_mode").default("real"),
   paymentType: text("payment_type"), // Cash | Credit | Partial Credit | PDC Cheque (legacy summary label)
   deliveryMethod: text("delivery_method"), // pickup_store | pickup_warehouse | deliver_site
   // INV: pending | in_transit | delivered.  DN lifecycle: pending_pick | picked | authorized | in_transit | delivered

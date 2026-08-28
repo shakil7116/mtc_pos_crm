@@ -57,6 +57,7 @@ import {
 } from "./storage";
 import { matchProduct } from "./matching";
 import { registerAssistantRoutes } from "./assistantRoutes";
+import { countsForProfit } from "@shared/transactionMode";
 import { extractText, ocrStatus } from "./ocr";
 import { parseInvoiceText } from "./lineParser";
 import { analyseCsv, commitRows, type CommitRow } from "./productImport";
@@ -3172,7 +3173,8 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       const { and, gte, lte, eq } = await import("drizzle-orm");
 
       const inStore = (d: any) => !storeId || d.storeId === storeId;
-      const isReal = (d: any) => d.transactionMode !== "demo";
+      // Opening balances are money owed, not money earned — never profit.
+      const isReal = (d: any) => countsForProfit(d);
 
       const docs = (await db.select().from(S.documents)
         .where(and(gte(S.documents.date, start), lte(S.documents.date, end)))).filter(isReal).filter(inStore);
@@ -3866,7 +3868,8 @@ ALL item descriptions in UPPERCASE. No explanation.` }
       } = await import("@shared/schema");
       const { eq, and, ne, inArray } = await import("drizzle-orm");
 
-      const isReal = (d: any) => d.transactionMode !== "demo";
+      // Opening balances are money owed, not money earned — never profit.
+      const isReal = (d: any) => countsForProfit(d);
       // Optional location filter — salesman/warehouse dashboards are store-scoped.
       // Any store-assigned staff (salesman, manager, warehouse…) is LOCKED to their
       // own store server-side — a raw ?storeId= call can't widen the scope. Only an

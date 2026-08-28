@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
+import { countsForProfit } from "@shared/transactionMode";
 import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -4459,7 +4460,7 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
   // Exclude demo/test transactions so Finance matches Reports (business-summary does
   // the same). NULL/"real" both count; only "demo" is dropped (matches JS !== "demo").
   const docs = (await db.select().from(documents).where(and(...conds)))
-    .filter((d: any) => d.transactionMode !== "demo");
+    .filter(countsForProfit);
   const ids = docs.map((d) => d.id);
   const cogsByDoc: Record<number, number> = {};
   const itemsByDoc: Record<number, any[]> = {};
@@ -4500,7 +4501,7 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
 export async function getProfitSummary() {
   const docs = (await db.select({ id: documents.id, total: documents.total, status: documents.status, transactionMode: documents.transactionMode })
     .from(documents).where(and(eq(documents.type, "INV"), ne(documents.status, "void"))))
-    .filter((d: any) => d.transactionMode !== "demo"); // match business-summary + profit-detail
+    .filter(countsForProfit); // match business-summary + profit-detail
   const ids = docs.map((d) => d.id);
   const cogsByDoc: Record<number, number> = {};
   const profitByDoc: Record<number, number> = {};
