@@ -65,12 +65,17 @@ export default function StoreLocationsSettings() {
   const [addOpen, setAddOpen] = useState(false);
   const [form, setForm] = useState({ nameEn: "", nameAr: "", address: "" });
   const [editing, setEditing] = useState<Store | null>(null);
+  // What the dialog is creating. A warehouse belongs to the chosen store; a shared
+  // one belongs to nobody and is usable by every store; a store owns warehouses.
+  const [mode, setMode] = useState<"store" | "warehouse" | "shared">("warehouse");
 
   const save = useMutation({
     mutationFn: async () => {
       const body = {
-        ...form, type: "warehouse",
-        ownerStoreId: store?.id ?? null,
+        ...form,
+        type: mode === "store" ? "store" : "warehouse",
+        // A store owns nothing; a shared warehouse has no owner on purpose.
+        ownerStoreId: mode === "warehouse" ? (store?.id ?? null) : null,
       };
       const url = editing ? `/api/stores/${editing.id}` : "/api/stores";
       const r = await fetch(url, {
@@ -82,11 +87,18 @@ export default function StoreLocationsSettings() {
       if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || "Could not save.");
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (created: any) => {
       qc.invalidateQueries({ queryKey: ["/api/stores"] });
       setAddOpen(false); setEditing(null);
       setForm({ nameEn: "", nameAr: "", address: "" });
-      toast({ title: editing ? "Warehouse updated" : "Warehouse added" });
+      // Jump straight to a new store so it can be set up immediately.
+      if (!editing && mode === "store" && created?.id) setStoreId(String(created.id));
+      toast({
+        title: editing ? "Saved"
+          : mode === "store" ? "Store added"
+          : mode === "shared" ? "Shared warehouse added"
+          : "Warehouse added",
+      });
     },
     onError: (e: any) => toast({ title: "Not saved", description: e?.message, variant: "destructive" }),
   });
@@ -115,9 +127,14 @@ export default function StoreLocationsSettings() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/stores"] }),
   });
 
-  const openAdd = () => { setEditing(null); setForm({ nameEn: "", nameAr: "", address: "" }); setAddOpen(true); };
+  const openAdd = (m: "store" | "warehouse" | "shared") => {
+    setEditing(null); setMode(m);
+    setForm({ nameEn: "", nameAr: "", address: "" });
+    setAddOpen(true);
+  };
   const openEdit = (w: Store) => {
     setEditing(w);
+    setMode(w.type === "store" ? "store" : w.ownerStoreId == null ? "shared" : "warehouse");
     setForm({ nameEn: w.nameEn, nameAr: w.nameAr || "", address: w.address || "" });
     setAddOpen(true);
   };
@@ -190,16 +207,26 @@ export default function StoreLocationsSettings() {
             </SelectContent>
           </Select>
         </div>
-        {store && (
-          <Button onClick={openAdd} className="gap-2">
-            <Plus className="w-4 h-4" /> Add warehouse to {store.nameEn.split("—")[0].trim()}
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => openAdd("store")} className="gap-2">
+            <StoreIcon className="w-4 h-4" /> Add store
           </Button>
-        )}
+          {store && (
+            <Button onClick={() => openAdd("warehouse")} className="gap-2">
+              <Plus className="w-4 h-4" /> Add warehouse to {store.nameEn.split("—")[0].trim()}
+            </Button>
+          )}
+          <Button variant="outline" onClick={() => openAdd("shared")} className="gap-2">
+            <Warehouse className="w-4 h-4" /> Add shared warehouse
+          </Button>
+        </div>
       </div>
 
       {!store ? (
         <p className="text-sm text-muted-foreground py-8 text-center">
-          Choose a store above. You will only see that store.
+          {shops.length === 0
+            ? "No stores yet. Add your first store above — warehouses go inside it."
+            : "Choose a store above. You will only see that store."}
         </p>
       ) : (
         <>
@@ -219,14 +246,19 @@ export default function StoreLocationsSettings() {
             )}
           </div>
 
-          {shared.length > 0 && (
-            <div>
-              <p className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-2">
-                Shared by both stores ({shared.length})
+          <div>
+            <p className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-2">
+              Shared by every store{shared.length > 0 && ` (${shared.length})`}
+            </p>
+            {shared.length === 0 ? (
+              <p className="text-sm text-muted-foreground border rounded-xl p-4 text-center">
+                None. A shared warehouse belongs to no single store — use it for stock
+                any store can draw from.
               </p>
+            ) : (
               <div className="space-y-2">{shared.map((w) => card(w, true))}</div>
-            </div>
-          )}
+            )}
+          </div>
 
           <p className="text-[11px] text-muted-foreground flex items-start gap-1.5">
             <MapPin size={13} className="mt-0.5 shrink-0" />
@@ -240,11 +272,20 @@ export default function StoreLocationsSettings() {
       <Dialog open={addOpen} onOpenChange={(o) => { if (!o) { setAddOpen(false); setEditing(null); } }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>{editing ? "Edit warehouse" : `Add warehouse to ${store?.nameEn ?? ""}`}</DialogTitle>
+            <DialogTitle>
+              {editing ? `Edit ${editing.type === "store" ? "store" : "warehouse"}`
+                : mode === "store" ? "Add a store"
+                : mode === "shared" ? "Add a shared warehouse"
+                : `Add warehouse to ${store?.nameEn ?? ""}`}
+            </DialogTitle>
             <DialogDescription>
               {editing
                 ? "Rename it or change its address."
-                : "It will belong to this store only. The other store will not see it."}
+                : mode === "store"
+                ? "A shop that trades. Its own warehouses, staff and stock go inside it."
+                : mode === "shared"
+                ? "Belongs to no single store. Every store can draw stock from it."
+                : "It will belong to this store only. Other stores will not see it."}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -253,7 +294,7 @@ export default function StoreLocationsSettings() {
               <Input
                 autoFocus value={form.nameEn}
                 onChange={(e) => setForm((f) => ({ ...f, nameEn: e.target.value }))}
-                placeholder="e.g. 27 Number Warehouse"
+                placeholder={mode === "store" ? "e.g. Store 3 — Salwa Road" : "e.g. 27 Number Warehouse"}
               />
             </div>
             <div className="space-y-1.5">
@@ -276,7 +317,10 @@ export default function StoreLocationsSettings() {
             <Button variant="ghost" onClick={() => { setAddOpen(false); setEditing(null); }}>Cancel</Button>
             <Button onClick={() => save.mutate()} disabled={!form.nameEn.trim() || save.isPending} className="gap-2">
               {save.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-              {editing ? "Save" : "Add warehouse"}
+              {editing ? "Save"
+                : mode === "store" ? "Add store"
+                : mode === "shared" ? "Add shared warehouse"
+                : "Add warehouse"}
             </Button>
           </DialogFooter>
         </DialogContent>
