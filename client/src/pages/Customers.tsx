@@ -10,6 +10,7 @@ import {
   CreditCard,
   ArrowUpDown,
   Download,
+  History,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +35,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
+import OpeningBalancesDialog from "@/components/OpeningBalancesDialog";
 import { validateName, validatePhone, validateNonNegative, formatPhone } from "@/lib/validation";
 
 /* ─────────────────────────────────────────
@@ -502,6 +504,7 @@ export default function Customers() {
   const [filterType, setFilterType] = useState<FilterType>("all");
   const [sortKey, setSortKey] = useState<SortKey>(creditDeepLink ? "outstanding" : "name");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
 
   /* fetch customers */
   const { data: customers, isLoading } = useQuery<Customer[]>({
@@ -610,6 +613,12 @@ export default function Customers() {
           </p>
         </div>
         <div className="flex gap-2 shrink-0">
+          {/* Existing business: customers already owe money on paper invoices this
+              system has never seen. Those balances have to come in before the
+              receivables mean anything. */}
+          <Button variant="outline" onClick={() => setOpeningOpen(true)} className="gap-2 rounded-lg">
+            <History className="w-4 h-4" /> Old Balances
+          </Button>
           <Button variant="outline" onClick={exportCsv} className="gap-2 rounded-lg">
             <Download className="w-4 h-4" /> Export CSV
           </Button>
@@ -796,6 +805,7 @@ export default function Customers() {
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
       />
+      <OpeningBalancesDialog open={openingOpen} onClose={() => setOpeningOpen(false)} />
     </div>
   );
 }

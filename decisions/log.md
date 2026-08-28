@@ -332,3 +332,42 @@ deploy that fixed it.
 
 **Consequence:** the service worker registers in PRODUCTION ONLY. In development
 it sits between Vite and the browser and makes hot reload behave strangely.
+
+---
+
+## 2026-08-28 — Opening balances: owed yes, profit never
+
+**Context:** Eleven years of trading on paper. Customers owe money on invoices the
+system has never seen. The owner's question was whether collecting QAR 50,000
+should book ~10% as profit, since roughly 90% of it was material cost.
+
+**Decision:** None of it is profit. Not 100%, not 10%.
+
+**Why:** the margin on those sales was earned years ago, when the goods were sold.
+Booking any of it on collection counts the same profit twice, and makes any month
+with heavy collections look like a strong trading month when it was only a good
+collection month. Revenue is already reported by INVOICE DATE, so a 2023 invoice
+lands in 2023 — the system was right, it only needed the profit exclusion.
+
+**How:** `transactionMode: "opening"`, and the rule lives once in
+`shared/transactionMode.ts` as two predicates rather than eleven scattered filters:
+`countsForProfit` (opening NO) and `countsForBalance` (opening YES). The two
+questions must never be collapsed into one.
+
+`createOpeningBalance()` writes a plain unpaid invoice with the ORIGINAL paper
+number and date — not through `createDocument()`, which would move stock, invent
+cost, apply the credit-limit gate and burn a number from the counter. None of
+those are wanted for a debt that already exists.
+
+`collectOldestFirst()` fills the oldest invoice first and stops when the money runs
+out, leaving the last one part-paid. Each allocation goes through `createPayment()`,
+so the overpayment guard, the paid/partial ladder and the cash ledger all behave
+normally. No parallel money path.
+
+**Verified with the owner's own scenario:** 50,000 across three years raises the
+balance by exactly 50,000 and profit by ZERO (it would have been 50,000 of fiction),
+and paying 30,000 clears 2023 in full, part-pays 2024, and never touches 2025.
+
+**Still open:** the same flow for suppliers (what the business owes on 30/60/90
+terms), and marking old debt doubtful or written off — the owner has balances they
+expect never to recover, and a receivables figure that includes them is a fiction.
