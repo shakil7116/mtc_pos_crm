@@ -11,6 +11,7 @@ import {
   ArrowUpDown,
   Download,
   History,
+  Scale,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -36,6 +37,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
 import OpeningBalancesDialog from "@/components/OpeningBalancesDialog";
+import ReceivablesReviewDialog from "@/components/ReceivablesReviewDialog";
 import { validateName, validatePhone, validateNonNegative, formatPhone } from "@/lib/validation";
 
 /* ─────────────────────────────────────────
@@ -505,6 +507,7 @@ export default function Customers() {
   const [sortKey, setSortKey] = useState<SortKey>(creditDeepLink ? "outstanding" : "name");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [openingOpen, setOpeningOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   /* fetch customers */
   const { data: customers, isLoading } = useQuery<Customer[]>({
@@ -618,6 +621,11 @@ export default function Customers() {
               receivables mean anything. */}
           <Button variant="outline" onClick={() => setOpeningOpen(true)} className="gap-2 rounded-lg">
             <History className="w-4 h-4" /> Old Balances
+          </Button>
+          {/* How much of what is owed is realistically coming — after eleven years
+              of trust-based credit, one confident total is a fiction. */}
+          <Button variant="outline" onClick={() => setReviewOpen(true)} className="gap-2 rounded-lg">
+            <Scale className="w-4 h-4" /> Review
           </Button>
           <Button variant="outline" onClick={exportCsv} className="gap-2 rounded-lg">
             <Download className="w-4 h-4" /> Export CSV
@@ -806,6 +814,7 @@ export default function Customers() {
         onClose={() => setDialogOpen(false)}
       />
       <OpeningBalancesDialog open={openingOpen} onClose={() => setOpeningOpen(false)} />
+      <ReceivablesReviewDialog open={reviewOpen} onClose={() => setReviewOpen(false)} />
     </div>
   );
 }

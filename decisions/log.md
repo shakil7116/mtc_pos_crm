@@ -371,3 +371,44 @@ and paying 30,000 clears 2023 in full, part-pays 2024, and never touches 2025.
 **Still open:** the same flow for suppliers (what the business owes on 30/60/90
 terms), and marking old debt doubtful or written off — the owner has balances they
 expect never to recover, and a receivables figure that includes them is a fiction.
+
+---
+
+## 2026-08-28 — Test data wiped; doubtful debt is marked, not guessed
+
+**The wipe.** Two of my bugs made this take three attempts, both worth remembering:
+
+1. `dotenv.config()` and the backup script path were resolved against the CURRENT
+   DIRECTORY, so running from anywhere but the project root died on "DATABASE_URL
+   is not set" or a misleading "Backup failed".
+2. `products.supplier_id` blocked deleting suppliers while keeping products. The
+   per-table "deleted N" lines print as they go, so the rollback looked like
+   success. The owner correctly refused to believe it and checked the app.
+
+Both fixed: paths resolve against the script's own location, blocking links are
+found and cleared up front, and a rollback now prints an unmissable banner saying
+nothing was deleted. **A destructive script whose failure looks like success is
+the worst possible failure mode.**
+
+Result verified directly in the database, not from the output: all transaction
+tables empty, 49 products and 6 stores kept, one admin left, numbering back to 1.
+
+**Collectability.** ~QAR 900,000 outstanding after eleven years, of which roughly
+500,000 is realistically collectable. Reporting one confident 900,000 overstates
+the business.
+
+`customers.collectability` is normal / doubtful / written_off, and
+`shared/collectability.ts` holds the split so client and server cannot disagree.
+Marking changes REPORTING only — the debt stays, and a later payment lands against
+the invoices normally.
+
+**Two judgements baked into the design:**
+- Size is not risk. A customer owing 50,000 who pays 40-60% every month is one of
+  the best accounts there is; a customer owing 3,000 who stopped answering is the
+  problem. The UI says this, because the instinct is to mark the big numbers.
+- Anything other than "normal" REQUIRES a reason. In six months nobody remembers
+  why an account was written off.
+
+**Deliberately deferred, on the owner's own instinct:** mark from what happens over
+the first month of live trading, not from what is feared now. Guessing up front
+just moves the fiction somewhere else.

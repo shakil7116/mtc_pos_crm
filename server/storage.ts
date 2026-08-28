@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import { countsForProfit, countsForBalance } from "@shared/transactionMode";
+import { normalizeCollectability, splitReceivables } from "@shared/collectability";
 import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -577,6 +578,69 @@ export async function createCustomer(data: InsertCustomer): Promise<Customer> {
 export async function updateCustomer(id: number, data: Partial<InsertCustomer>): Promise<Customer> {
   const [row] = await db.update(customers).set(upperFields(data, CUSTOMER_UP)).where(eq(customers.id, id)).returning();
   return row;
+}
+
+/** Mark how likely a customer's debt is to be collected.
+ *
+ *  This changes REPORTING, never the debt. The customer still owes every riyal;
+ *  what changes is whether the business counts it as an asset it expects to
+ *  realise. Writing a balance off is an accounting judgement, not forgiveness —
+ *  if they pay tomorrow the money still lands against their invoices normally. */
+export async function setCustomerCollectability(
+  customerId: number,
+  status: string,
+  note?: string,
+  userId?: number,
+): Promise<Customer> {
+  const value = normalizeCollectability(status);
+  if (value !== status) throw new Error(`Unknown status "${status}". Use normal, doubtful or written_off.`);
+
+  const [cust] = await db.select().from(customers).where(eq(customers.id, customerId));
+  if (!cust) throw new Error("Customer not found.");
+
+  // Calling a debt doubtful or gone is a judgement someone should have to justify,
+  // and be able to look back on.
+  if (value !== "normal" && !String(note || "").trim()) {
+    throw new Error("Give a short reason — in six months nobody will remember why this was marked.");
+  }
+
+  const [row] = await db.update(customers).set({
+    collectability: value,
+    collectabilityNote: value === "normal" ? null : String(note).trim(),
+    collectabilityAt: value === "normal" ? null : new Date(),
+    collectabilityBy: value === "normal" ? null : (userId ?? null),
+  } as any).where(eq(customers.id, customerId)).returning();
+
+  return row;
+}
+
+/** Receivables, split by how likely the money is.
+ *
+ *  One confident total across eleven years of trust-based credit is a fiction.
+ *  This reports what is genuinely expected, what is doubtful, and what has been
+ *  written off — so the honest question ("how much of this will I actually get?")
+ *  has an answer. */
+export async function getReceivablesSummary() {
+  const custs = await db.select().from(customers);
+  const rows: Array<{
+    customerId: number; name: string; balance: number;
+    collectability: string; note: string | null;
+  }> = [];
+
+  for (const c of custs as any[]) {
+    const balance = await getCustomerBalance(c.id);
+    if (balance <= 0.005) continue;
+    rows.push({
+      customerId: c.id,
+      name: c.name,
+      balance: Number(balance.toFixed(2)),
+      collectability: normalizeCollectability(c.collectability),
+      note: c.collectabilityNote ?? null,
+    });
+  }
+
+  rows.sort((a, b) => b.balance - a.balance);
+  return { ...splitReceivables(rows), customers: rows };
 }
 
 export async function getCustomerBalance(customerId: number): Promise<number> {

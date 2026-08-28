@@ -20,6 +20,7 @@ import {
   setStockCount, setStockCountBatch, deleteUser, setUserActive,
   createOpeningBalance, createOpeningBalances, collectOldestFirst,
   createSupplierOpeningBalance, createSupplierOpeningBalances,
+  setCustomerCollectability, getReceivablesSummary,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -2766,6 +2767,32 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json(await receiveSupplierOrder(Number(req.params.id), storeId, uid));
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // Receivables split by how likely the money is: expected / doubtful / written
+  // off. One confident total across eleven years of trust-based credit is a fiction.
+  app.get("/api/receivables/summary", async (_req: Request, res: Response) => {
+    try {
+      res.json(await getReceivablesSummary());
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Mark a customer normal / doubtful / written_off. Changes REPORTING only —
+  // the debt itself is untouched and a later payment still lands normally.
+  app.post("/api/customers/:id/collectability", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      res.json(await setCustomerCollectability(
+        Number(req.params.id),
+        String(req.body?.status || "normal"),
+        req.body?.note,
+        req.user?.id,
+      ));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 

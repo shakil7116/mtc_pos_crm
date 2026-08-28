@@ -148,6 +148,18 @@ export const customers = pgTable("customers", {
   phone: text("phone"),
   type: text("type").notNull().default("walk-in"), // walk-in | contractor | corporate | government
   creditLimit: numeric("credit_limit").default("0"),
+  // HOW LIKELY IS THIS MONEY? Eleven years of trust-based trading leaves debt
+  // that will never be collected — people who left the country, contractors who
+  // folded. A receivables figure that treats all of it as an asset is a fiction.
+  //   normal      expected to be collected (the default)
+  //   doubtful    might not be collected — reported separately, still chased
+  //   written_off gone. Left out of receivables, kept on the record.
+  // Judge this from what actually happened, not from the size of the balance:
+  // a customer who owes a lot but pays 40-60% every month is a good account.
+  collectability: text("collectability").notNull().default("normal"),
+  collectabilityNote: text("collectability_note"),
+  collectabilityAt: timestamp("collectability_at"),
+  collectabilityBy: integer("collectability_by").references(() => users.id),
   trn: text("trn"),
   address: text("address"),
   notes: text("notes"),
