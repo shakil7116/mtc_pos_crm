@@ -507,6 +507,39 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
   const toggleActive = (store: Store) =>
     updateMut.mutate({ id: store.id, active: !store.active });
 
+  // Stores are the real places; a warehouse belongs to one of them. A flat list
+  // hides that, so locations are ordered store-then-its-warehouses, and warehouses
+  // are indented under their owner. Ones owned by nobody are shared between both
+  // stores and grouped last.
+  const grouped = (() => {
+    const out: Array<{ store: Store; isChild: boolean; heading?: string }> = [];
+    const shops = stores.filter((s) => s.type === "store");
+    const sheds = stores.filter((s) => s.type === "warehouse");
+    for (const shop of shops) {
+      out.push({ store: shop, isChild: false });
+      for (const w of sheds.filter((x) => x.ownerStoreId === shop.id)) {
+        out.push({ store: w, isChild: true });
+      }
+    }
+    sheds.filter((w) => w.ownerStoreId == null).forEach((w, i) => out.push({
+      store: w, isChild: true,
+      heading: i === 0 ? "Shared between both stores" : undefined,
+    }));
+    // A warehouse pointing at a store that no longer exists must still be visible.
+    for (const w of sheds) {
+      if (!out.some((o) => o.store.id === w.id)) out.push({ store: w, isChild: false });
+    }
+    return out;
+  })();
+
+  const warehouseCount = (storeId: number) =>
+    stores.filter((s) => s.type === "warehouse" && s.ownerStoreId === storeId).length;
+
+  const addWarehouseTo = (storeId: number) => {
+    setAddForm({ nameEn: "", nameAr: "", address: "", type: "warehouse", ownerStoreId: storeId });
+    setAddOpen(true);
+  };
+
   const startEdit = (store: Store) => {
     setEditId(store.id);
     setEditForm({ nameEn: store.nameEn, nameAr: store.nameAr, address: store.address, type: store.type, ownerStoreId: store.ownerStoreId ?? null, active: store.active });
@@ -543,8 +576,14 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
             </div>
           ) : (
             <div className="space-y-3">
-              {stores.map((store) => (
-                <div key={store.id} className={`border rounded-xl p-4 transition-opacity ${store.active ? "" : "opacity-60"}`}>
+              {grouped.map(({ store, isChild, heading }) => (
+                <div key={store.id} className={isChild ? "ml-6 border-l-2 border-purple-100 pl-3" : ""}>
+                  {heading && (
+                    <p className="text-[11px] uppercase tracking-widest text-muted-foreground font-semibold mb-2 -ml-3">
+                      {heading}
+                    </p>
+                  )}
+                <div className={`border rounded-xl p-4 transition-opacity ${store.active ? "" : "opacity-60"}`}>
                   {editId === store.id ? (
                     /* Inline edit */
                     <div className="space-y-3">
@@ -647,6 +686,13 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                           )}
                         </div>
                         <p className="text-sm text-muted-foreground">{store.address}</p>
+                        {store.type === "store" && (
+                          <p className="text-[11px] text-muted-foreground">
+                            {warehouseCount(store.id) === 0
+                              ? "No warehouses yet"
+                              : `${warehouseCount(store.id)} warehouse${warehouseCount(store.id) === 1 ? "" : "s"}`}
+                          </p>
+                        )}
                         {store.type === "warehouse" && (
                           <p className="text-[11px] text-purple-600 font-medium">
                             Owned by: {store.ownerStoreId != null ? (stores.find((s) => s.id === store.ownerStoreId)?.nameEn ?? `#${store.ownerStoreId}`) : "Common (shared)"}
@@ -654,6 +700,14 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                         )}
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
+                        {store.type === "store" && (
+                          <Button
+                            variant="outline" size="sm" className="gap-1.5"
+                            onClick={() => addWarehouseTo(store.id)}
+                          >
+                            <Warehouse className="w-3.5 h-3.5" /> Add warehouse
+                          </Button>
+                        )}
                         <Button variant="ghost" size="sm" onClick={() => startEdit(store)}>
                           Edit
                         </Button>
@@ -687,6 +741,7 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                       </div>
                     </div>
                   )}
+                </div>
                 </div>
               ))}
             </div>
