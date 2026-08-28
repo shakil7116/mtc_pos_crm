@@ -16,7 +16,8 @@
     "test:live": "tsx scripts/verify-cogs-live.ts",
     "backup": "node scripts/backup-db.mjs",
     "backup:restore-check": "node scripts/restore-db.mjs",
-    "icons": "node scripts/make-pwa-icons.mjs"
+    "icons": "node scripts/make-pwa-icons.mjs",
+    "wipe": "node scripts/wipe-test-data.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
