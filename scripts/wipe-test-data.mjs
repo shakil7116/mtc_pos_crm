@@ -120,6 +120,43 @@ try {
   }
   for (const t of targets) if (!done.has(t)) order.push(t); // cycles go last
 
+  // Rows that are being KEPT can still point at rows being DELETED — products
+  // reference suppliers, for one. Postgres refuses the delete, the whole
+  // transaction rolls back, and because the per-table "deleted N" lines have
+  // already printed it looks like it worked. So find those links up front and
+  // clear them, or say plainly that we cannot.
+  const links = (await client.query(`
+    select tc.table_name as child, kcu.column_name as col, ccu.table_name as parent,
+           c.is_nullable as nullable
+    from information_schema.table_constraints tc
+    join information_schema.key_column_usage kcu
+      on kcu.constraint_name = tc.constraint_name and kcu.table_schema = tc.table_schema
+    join information_schema.constraint_column_usage ccu
+      on ccu.constraint_name = tc.constraint_name and ccu.table_schema = tc.table_schema
+    join information_schema.columns c
+      on c.table_name = tc.table_name and c.column_name = kcu.column_name
+     and c.table_schema = tc.table_schema
+    where tc.constraint_type = 'FOREIGN KEY' and tc.table_schema = 'public'`)).rows
+    .filter((r) => targets.includes(r.parent) && !targets.includes(r.child) && r.child !== r.parent);
+
+  const toClear = [];
+  const cannot = [];
+  for (const l of links) {
+    const n = (await client.query(
+      `select count(*)::int n from "${l.child}" where "${l.col}" is not null`)).rows[0].n;
+    if (!n) continue;
+    (l.nullable === "YES" ? toClear : cannot).push({ ...l, n });
+  }
+
+  if (cannot.length) {
+    log("");
+    log("CANNOT PROCEED — these rows are being kept but point at rows being deleted,");
+    log("and the link cannot be emptied:");
+    for (const l of cannot) log(`   ${l.child}.${l.col} -> ${l.parent}  (${l.n} rows, NOT NULL)`);
+    log("Either delete those too (add the matching group) or keep the parent group.");
+    throw new Error("Blocked by a required link that cannot be cleared.");
+  }
+
   // ── report ──
   console.log("");
   log("WOULD DELETE");
@@ -145,6 +182,13 @@ try {
   if (want.counters) {
     const c = (await client.query("select type, next_number from document_counters order by type")).rows;
     log("   RESET numbering: " + c.map((x) => `${x.type}@${x.next_number}`).join(", "));
+  }
+
+  log("");
+  if (toClear.length) {
+    log("");
+    log("WOULD UNLINK (kept rows that point at deleted ones):");
+    for (const l of toClear) log(`   ${l.child}.${l.col} -> ${l.parent}  (${l.n} rows set to empty)`);
   }
 
   log("");
@@ -174,6 +218,10 @@ try {
   // ── wipe ──
   console.log("");
   await client.query("begin");
+  for (const l of toClear) {
+    const r = await client.query(`update "${l.child}" set "${l.col}" = null where "${l.col}" is not null`);
+    log("   unlinked " + String(r.rowCount).padStart(5) + "  " + l.child + "." + l.col);
+  }
   for (const t of order) {
     const r = await client.query(`delete from "${t}"`);
     if (r.rowCount) log("   deleted " + String(r.rowCount).padStart(6) + "  " + t);
@@ -194,7 +242,13 @@ try {
 } catch (e) {
   failed = true;
   await client.query("rollback").catch(() => {});
-  log("FAILED (nothing was deleted): " + (e.code || "") + " " + e.message);
+  console.log("");
+  log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
+  log("!!  ROLLED BACK — NOTHING WAS DELETED.");
+  log("!!  Any 'deleted N' lines above were undone.");
+  log("!!  " + (e.code ? e.code + " " : "") + e.message);
+  if (e.detail) log("!!  " + e.detail);
+  log("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
 } finally {
   await client.end().catch(() => {});
   process.exit(failed ? 1 : 0);
