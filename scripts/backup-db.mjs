@@ -17,10 +17,17 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import zlib from "zlib";
+import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { Readable } from "stream";
 
-dotenv.config({ quiet: true });
+
+// Load .env and resolve output from THIS FILE, never the current directory.
+// Run from anywhere else and a cwd-relative lookup silently finds nothing —
+// which for a destructive script means it stops with a misleading error.
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const ROOT = path.join(HERE, "..");
+dotenv.config({ path: path.join(ROOT, ".env"), quiet: true });
 
 const args = process.argv.slice(2);
 const argOf = (name, fallback) => {
@@ -28,7 +35,7 @@ const argOf = (name, fallback) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : fallback;
 };
 const KEEP = Number(argOf("--keep", 14));
-const OUT_DIR = path.resolve(argOf("--out", "backups"));
+const OUT_DIR = path.resolve(argOf("--out", path.join(ROOT, "backups")));
 
 const url = process.env.DATABASE_URL;
 if (!url) { console.error("DATABASE_URL is not set."); process.exit(1); }

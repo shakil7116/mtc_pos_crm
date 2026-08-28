@@ -19,10 +19,20 @@
 //
 //   node scripts/wipe-test-data.mjs --all
 //   node scripts/wipe-test-data.mjs --all --confirm
+import fs from "fs";
 import pg from "pg";
 import dotenv from "dotenv";
 import { execFileSync } from "child_process";
-dotenv.config({ quiet: true });
+import path from "path";
+import { fileURLToPath } from "url";
+
+// Resolve helpers against THIS FILE, not the current directory. Run from anywhere
+// else and a cwd-relative path silently fails to find the backup script, which
+// aborts the whole wipe with a misleading "backup failed".
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const BACKUP_SCRIPT = path.join(HERE, "backup-db.mjs");
+const BACKUP_DIR = path.join(HERE, "..", "backups");
+dotenv.config({ path: path.join(HERE, "..", ".env"), quiet: true });
 
 const args = process.argv.slice(2);
 const has = (f) => args.includes(f);
@@ -153,7 +163,10 @@ try {
   console.log("");
   log("taking a backup before deleting anything…");
   try {
-    execFileSync(process.execPath, ["scripts/backup-db.mjs"], { stdio: "inherit" });
+    if (!fs.existsSync(BACKUP_SCRIPT)) {
+      throw new Error("Cannot find " + BACKUP_SCRIPT + " — refusing to delete without a backup.");
+    }
+    execFileSync(process.execPath, [BACKUP_SCRIPT, "--out", BACKUP_DIR], { stdio: "inherit" });
   } catch {
     throw new Error("Backup failed — refusing to delete anything. Fix the backup first.");
   }
