@@ -18,6 +18,7 @@ import {
   getDocuments, getDocument, createDocument, updateDocument, updateDocumentItems, deleteDocument, voidDocument,
   getPayments, createPayment, resolveItemCost, quickGoodsReceipt,
   setStockCount, setStockCountBatch, deleteUser, setUserActive,
+  createOpeningBalance, createOpeningBalances, collectOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -2763,6 +2764,45 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json(await receiveSupplierOrder(Number(req.params.id), storeId, uid));
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ── Opening balances ───────────────────────────────────────────
+  // What a customer already owed before this system existed. Recorded with their
+  // ORIGINAL paper invoice number and date, so ageing is honest and a collection
+  // can settle the oldest debt first. Counts towards what is owed, never profit.
+  app.post("/api/opening-balances", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+      if (rows) {
+        return res.status(201).json(await createOpeningBalances(rows, req.user?.id));
+      }
+      const doc = await createOpeningBalance({ ...req.body, createdBy: req.user?.id });
+      res.status(201).json(doc);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Take money off a customer and clear the OLDEST invoices first.
+  app.post("/api/customers/:id/collect", async (req: Request, res: Response) => {
+    try {
+      const result = await collectOldestFirst({
+        customerId: Number(req.params.id),
+        amount: Number(req.body?.amount),
+        method: String(req.body?.method || "Cash"),
+        date: String(req.body?.date || new Date().toISOString().slice(0, 10)),
+        reference: req.body?.reference,
+        notes: req.body?.notes,
+        recordedBy: req.user?.id,
+      });
+      res.status(201).json(result);
+    } catch (err) {
+      if ((err as any)?.code === "OVERPAYMENT") {
+        return res.status(400).json({ message: (err as Error).message, code: "OVERPAYMENT" });
+      }
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 

@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
-import { countsForProfit } from "@shared/transactionMode";
+import { countsForProfit, countsForBalance } from "@shared/transactionMode";
 import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -1339,6 +1339,182 @@ async function snapshotCosts(items: Array<{ productId?: any }>): Promise<Record<
   const out: Record<number, string> = {};
   for (const r of rows) out[r.id] = String(r.costPrice ?? "0");
   return out;
+}
+
+/** Record what a customer already owed before this system existed.
+ *
+ *  Eleven years of trading on paper. A customer owes QAR 50,000 built up over
+ *  years; roughly 10% of that was margin and 90% was material cost, and every
+ *  riyal of that profit was earned long ago. What matters now is only collecting it.
+ *
+ *  So this creates a plain unpaid invoice carrying the ORIGINAL paper number and
+ *  the ORIGINAL date — which is what makes ageing honest, and what lets a payment
+ *  be settled against the oldest debt first — marked transactionMode "opening" so
+ *  it counts towards what is OWED and never towards PROFIT.
+ *
+ *  Deliberately NOT createDocument(): no items, so no stock moves and no cost is
+ *  invented; no credit-limit gate, because the debt already exists whether it fits
+ *  the limit or not; no numbering counter, because the number came off their paper. */
+/** Take a payment and clear the OLDEST debt first.
+ *
+ *  A customer owes QAR 50,000 across a dozen invoices going back years and hands
+ *  over QAR 30,000. Nobody wants to sit and decide which invoices that covers, and
+ *  guessing differently each time makes ageing meaningless.
+ *
+ *  So it fills the oldest invoice, then the next, until the money runs out. The last
+ *  one touched is usually left part-paid, which is correct and normal.
+ *
+ *  Each allocation goes through createPayment(), so the overpayment guard, the
+ *  paid/partial status ladder and the cash ledger all behave exactly as they do for
+ *  a single payment. No parallel money path. */
+export async function collectOldestFirst(data: {
+  customerId: number;
+  amount: number;
+  method: string;
+  date: string;
+  reference?: string;
+  notes?: string;
+  recordedBy?: number;
+}) {
+  const amount = Number(data.amount);
+  if (!data.customerId) throw new Error("Choose which customer is paying.");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("The amount must be more than zero.");
+
+  // Every invoice this customer still owes on, oldest first. Demo rows are not real
+  // money; opening balances ARE, and are usually the oldest debt there is.
+  const docs = (await db.select().from(documents).where(and(
+    eq(documents.customerId, data.customerId),
+    eq(documents.type, "INV"),
+  ))).filter((d: any) =>
+    countsForBalance(d) && d.status !== "void" && d.status !== "returned");
+
+  const allPays = await db.select().from(payments)
+    .where(inArray(payments.documentId, docs.map((d) => d.id).length ? docs.map((d) => d.id) : [-1]));
+
+  const owing = docs.map((d: any) => {
+    const mine = allPays.filter((p: any) => p.documentId === d.id);
+    return { doc: d, remaining: remainingBalance(d.total, mine) };
+  })
+    .filter((x) => x.remaining > 0.005)
+    // Oldest date first; same date falls back to the lower id, so it is deterministic.
+    .sort((a, b) => String(a.doc.date).localeCompare(String(b.doc.date)) || a.doc.id - b.doc.id);
+
+  const totalOwed = Number(owing.reduce((s2, x) => s2 + x.remaining, 0).toFixed(2));
+  if (!owing.length) throw new Error("This customer has nothing outstanding.");
+  if (amount > totalOwed + PAYMENT_EPSILON) {
+    throw new Error(
+      `That is more than the customer owes. Outstanding is QAR ${totalOwed.toFixed(2)}, ` +
+      `this payment is QAR ${amount.toFixed(2)}. There is no customer credit account for ` +
+      `the difference, so take only what is owed.`);
+  }
+
+  let left = amount;
+  const allocations: Array<{ documentId: number; number: string; date: string; was: number; paid: number; nowOwes: number; cleared: boolean }> = [];
+
+  for (const item of owing) {
+    if (left <= 0.005) break;
+    const take = Math.min(left, item.remaining);
+    await createPayment({
+      documentId: item.doc.id,
+      customerId: data.customerId,
+      amount: String(Number(take.toFixed(2))),
+      method: data.method,
+      date: data.date,
+      reference: data.reference ?? null,
+      notes: data.notes || "Collection — applied to the oldest balance first.",
+      recordedBy: data.recordedBy ?? null,
+    } as any);
+    left = Number((left - take).toFixed(2));
+    allocations.push({
+      documentId: item.doc.id,
+      number: item.doc.number,
+      date: item.doc.date,
+      was: Number(item.remaining.toFixed(2)),
+      paid: Number(take.toFixed(2)),
+      nowOwes: Number((item.remaining - take).toFixed(2)),
+      cleared: item.remaining - take <= 0.005,
+    });
+  }
+
+  return {
+    customerId: data.customerId,
+    collected: Number((amount - left).toFixed(2)),
+    allocations,
+    invoicesCleared: allocations.filter((a) => a.cleared).length,
+    owedBefore: totalOwed,
+    owedAfter: Number((totalOwed - (amount - left)).toFixed(2)),
+  };
+}
+
+export async function createOpeningBalance(data: {
+  customerId: number;
+  amount: number;
+  date: string;
+  number?: string;
+  notes?: string;
+  storeId?: number | null;
+  createdBy?: number;
+}): Promise<Document> {
+  const amount = Number(data.amount);
+  if (!data.customerId) throw new Error("Choose which customer owes this.");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("The outstanding amount must be more than zero.");
+  if (!data.date || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(data.date))) {
+    throw new Error("A date is required (YYYY-MM-DD) — it is what makes the ageing correct.");
+  }
+  if (String(data.date) > new Date().toISOString().slice(0, 10)) {
+    throw new Error("An opening balance cannot be dated in the future.");
+  }
+
+  const [cust] = await db.select().from(customers).where(eq(customers.id, data.customerId));
+  if (!cust) throw new Error("Customer not found.");
+
+  // Their own paper reference where there is one, so the customer recognises it.
+  let number = String(data.number || "").trim().toUpperCase();
+  if (number) {
+    const clash = await db.select().from(documents).where(eq(documents.number, number));
+    if (clash.length) throw new Error(`Invoice number "${number}" already exists in the system.`);
+  } else {
+    const existing = await db.select({ n: sql<number>`count(*)::int` }).from(documents)
+      .where(eq(documents.transactionMode, "opening"));
+    number = `OB-${String(Number(existing[0]?.n || 0) + 1).padStart(4, "0")}`;
+  }
+
+  const [doc] = await db.insert(documents).values({
+    type: "INV",
+    number,
+    date: data.date,
+    customerId: data.customerId,
+    customerName: cust.name,
+    storeId: data.storeId ?? null,
+    status: "unpaid",
+    transactionMode: "opening",
+    subtotal: String(amount),
+    total: String(amount),
+    taxRate: "0", taxAmount: "0", discountAmount: "0",
+    notes: data.notes || "Balance carried in from before the system.",
+    createdBy: data.createdBy ?? null,
+  } as any).returning();
+
+  return doc;
+}
+
+/** Several at once. Each line stands alone, so one bad row does not lose the rest
+ *  of an afternoon of typing. */
+export async function createOpeningBalances(
+  rows: Array<{ customerId: number; amount: number; date: string; number?: string; notes?: string; storeId?: number | null }>,
+  createdBy?: number,
+) {
+  const created: Document[] = [];
+  const failed: { row: number; customerId: number; reason: string }[] = [];
+  for (let i = 0; i < (rows || []).length; i++) {
+    try {
+      created.push(await createOpeningBalance({ ...rows[i], createdBy }));
+    } catch (e) {
+      failed.push({ row: i + 1, customerId: rows[i]?.customerId, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  const total = created.reduce((s2, d) => s2 + Number((d as any).total || 0), 0);
+  return { created, failed, count: created.length, totalOwed: Number(total.toFixed(2)) };
 }
 
 export async function createDocument(req: CreateDocumentRequest): Promise<DocumentWithItems> {
