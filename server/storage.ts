@@ -4128,6 +4128,206 @@ export async function updateSupplierReturnStatus(
 }
 
 // ─── Supplier Payments (outgoing to suppliers) ──────────────────────────────
+/** Record what the business already owed a supplier before this system existed.
+ *
+ *  The mirror of createOpeningBalance() on the customer side. Suppliers give 30,
+ *  60 or 90 day terms, so there is real money outstanding on goods already
+ *  delivered, and the payables are wrong until it is entered.
+ *
+ *  A supplier balance is derived from RECEIVED order lines (receivedQty x cost),
+ *  so the debt is written as a received order holding a single line for the amount.
+ *  It carries no productId, which is the point: the goods arrived months ago and
+ *  were consumed. Moving stock now would invent inventory that is not on the shelf.
+ *
+ *  The ORIGINAL invoice date drives the terms clock, so a 60-day invoice from two
+ *  months ago shows as due now rather than in two months. */
+/** What is still owed on each received order from a supplier, oldest first.
+ *
+ *  A supplier balance is order value minus what has been paid. Payments MAY name a
+ *  specific order; older ones often do not. So the unlinked ones are spread over the
+ *  oldest orders first — otherwise money that has genuinely been paid would keep
+ *  showing as outstanding. */
+export async function getSupplierOpenOrders(supplierId: number) {
+  const orders = (await db.select().from(supplierOrders)
+    .where(and(eq(supplierOrders.supplierId, supplierId), eq(supplierOrders.status, "received"))))
+    .map((o: any) => {
+      const items = Array.isArray(o.items) ? (o.items as any[]) : [];
+      const value = items.reduce((s2, it) =>
+        s2 + Number(it.receivedQty || 0) * Number(it.cost || it.price || 0), 0);
+      return { order: o, value: Number(value.toFixed(2)), paid: 0 };
+    })
+    .filter((x) => x.value > 0.005)
+    .sort((a, b) =>
+      String(a.order.receiptDate || "").localeCompare(String(b.order.receiptDate || "")) ||
+      a.order.id - b.order.id);
+
+  const pays = await db.select().from(supplierPayments)
+    .where(eq(supplierPayments.supplierId, supplierId));
+
+  // Payments that name their order settle that order directly.
+  let unlinked = 0;
+  for (const p of pays as any[]) {
+    const amt = Number(p.amount || 0);
+    const hit = p.poId ? orders.find((o) => o.order.id === p.poId) : null;
+    if (hit) hit.paid += amt; else unlinked += amt;
+  }
+  // Everything else lands on the oldest debt first.
+  for (const o of orders) {
+    if (unlinked <= 0.005) break;
+    const room = Math.max(0, o.value - o.paid);
+    const take = Math.min(room, unlinked);
+    o.paid += take;
+    unlinked -= take;
+  }
+
+  return orders.map((o) => ({
+    id: o.order.id,
+    poNumber: o.order.poNumber,
+    invoiceNumber: o.order.supplierInvoiceNumber,
+    date: o.order.receiptDate,
+    dueDate: o.order.paymentDueDate,
+    value: o.value,
+    paid: Number(Math.min(o.paid, o.value).toFixed(2)),
+    remaining: Number(Math.max(0, o.value - o.paid).toFixed(2)),
+  })).filter((o) => o.remaining > 0.005);
+}
+
+/** Pay a supplier and clear their OLDEST bills first — the mirror of
+ *  collectOldestFirst(). Each allocation goes through createSupplierPayment(), so
+ *  the funds check and the cash ledger behave exactly as for a single payment. */
+export async function paySupplierOldestFirst(data: {
+  supplierId: number;
+  amount: number;
+  method: string;
+  date: string;
+  reference?: string;
+  notes?: string;
+  createdBy?: number;
+  override?: boolean;
+  overrideReason?: string;
+}) {
+  const amount = Number(data.amount);
+  if (!data.supplierId) throw new Error("Choose which supplier is being paid.");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("The amount must be more than zero.");
+
+  const open = await getSupplierOpenOrders(data.supplierId);
+  if (!open.length) throw new Error("Nothing is outstanding with this supplier.");
+
+  const owed = Number(open.reduce((s2, o) => s2 + o.remaining, 0).toFixed(2));
+  if (amount > owed + 0.01) {
+    throw new Error(
+      `That is more than is owed. Outstanding is QAR ${owed.toFixed(2)}, ` +
+      `this payment is QAR ${amount.toFixed(2)}.`);
+  }
+
+  let left = amount;
+  const allocations: Array<{ orderId: number; poNumber: string; date: string; was: number; paid: number; nowOwes: number; cleared: boolean }> = [];
+
+  for (const o of open) {
+    if (left <= 0.005) break;
+    const take = Number(Math.min(left, o.remaining).toFixed(2));
+    await createSupplierPayment({
+      supplierId: data.supplierId,
+      poId: o.id,
+      amount: take,
+      method: data.method,
+      date: data.date,
+      reference: data.reference,
+      supplierInvoiceNumber: o.invoiceNumber || undefined,
+      notes: data.notes || "Payment — applied to the oldest bill first.",
+      createdBy: data.createdBy,
+      override: data.override, overrideReason: data.overrideReason,
+    });
+    left = Number((left - take).toFixed(2));
+    allocations.push({
+      orderId: o.id, poNumber: o.poNumber, date: o.date,
+      was: o.remaining, paid: take,
+      nowOwes: Number((o.remaining - take).toFixed(2)),
+      cleared: o.remaining - take <= 0.005,
+    });
+  }
+
+  return {
+    supplierId: data.supplierId,
+    paid: Number((amount - left).toFixed(2)),
+    allocations,
+    billsCleared: allocations.filter((a) => a.cleared).length,
+    owedBefore: owed,
+    owedAfter: Number((owed - (amount - left)).toFixed(2)),
+  };
+}
+
+export async function createSupplierOpeningBalance(data: {
+  supplierId: number;
+  amount: number;
+  date: string;
+  invoiceNumber?: string;
+  paymentTermsDays?: number;
+  notes?: string;
+  createdBy?: number;
+}): Promise<SupplierOrder> {
+  const amount = Number(data.amount);
+  if (!data.supplierId) throw new Error("Choose which supplier is owed.");
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("The outstanding amount must be more than zero.");
+  if (!data.date || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(String(data.date))) {
+    throw new Error("A date is required (YYYY-MM-DD) — it is what starts the payment terms clock.");
+  }
+  if (String(data.date) > new Date().toISOString().slice(0, 10)) {
+    throw new Error("An opening balance cannot be dated in the future.");
+  }
+
+  const [sup] = await db.select().from(suppliers).where(eq(suppliers.id, data.supplierId));
+  if (!sup) throw new Error("Supplier not found.");
+
+  const terms = Number(data.paymentTermsDays) || 0;
+  const due = terms > 0
+    ? new Date(new Date(data.date + "T00:00:00Z").getTime() + terms * 86400000).toISOString().slice(0, 10)
+    : data.date;
+
+  const existing = await db.select({ n: sql<number>`count(*)::int` }).from(supplierOrders)
+    .where(sql`${supplierOrders.poNumber} like 'OBS-%'`);
+  const poNumber = `OBS-${String(Number(existing[0]?.n || 0) + 1).padStart(4, "0")}`;
+
+  const [row] = await db.insert(supplierOrders).values({
+    supplierId: data.supplierId,
+    poNumber,
+    status: "received",          // the goods came long ago
+    paymentTermsDays: terms,
+    receiptDate: data.date,
+    paymentDueDate: due,
+    supplierInvoiceNumber: data.invoiceNumber || null,
+    supplierInvoiceAmount: String(amount),
+    receivedAt: new Date(),
+    notes: data.notes || "Balance carried in from before the system.",
+    // One line, no productId — deliberately no stock movement.
+    items: [{
+      name: "Balance carried in (goods already received)",
+      qty: 1, unit: "LOT", receivedQty: 1, cost: amount,
+      openingBalance: true,
+    }],
+  } as any).returning();
+
+  return row;
+}
+
+/** Several at once; one bad line does not lose the rest. */
+export async function createSupplierOpeningBalances(
+  rows: Array<{ supplierId: number; amount: number; date: string; invoiceNumber?: string; paymentTermsDays?: number; notes?: string }>,
+  createdBy?: number,
+) {
+  const created: SupplierOrder[] = [];
+  const failed: { row: number; reason: string }[] = [];
+  for (let i = 0; i < (rows || []).length; i++) {
+    try {
+      created.push(await createSupplierOpeningBalance({ ...rows[i], createdBy }));
+    } catch (e) {
+      failed.push({ row: i + 1, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  const total = created.reduce((s2, o: any) => s2 + Number(o.supplierInvoiceAmount || 0), 0);
+  return { created, failed, count: created.length, totalOwed: Number(total.toFixed(2)) };
+}
+
 export async function createSupplierPayment(data: {
   supplierId: number; poId?: number; amount: number; method: string; date: string;
   reference?: string; supplierInvoiceNumber?: string; supplierInvoiceUrl?: string;

@@ -5,6 +5,7 @@ import {
   Building2,
   Search,
   Plus,
+  History,
   Phone,
   Mail,
   MapPin,
@@ -34,6 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import SupplierOpeningBalancesDialog from "@/components/SupplierOpeningBalancesDialog";
 import {
   Dialog,
   DialogContent,
@@ -1989,6 +1991,7 @@ export default function Suppliers() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null);
   const [showAddDialog, setShowAddDialog] = useState(false);
+  const [openingOpen, setOpeningOpen] = useState(false);
   const [orderSupplier, setOrderSupplier] = useState<Supplier | null>(null);
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [returnOrder, setReturnOrder] = useState<SupplierOrder | null>(null);
@@ -2061,13 +2064,20 @@ export default function Suppliers() {
               : `${activeSuppliers.length} supplier${activeSuppliers.length !== 1 ? "s" : ""}`}
           </p>
         </div>
-        <button
-          onClick={() => setShowAddDialog(true)}
-          className="btn-primary-action shrink-0"
-        >
-          <Plus className="w-4 h-4" />
-          Add Supplier
-        </button>
+        <div className="flex gap-2 shrink-0">
+          {/* Existing business: bills already outstanding on 30/60/90 day terms that
+              this system has never seen. Payables mean nothing until they are in. */}
+          <Button variant="outline" onClick={() => setOpeningOpen(true)} className="gap-2 rounded-lg">
+            <History className="w-4 h-4" /> Old Bills
+          </Button>
+          <button
+            onClick={() => setShowAddDialog(true)}
+            className="btn-primary-action"
+          >
+            <Plus className="w-4 h-4" />
+            Add Supplier
+          </button>
+        </div>
       </div>
 
       {/* Tabs */}
@@ -2324,6 +2334,9 @@ export default function Suppliers() {
       </Tabs>
 
       {/* ── Dialogs ── */}
+      {/* Bills already outstanding from before the system */}
+      <SupplierOpeningBalancesDialog open={openingOpen} onClose={() => setOpeningOpen(false)} />
+
       {/* Add supplier */}
       <SupplierDialog
         open={showAddDialog}

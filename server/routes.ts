@@ -19,6 +19,8 @@ import {
   getPayments, createPayment, resolveItemCost, quickGoodsReceipt,
   setStockCount, setStockCountBatch, deleteUser, setUserActive,
   createOpeningBalance, createOpeningBalances, collectOldestFirst,
+  createSupplierOpeningBalance, createSupplierOpeningBalances,
+  getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
   createReturn, getReturns, getReturn, approveReturn, rejectReturn, getBusinessRules,
@@ -2781,6 +2783,51 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const doc = await createOpeningBalance({ ...req.body, createdBy: req.user?.id });
       res.status(201).json(doc);
     } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // What the business already owed a supplier before this system. Written as a
+  // received order with no product line — the goods arrived months ago, so no
+  // stock may move now.
+  app.post("/api/supplier-opening-balances", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : null;
+      if (rows) {
+        return res.status(201).json(await createSupplierOpeningBalances(rows, req.user?.id));
+      }
+      res.status(201).json(await createSupplierOpeningBalance({ ...req.body, createdBy: req.user?.id }));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Everything still outstanding with a supplier, oldest bill first.
+  app.get("/api/suppliers/:id/open-orders", async (req: Request, res: Response) => {
+    try {
+      res.json(await getSupplierOpenOrders(Number(req.params.id)));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Pay a supplier, clearing their OLDEST bills first.
+  app.post("/api/suppliers/:id/pay", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      res.status(201).json(await paySupplierOldestFirst({
+        supplierId: Number(req.params.id),
+        amount: Number(req.body?.amount),
+        method: String(req.body?.method || "Cash"),
+        date: String(req.body?.date || new Date().toISOString().slice(0, 10)),
+        reference: req.body?.reference,
+        notes: req.body?.notes,
+        createdBy: req.user?.id,
+        override: req.body?.override, overrideReason: req.body?.overrideReason,
+      }));
+    } catch (err) {
+      if (sendFundsError(res, err)) return;
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
