@@ -455,6 +455,24 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
   const [editId, setEditId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<Partial<Store>>({});
 
+  // Deleting a location only works if it has never been used. The server refuses
+  // otherwise and explains what is pointing at it — that message is shown here.
+  const deleteStoreMut = useMutation({
+    mutationFn: async (id: number) => {
+      const r = await fetch(`/api/stores/${id}`, { method: "DELETE", credentials: "include" });
+      if (r.status === 204) return true;
+      const body = await r.json().catch(() => ({}));
+      throw new Error(body?.message || "Could not delete this location.");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/stores"] });
+      toast({ title: "Location deleted" });
+    },
+    onError: (e: any) => toast({
+      title: "Cannot delete this location", description: e?.message, variant: "destructive",
+    }),
+  });
+
   const addMut = useMutation({
     mutationFn: (body: typeof addForm) =>
       fetch("/api/stores", {
@@ -638,6 +656,24 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
                       <div className="flex items-center gap-2 shrink-0">
                         <Button variant="ghost" size="sm" onClick={() => startEdit(store)}>
                           Edit
+                        </Button>
+                        <Button
+                          variant="ghost" size="sm"
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                          disabled={deleteStoreMut.isPending}
+                          onClick={() => {
+                            if (!window.confirm(
+                              `Delete ${store.nameEn}?
+
+` +
+                              "This only works if nothing has ever used it — no stock, no invoices, " +
+                              "no deliveries. If it has been used, switch it off with the Active toggle " +
+                              "instead: it disappears from the lists and the history stays intact."
+                            )) return;
+                            deleteStoreMut.mutate(store.id);
+                          }}
+                        >
+                          Delete
                         </Button>
                         <div className="flex items-center gap-1.5">
                           <Switch

@@ -81,6 +81,65 @@ export async function createStore(data: InsertStore): Promise<Store> {
   return row;
 }
 
+/** Delete a location.
+ *
+ *  Seventeen tables reference stores: inventory, invoices, deliveries, stock
+ *  movements, expenses, staff. A location that has been TRADED THROUGH cannot be
+ *  erased without destroying the record of where things happened.
+ *
+ *  But a location typed in by mistake — a warehouse that does not exist, a
+ *  duplicate — has nothing pointing at it and should just go. So the references
+ *  are counted first, and if any exist the caller is told exactly what and how
+ *  many, and to deactivate instead.
+ *
+ *  The check walks the LIVE foreign keys rather than a hand-written list, so a
+ *  table added later is covered without anyone remembering to update this. */
+export async function deleteStore(id: number): Promise<{ deleted: true }> {
+  const [store] = await db.select().from(stores).where(eq(stores.id, id));
+  if (!store) throw new Error("Location not found.");
+
+  const all = await db.select().from(stores);
+  if (all.length <= 1) throw new Error("This is the only location left — the system needs at least one.");
+
+  const refs = (await db.execute(sql`
+    select tc.table_name as child, kcu.column_name as col
+    from information_schema.table_constraints tc
+    join information_schema.key_column_usage kcu
+      on kcu.constraint_name = tc.constraint_name and kcu.table_schema = tc.table_schema
+    join information_schema.constraint_column_usage ccu
+      on ccu.constraint_name = tc.constraint_name and ccu.table_schema = tc.table_schema
+    where tc.constraint_type = 'FOREIGN KEY'
+      and tc.table_schema = 'public'
+      and ccu.table_name = 'stores'`)).rows as any[];
+
+  const used: string[] = [];
+  for (const r of refs) {
+    if (r.child === "stores") continue;   // a warehouse owned by a store — handled below
+    const q = await db.execute(
+      sql.raw(`select count(*)::int as n from "${r.child}" where "${r.col}" = ${Number(id)}`));
+    const n = Number((q.rows as any[])[0]?.n || 0);
+    if (n > 0) used.push(`${n} in ${r.child.replace(/_/g, " ")}`);
+  }
+
+  // A warehouse belonging to this store would be orphaned.
+  const children = all.filter((s2: any) => s2.ownerStoreId === id);
+  if (children.length) {
+    throw new Error(
+      `${store.nameEn} owns ${children.length} warehouse(s): ${children.map((c: any) => c.nameEn).join(", ")}. ` +
+      `Reassign or delete those first.`);
+  }
+
+  if (used.length) {
+    throw new Error(
+      `${store.nameEn} cannot be deleted — it has been used: ${used.join(", ")}. ` +
+      `Erasing it would remove the record of where that happened. Switch it off instead ` +
+      `(untick Active) — it disappears from the lists and the history stays intact.`);
+  }
+
+  await db.delete(stores).where(eq(stores.id, id));
+  return { deleted: true };
+}
+
 export async function updateStore(id: number, data: Partial<InsertStore>): Promise<Store> {
   const [row] = await db.update(stores).set(data).where(eq(stores.id, id)).returning();
   return row;

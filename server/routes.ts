@@ -20,7 +20,7 @@ import {
   setStockCount, setStockCountBatch, deleteUser, setUserActive,
   createOpeningBalance, createOpeningBalances, collectOldestFirst,
   createSupplierOpeningBalance, createSupplierOpeningBalances,
-  setCustomerCollectability, getReceivablesSummary,
+  setCustomerCollectability, getReceivablesSummary, deleteStore,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -528,6 +528,19 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.status(201).json(row);
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // Delete a location typed in by mistake. Storage refuses if it has ever been
+  // used and says what is pointing at it — 17 tables reference stores, so erasing
+  // a traded-through location would destroy the record of where things happened.
+  app.delete("/api/stores/:id", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      await deleteStore(Number(req.params.id));
+      res.status(204).send();
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
