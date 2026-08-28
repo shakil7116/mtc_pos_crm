@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  Store as StoreIcon, Warehouse, Plus, Trash2, Loader2, X, MapPin, Info,
+  Store as StoreIcon, Warehouse, Plus, Loader2, MapPin,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import LocationAddressTree from "@/components/LocationAddressTree";
 import { cn } from "@/lib/utils";
 
 /* ── One store at a time ──────────────────────────────────────────────────────
@@ -39,101 +40,6 @@ const LEVELS = [
   { key: "location_racks", label: "Racks", hint: "Rack A, Wall Rack, Corner" },
   { key: "location_shelves", label: "Shelves", hint: "Shelf 1, Top, Bottom" },
 ] as const;
-
-/* Address levels for ONE location. */
-function LocationAddress({ locationId, name }: { locationId: number; name: string }) {
-  const qc = useQueryClient();
-  const { toast } = useToast();
-  const [draft, setDraft] = useState<Record<string, string>>({});
-
-  const lists = LEVELS.map((lv) => ({
-    ...lv,
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    q: useQuery<ListItem[]>({
-      queryKey: [`/api/lists/${lv.key}`],
-      queryFn: () => fetch(`/api/lists/${lv.key}`).then((r) => r.json()),
-    }),
-  }));
-
-  const add = useMutation({
-    mutationFn: async ({ listKey, value }: { listKey: string; value: string }) => {
-      const r = await fetch("/api/lists", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ listKey, value, meta: { locationId } }),
-      });
-      if (!r.ok) throw new Error((await r.json().catch(() => ({})))?.message || "Could not add.");
-      return r.json();
-    },
-    onSuccess: (_d, v) => {
-      qc.invalidateQueries({ queryKey: [`/api/lists/${v.listKey}`] });
-      setDraft((d) => ({ ...d, [v.listKey]: "" }));
-    },
-    onError: (e: any) => toast({ title: "Not added", description: e?.message, variant: "destructive" }),
-  });
-
-  const remove = useMutation({
-    mutationFn: async ({ id }: { id: number; listKey: string }) => {
-      const r = await fetch(`/api/lists/${id}`, { method: "DELETE", credentials: "include" });
-      if (!r.ok) throw new Error("Could not remove.");
-    },
-    onSuccess: (_d, v) => qc.invalidateQueries({ queryKey: [`/api/lists/${v.listKey}`] }),
-  });
-
-  return (
-    <div className="mt-2 grid gap-2 sm:grid-cols-3">
-      {lists.map((lv) => {
-        const mine = (lv.q.data ?? []).filter((i) => Number(i.meta?.locationId) === locationId);
-        return (
-          <div key={lv.key} className="rounded-lg border bg-muted/20 p-2.5">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {lv.label}
-            </p>
-            <div className="flex flex-wrap gap-1 my-1.5 min-h-[22px]">
-              {mine.length === 0 && (
-                <span className="text-[11px] text-muted-foreground/70">none yet</span>
-              )}
-              {mine.map((i) => (
-                <Badge key={i.id} variant="outline" className="text-[11px] font-normal gap-1 pr-1">
-                  {i.value}
-                  <button
-                    type="button"
-                    className="text-muted-foreground hover:text-red-600"
-                    onClick={() => remove.mutate({ id: i.id, listKey: lv.key })}
-                    aria-label={`Remove ${i.value}`}
-                  >
-                    <X size={11} />
-                  </button>
-                </Badge>
-              ))}
-            </div>
-            <div className="flex gap-1">
-              <Input
-                className="h-7 text-xs"
-                placeholder={lv.hint}
-                value={draft[lv.key] ?? ""}
-                onChange={(e) => setDraft((d) => ({ ...d, [lv.key]: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && (draft[lv.key] ?? "").trim()) {
-                    add.mutate({ listKey: lv.key, value: draft[lv.key].trim() });
-                  }
-                }}
-              />
-              <Button
-                size="icon" variant="outline" className="h-7 w-7 shrink-0"
-                disabled={!(draft[lv.key] ?? "").trim() || add.isPending}
-                onClick={() => add.mutate({ listKey: lv.key, value: draft[lv.key].trim() })}
-                aria-label={`Add to ${lv.label} in ${name}`}
-              >
-                <Plus size={13} />
-              </Button>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 export default function StoreLocationsSettings() {
   const qc = useQueryClient();
@@ -266,7 +172,7 @@ export default function StoreLocationsSettings() {
           <Switch checked={loc.active} onCheckedChange={() => toggle.mutate(loc)} />
         </div>
       </div>
-      <LocationAddress locationId={loc.id} name={loc.nameEn} />
+      <LocationAddressTree locationId={loc.id} locationName={loc.nameEn} />
     </div>
   );
 
