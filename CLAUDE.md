@@ -90,6 +90,17 @@ print path) and `client/src/pages/DocumentEditor.tsx` (editor preview). Change o
 mirror the other. `min-height: 272mm` + `height: auto` + `@page { size: A4 }` is what
 pins the totals block to the bottom of the page. Do not "simplify" it.
 
+**Deleting a location hides it; erasing is a separate, fenced action.**
+`DELETE /api/stores/:id` stamps `deleted_at` — the row stays, leaves every list, and
+is undoable for one day (`shared/undo.ts`, `POST /api/stores/:id/restore`). A store
+takes its warehouses with it under a shared `delete_batch`. `getStores()` filters
+deleted rows out by default — pass `{ includeDeleted: true }` to see them, and never
+add a store read that skips it. `purgeExpiredStores()` only ever hard-deletes a
+location with ZERO references; one with history stays hidden for good.
+`POST /api/stores/:id/erase` is the destructive path: preview → typed name → an
+automatic backup → one transaction → a 25,000-row cap. Optional links are cleared,
+required links go with the row. Do not loosen any of those five gates.
+
 **Roles.** Five: `admin`, `manager`, `worker`, `salesman`, `driver`. Manager sees the
 same dashboard as admin. Salesman and worker share `SalesmanDashboard.tsx`, store-scoped.
 Store scope is enforced **server-side** via `lockedStoreId(req)` — never trust the client.

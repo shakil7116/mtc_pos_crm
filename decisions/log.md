@@ -412,3 +412,51 @@ the invoices normally.
 **Deliberately deferred, on the owner's own instinct:** mark from what happens over
 the first month of live trading, not from what is feared now. Guessing up front
 just moves the fiction somewhere else.
+
+---
+
+## 2026-08-29 — Deleting a location: hide by default, erase on purpose
+
+**The problem.** An admin could not remove a store or warehouse that had anything
+in it. The delete refused and explained why, which was correct for a live business
+and useless during setup: the system is full of test warehouses holding test stock,
+and they could not be got rid of.
+
+**The decision — two speeds, not one.**
+
+*Delete* (the everyday one) HIDES the location. `stores.deleted_at` is stamped, it
+leaves every list in the system at once, and for one day it can be undone exactly
+as it was — same id, same stock, same history. A store takes its warehouses with
+it under a shared `delete_batch`, so one Undo brings the family back.
+
+After the day: a location nobody ever used is cleared out for real. One that HAS
+history stays hidden for good and is never erased — invoices, stock moves and
+expenses name it, and erasing it would destroy the record of where those things
+happened. Hidden costs nothing.
+
+*Erase* (the deliberate one) removes the location AND its contents. This is the one
+genuinely destructive button in the system, so it is fenced five ways:
+
+1. a preview first — what goes, counted, table by table
+2. the exact name has to be typed back
+3. a full verified backup runs BEFORE anything is touched; if it fails, nothing is erased
+4. one transaction — a failure half way leaves no mess
+5. a cap: over 25,000 rows it is refused outright. That is a working location, not a test one
+
+The rule for each table pointing at the location: **optional link → the row
+survives with the link cleared** (an invoice keeps its money, it just no longer
+names a place); **required link → the row goes with it** (the stock in that
+warehouse). So erasing a test warehouse takes its stock and its shelves, and
+leaves the invoices standing.
+
+**Why a day.** A mistake is noticed the same working day — the wrong row clicked,
+the wrong branch chosen. `shared/undo.ts` holds the maths alone so the countdown on
+screen and the clean-up on the server can never disagree about when the day is up.
+
+**Also.** A location is now a real place: short code, phone, email, CR number, TRN,
+opening hours, map link, notes. Duplicate names are refused on create and rename —
+two locations both called "Store 2" cannot be told apart on a stock list. Creating a
+store offers to make its main warehouse in the same step.
+
+Verified 24/24 against the live database, including the backup actually running
+before an erase and the wrong name erasing nothing.

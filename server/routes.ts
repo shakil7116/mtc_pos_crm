@@ -21,6 +21,7 @@ import {
   createOpeningBalance, createOpeningBalances, collectOldestFirst,
   createSupplierOpeningBalance, createSupplierOpeningBalances,
   setCustomerCollectability, getReceivablesSummary, deleteStore,
+  restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -531,14 +532,63 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
   });
 
-  // Delete a location typed in by mistake. Storage refuses if it has ever been
-  // used and says what is pointing at it — 17 tables reference stores, so erasing
-  // a traded-through location would destroy the record of where things happened.
+  // The recycle bin. Registered before /:id routes so "deleted" is never read
+  // as an id.
+  app.get("/api/stores/deleted", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      res.json(await getDeletedStores());
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Delete a location. An admin may delete any of them — the row is HIDDEN, not
+  // erased, so a mistake is undoable for one day and the history that names it
+  // (invoices, stock moves, expenses) stays intact.
   app.delete("/api/stores/:id", async (req: Request, res: Response) => {
     if (!requireAdmin(req, res)) return;
     try {
-      await deleteStore(Number(req.params.id));
-      res.status(204).send();
+      const result = await deleteStore(Number(req.params.id), { byUserId: req.user?.id ?? null });
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Undo — brings it back exactly as it was, warehouses and all.
+  app.post("/api/stores/:id/restore", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      res.json(await restoreStore(Number(req.params.id)));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // What is inside a location, and what erasing it would do. Writes nothing —
+  // this is the preview the confirmation screen shows before anything happens.
+  app.get("/api/stores/:id/contents", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      res.json(await planStorePurge(Number(req.params.id)));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Erase a location AND everything inside it. The destructive one: a full
+  // backup is taken first, the exact name must be typed back, and there is no
+  // undo afterwards — the backup is the undo.
+  app.post("/api/stores/:id/erase", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const result = await purgeStoreWithContents(
+        Number(req.params.id), String(req.body?.confirmName ?? ""));
+      console.log(
+        `🔥 ERASED location(s) ${result.erased.map((e) => e.nameEn).join(", ")} ` +
+        `(${result.rows} rows) by user ${req.user?.id ?? "?"} — backup: ${result.backupFile}`);
+      res.json(result);
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }

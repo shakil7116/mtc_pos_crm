@@ -3,6 +3,7 @@ import { db } from "./db";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import { countsForProfit, countsForBalance } from "@shared/transactionMode";
 import { normalizeCollectability, splitReceivables } from "@shared/collectability";
+import { undoDeadline, isUndoable } from "@shared/undo";
 import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
@@ -67,8 +68,16 @@ export async function upsertSettings(data: Partial<InsertSettings>): Promise<Set
 }
 
 // ─── Stores ──────────────────────────────────────────────────────────────────
-export async function getStores(): Promise<Store[]> {
-  return db.select().from(stores).orderBy(asc(stores.id));
+// A deleted location is HIDDEN, not erased (see shared/undo.ts). Every read
+// below therefore skips deleted rows unless asked not to, so one filter here
+// keeps them off every screen in the system.
+
+export async function getStores(
+  opts: { includeDeleted?: boolean } = {},
+): Promise<Store[]> {
+  const q = db.select().from(stores);
+  if (opts.includeDeleted) return q.orderBy(asc(stores.id));
+  return q.where(isNull(stores.deletedAt)).orderBy(asc(stores.id));
 }
 
 export async function getStore(id: number): Promise<Store | undefined> {
@@ -76,31 +85,33 @@ export async function getStore(id: number): Promise<Store | undefined> {
   return row;
 }
 
+/** Create a store or a warehouse.
+ *
+ *  A name is demanded, and a name already in use is refused. Two locations both
+ *  called "Store 2" is not a cosmetic problem — every stock figure, sale and
+ *  transfer is then filed under a name that means two different places. */
 export async function createStore(data: InsertStore): Promise<Store> {
-  const [row] = await db.insert(stores).values(data).returning();
+  const nameEn = String((data as any).nameEn ?? "").trim();
+  if (!nameEn) throw new Error("A name is needed.");
+
+  const live = await getStores();
+  const same = live.find(
+    (s) => s.nameEn.trim().toLowerCase() === nameEn.toLowerCase());
+  if (same) {
+    throw new Error(
+      `"${same.nameEn}" already exists (${same.type}). Two locations with the same ` +
+      `name cannot be told apart on a stock list — give this one a different name.`);
+  }
+
+  const [row] = await db.insert(stores).values({ ...data, nameEn } as any).returning();
   return row;
 }
 
-/** Delete a location.
+/** Everything in the database that points at this location, counted.
  *
- *  Seventeen tables reference stores: inventory, invoices, deliveries, stock
- *  movements, expenses, staff. A location that has been TRADED THROUGH cannot be
- *  erased without destroying the record of where things happened.
- *
- *  But a location typed in by mistake — a warehouse that does not exist, a
- *  duplicate — has nothing pointing at it and should just go. So the references
- *  are counted first, and if any exist the caller is told exactly what and how
- *  many, and to deactivate instead.
- *
- *  The check walks the LIVE foreign keys rather than a hand-written list, so a
- *  table added later is covered without anyone remembering to update this. */
-export async function deleteStore(id: number): Promise<{ deleted: true }> {
-  const [store] = await db.select().from(stores).where(eq(stores.id, id));
-  if (!store) throw new Error("Location not found.");
-
-  const all = await db.select().from(stores);
-  if (all.length <= 1) throw new Error("This is the only location left — the system needs at least one.");
-
+ *  Walks the LIVE foreign keys rather than a hand-written list, so a table added
+ *  later is covered without anyone remembering to update this. */
+export async function storeReferences(id: number): Promise<string[]> {
   const refs = (await db.execute(sql`
     select tc.table_name as child, kcu.column_name as col
     from information_schema.table_constraints tc
@@ -114,33 +125,406 @@ export async function deleteStore(id: number): Promise<{ deleted: true }> {
 
   const used: string[] = [];
   for (const r of refs) {
-    if (r.child === "stores") continue;   // a warehouse owned by a store — handled below
+    if (r.child === "stores") continue;   // a warehouse owned by a store — handled separately
     const q = await db.execute(
       sql.raw(`select count(*)::int as n from "${r.child}" where "${r.col}" = ${Number(id)}`));
     const n = Number((q.rows as any[])[0]?.n || 0);
     if (n > 0) used.push(`${n} in ${r.child.replace(/_/g, " ")}`);
   }
+  return used;
+}
 
-  // A warehouse belonging to this store would be orphaned.
-  const children = all.filter((s2: any) => s2.ownerStoreId === id);
-  if (children.length) {
-    throw new Error(
-      `${store.nameEn} owns ${children.length} warehouse(s): ${children.map((c: any) => c.nameEn).join(", ")}. ` +
-      `Reassign or delete those first.`);
+export type DeletedStoreResult = {
+  deleted: true;
+  batch: string;
+  deletedAt: Date;
+  undoUntil: number;
+  /** Every location that went with it — a store takes its warehouses along. */
+  hidden: { id: number; nameEn: string; type: string }[];
+  /** What was pointing at it, in plain words. Empty = it was never used. */
+  usedBy: string[];
+  /** true = it has history, so it is hidden for good and never erased. */
+  keptForever: boolean;
+};
+
+/** Delete a location — an admin may delete ANY of them, including a store.
+ *
+ *  Nothing is erased on the spot. Seventeen tables reference stores: inventory,
+ *  invoices, deliveries, stock movements, expenses, staff. Erasing a location
+ *  that has been traded through would destroy the record of where those things
+ *  happened, and no confirmation dialog makes that safe.
+ *
+ *  So a delete HIDES the row. It leaves every list at once, and for one day it
+ *  can be brought back exactly as it was — including the warehouses that went
+ *  with it, which share a batch so a single Undo restores the family.
+ *
+ *  After the day: a location nobody ever used is cleared out for real; one with
+ *  history stays hidden for good. See shared/undo.ts. */
+export async function deleteStore(
+  id: number,
+  opts: { byUserId?: number | null } = {},
+): Promise<DeletedStoreResult> {
+  const [store] = await db.select().from(stores).where(eq(stores.id, id));
+  if (!store) throw new Error("Location not found.");
+  if ((store as any).deletedAt) throw new Error(`${store.nameEn} is already deleted.`);
+
+  const live = await getStores();
+
+  // A store takes its own warehouses with it — leaving them behind would strand
+  // them under an owner that no longer appears anywhere.
+  const children = live.filter((s2: any) => s2.ownerStoreId === id && s2.id !== id);
+  const goingIds = new Set<number>([id, ...children.map((c) => c.id)]);
+
+  if (live.every((s2) => goingIds.has(s2.id))) {
+    throw new Error("That would leave no locations at all — the system needs at least one.");
   }
 
-  if (used.length) {
-    throw new Error(
-      `${store.nameEn} cannot be deleted — it has been used: ${used.join(", ")}. ` +
-      `Erasing it would remove the record of where that happened. Switch it off instead ` +
-      `(untick Active) — it disappears from the lists and the history stays intact.`);
+  const usedBy = await storeReferences(id);
+  for (const c of children) usedBy.push(...(await storeReferences(c.id)));
+
+  const deletedAt = new Date();
+  const batch = `del-${deletedAt.getTime()}-${id}`;
+  const patch: any = { deletedAt, deleteBatch: batch, deletedBy: opts.byUserId ?? null };
+
+  await db.update(stores).set(patch).where(inArray(stores.id, Array.from(goingIds)));
+
+  return {
+    deleted: true,
+    batch,
+    deletedAt,
+    undoUntil: undoDeadline(deletedAt),
+    hidden: [store, ...children].map((s2: any) => ({
+      id: s2.id, nameEn: s2.nameEn, type: s2.type,
+    })),
+    usedBy,
+    keptForever: usedBy.length > 0,
+  };
+}
+
+/** Undo a delete — brings the location back exactly as it was.
+ *
+ *  Nothing was changed on the way out, so nothing has to be rebuilt: the same
+ *  row, the same id, the same stock and history still pointing at it.
+ *
+ *  Restoring one member of a batch restores the whole batch, and restoring a
+ *  warehouse whose store is still hidden brings the store back too — otherwise
+ *  it would return to a screen that cannot show it. */
+export async function restoreStore(id: number): Promise<{ restored: { id: number; nameEn: string }[] }> {
+  const [row] = await db.select().from(stores).where(eq(stores.id, id));
+  if (!row) throw new Error("Location not found.");
+  if (!(row as any).deletedAt) throw new Error(`${row.nameEn} is not deleted.`);
+
+  const all = await getStores({ includeDeleted: true });
+  const batch = (row as any).deleteBatch;
+
+  const wanted = new Set<number>([id]);
+  if (batch) for (const s of all) if ((s as any).deleteBatch === batch) wanted.add(s.id);
+
+  // A warehouse cannot come back on its own if its store is still hidden.
+  for (const s of all) {
+    if (!wanted.has(s.id)) continue;
+    const owner = (s as any).ownerStoreId;
+    if (owner) {
+      const ownerRow = all.find((o) => o.id === owner);
+      if (ownerRow && (ownerRow as any).deletedAt) wanted.add(ownerRow.id);
+    }
   }
 
-  await db.delete(stores).where(eq(stores.id, id));
-  return { deleted: true };
+  await db.update(stores)
+    .set({ deletedAt: null, deleteBatch: null, deletedBy: null } as any)
+    .where(inArray(stores.id, Array.from(wanted)));
+
+  return {
+    restored: all.filter((s) => wanted.has(s.id)).map((s) => ({ id: s.id, nameEn: s.nameEn })),
+  };
+}
+
+/** Clear out locations whose day is up — but only ones nothing points at.
+ *
+ *  A hidden location that has history is left alone for ever. Erasing it would
+ *  orphan the invoices and stock moves that name it, and a report would then be
+ *  unable to say where a sale happened. Hidden costs nothing. */
+export async function purgeExpiredStores(): Promise<{ purged: { id: number; nameEn: string }[] }> {
+  const all = await getStores({ includeDeleted: true });
+  const purged: { id: number; nameEn: string }[] = [];
+
+  for (const s of all) {
+    const at = (s as any).deletedAt;
+    if (!at || isUndoable(at)) continue;
+    if (all.some((o) => (o as any).ownerStoreId === s.id)) continue;  // still owns warehouses
+    const refs = await storeReferences(s.id);
+    if (refs.length) continue;                                        // has history — keep hidden
+    await db.delete(stores).where(eq(stores.id, s.id));
+    purged.push({ id: s.id, nameEn: s.nameEn });
+  }
+  return { purged };
+}
+
+/** The recycle bin, as the screen needs it. Clears out the expired first. */
+export async function getDeletedStores(): Promise<any[]> {
+  await purgeExpiredStores();
+  const all = await getStores({ includeDeleted: true });
+  const gone = all.filter((s) => (s as any).deletedAt);
+
+  const out: any[] = [];
+  for (const s of gone) {
+    const at = (s as any).deletedAt;
+    const usedBy = await storeReferences(s.id);
+    out.push({
+      ...s,
+      undoUntil: undoDeadline(at),
+      undoable: isUndoable(at),
+      usedBy,
+      keptForever: usedBy.length > 0,
+    });
+  }
+  return out.sort((a, b) => +new Date(b.deletedAt) - +new Date(a.deletedAt));
+}
+
+// ─── Erasing a location that HAS things in it ────────────────────────────────
+// Hiding is the everyday answer. But while the system is being set up, a test
+// warehouse full of test stock has to be able to go completely — and today it
+// cannot, because everything pointing at it blocks the delete.
+//
+// So: erase the location AND what is inside it. This is the one genuinely
+// destructive button in the system, and it is fenced accordingly:
+//
+//   1. a preview first — exactly what will be deleted, counted, table by table
+//   2. the exact name has to be typed back
+//   3. a full verified backup is taken BEFORE anything is touched; if the
+//      backup fails, nothing is erased
+//   4. it all runs in one transaction, so a failure half way leaves no mess
+//   5. a size cap — if it would remove more than 25,000 rows it is not a test
+//      location and the request is refused
+//
+// The rule for each table pointing at the location: if the link is optional the
+// row SURVIVES with the link cleared (an invoice keeps its money, it just no
+// longer names a place). If the link is required, the row cannot exist without
+// the location and goes with it (stock in that warehouse).
+
+export type PurgeEffect = {
+  table: string; column: string; action: "clear" | "delete"; count: number;
+};
+
+const PURGE_ROW_CAP = 25_000;
+
+type Exec = (q: any) => Promise<any>;
+
+async function childLinks(exec: Exec, table: string): Promise<any[]> {
+  const r = await exec(sql.raw(`
+    select tc.table_name as child, kcu.column_name as col, c.is_nullable as nullable
+    from information_schema.table_constraints tc
+    join information_schema.key_column_usage kcu
+      on kcu.constraint_name = tc.constraint_name and kcu.table_schema = tc.table_schema
+    join information_schema.constraint_column_usage ccu
+      on ccu.constraint_name = tc.constraint_name and ccu.table_schema = tc.table_schema
+    join information_schema.columns c
+      on c.table_schema = tc.table_schema and c.table_name = tc.table_name
+     and c.column_name = kcu.column_name
+    where tc.constraint_type = 'FOREIGN KEY'
+      and tc.table_schema = 'public'
+      and ccu.table_name = '${table}'`));
+  return (r.rows as any[]) || [];
+}
+
+/** Walk everything that points at these rows and either clear the link or take
+ *  the row with it. `dryRun` counts without touching anything — that is the
+ *  preview the confirmation screen shows. */
+async function cascade(
+  exec: Exec, table: string, where: string,
+  effects: PurgeEffect[], dryRun: boolean, depth = 0,
+): Promise<void> {
+  if (depth > 6) throw new Error("This location is linked too deeply to erase safely.");
+  const picked = `select id from "${table}" where ${where}`;
+
+  for (const fk of await childLinks(exec, table)) {
+    if (fk.child === table) continue;                       // self-links handled by the caller
+    const q = await exec(sql.raw(
+      `select count(*)::int as n from "${fk.child}" where "${fk.col}" in (${picked})`));
+    const n = Number((q.rows as any[])[0]?.n || 0);
+    if (!n) continue;
+
+    if (String(fk.nullable).toUpperCase() === "YES") {
+      effects.push({ table: fk.child, column: fk.col, action: "clear", count: n });
+      if (!dryRun) {
+        await exec(sql.raw(
+          `update "${fk.child}" set "${fk.col}" = null where "${fk.col}" in (${picked})`));
+      }
+    } else {
+      effects.push({ table: fk.child, column: fk.col, action: "delete", count: n });
+      await cascade(exec, fk.child, `"${fk.col}" in (${picked})`, effects, dryRun, depth + 1);
+      if (!dryRun) {
+        await exec(sql.raw(`delete from "${fk.child}" where "${fk.col}" in (${picked})`));
+      }
+    }
+  }
+}
+
+// Three columns name a location without a database foreign key, so the walk
+// above cannot see them. Left behind they would point at a location that no
+// longer exists. All three are optional, so all three are simply cleared.
+const LOOSE_STORE_LINKS: { table: string; col: string }[] = [
+  { table: "documents", col: "to_store_id" },   // transfer destination
+  { table: "tasks", col: "store_id" },          // which store a job is for
+  { table: "stores", col: "owner_store_id" },   // a warehouse's owner
+];
+
+async function clearLooseLinks(
+  exec: Exec, ids: number[], effects: PurgeEffect[], dryRun: boolean,
+): Promise<void> {
+  const list = ids.join(",");
+  for (const { table, col } of LOOSE_STORE_LINKS) {
+    // A warehouse that is going anyway does not count as something left behind.
+    const where = table === "stores"
+      ? `"${col}" in (${list}) and id not in (${list})`
+      : `"${col}" in (${list})`;
+    const q = await exec(sql.raw(
+      `select count(*)::int as n from "${table}" where ${where}`));
+    const n = Number((q.rows as any[])[0]?.n || 0);
+    if (!n) continue;
+    effects.push({ table, column: col, action: "clear", count: n });
+    if (!dryRun) {
+      await exec(sql.raw(`update "${table}" set "${col}" = null where ${where}`));
+    }
+  }
+}
+
+/** The Area / Rack / Shelf address entries belong to a location through their
+ *  meta, not a foreign key, so they need saying explicitly. Without this they
+ *  survive as shelves in a building that is gone. */
+async function purgeAddressTree(
+  exec: Exec, ids: number[], effects: PurgeEffect[], dryRun: boolean,
+): Promise<void> {
+  const where =
+    `list_key in ('location_areas','location_racks','location_shelves') ` +
+    `and (meta->>'locationId') in (${ids.map((i) => `'${i}'`).join(",")})`;
+  const q = await exec(sql.raw(`select count(*)::int as n from "managed_lists" where ${where}`));
+  const n = Number((q.rows as any[])[0]?.n || 0);
+  if (!n) return;
+  effects.push({ table: "managed_lists", column: "areas, racks, shelves", action: "delete", count: n });
+  if (!dryRun) await exec(sql.raw(`delete from "managed_lists" where ${where}`));
+}
+
+/** Which locations go together — a store takes the warehouses inside it. */
+async function purgeTargets(id: number): Promise<Store[]> {
+  const all = await getStores({ includeDeleted: true });
+  const me = all.find((s) => s.id === id);
+  if (!me) throw new Error("Location not found.");
+  const kids = all.filter((s: any) => s.ownerStoreId === id && s.id !== id);
+  return [me, ...kids];
+}
+
+/** The preview: what is inside, and what erasing it would do. Writes nothing. */
+export async function planStorePurge(id: number): Promise<{
+  targets: { id: number; nameEn: string; type: string }[];
+  effects: PurgeEffect[];
+  totalRows: number;
+  tooBig: boolean;
+  lastLocation: boolean;
+}> {
+  const targets = await purgeTargets(id);
+  const ids = targets.map((t) => t.id);
+  const effects: PurgeEffect[] = [];
+  const read: Exec = (q) => db.execute(q);
+  await cascade(read, "stores", `id in (${ids.join(",")})`, effects, true);
+  await clearLooseLinks(read, ids, effects, true);
+  await purgeAddressTree(read, ids, effects, true);
+
+  const live = (await getStores()).filter((s) => !ids.includes(s.id));
+  const totalRows = effects.reduce((a, e) => a + (e.action === "delete" ? e.count : 0), 0);
+
+  return {
+    targets: targets.map((t: any) => ({ id: t.id, nameEn: t.nameEn, type: t.type })),
+    effects,
+    totalRows,
+    tooBig: totalRows > PURGE_ROW_CAP,
+    lastLocation: live.length === 0,
+  };
+}
+
+/** Take a full backup before erasing. If this fails, the erase does not happen. */
+async function backupBeforePurge(): Promise<string> {
+  const { execFile } = await import("child_process");
+  const { existsSync } = await import("fs");
+  const nodePath = await import("path");
+
+  const tries = [
+    nodePath.resolve(process.cwd(), "scripts", "backup-db.mjs"),
+    nodePath.resolve(process.cwd(), "..", "scripts", "backup-db.mjs"),
+  ];
+  const script = tries.find((p) => existsSync(p));
+  if (!script) {
+    throw new Error(
+      "The backup script could not be found, so nothing was erased. Run " +
+      "`npm run backup` yourself first, then try again.");
+  }
+
+  const out: string = await new Promise((resolve, reject) => {
+    execFile(process.execPath, [script, "--keep", "30"],
+      { cwd: nodePath.dirname(nodePath.dirname(script)), timeout: 180_000, maxBuffer: 8 << 20 },
+      (err, stdout, stderr) => err
+        ? reject(new Error(`Backup failed, so nothing was erased: ${stderr || err.message}`))
+        : resolve(String(stdout)));
+  });
+
+  const line = out.split("\n").reverse().find((l) => l.includes(".json.gz")) || "";
+  const file = (line.match(/[^\s]+\.json\.gz/) || [])[0];
+  return file || "backups/ (see the backups folder)";
+}
+
+/** Erase a location and everything inside it. Backed up first, and only with
+ *  the exact name typed back. There is no undo for this one — that is what the
+ *  backup is for. */
+export async function purgeStoreWithContents(
+  id: number, confirmName: string,
+): Promise<{ erased: { id: number; nameEn: string }[]; backupFile: string; effects: PurgeEffect[]; rows: number }> {
+  const plan = await planStorePurge(id);
+  const me = plan.targets[0];
+
+  if (String(confirmName || "").trim().toLowerCase() !== me.nameEn.trim().toLowerCase()) {
+    throw new Error(`Type the name exactly — "${me.nameEn}" — to erase it.`);
+  }
+  if (plan.lastLocation) {
+    throw new Error("That would leave no locations at all — the system needs at least one.");
+  }
+  if (plan.tooBig) {
+    throw new Error(
+      `${me.nameEn} holds ${plan.totalRows.toLocaleString()} records. That is a working ` +
+      `location, not a test one — erasing it is refused. Delete it instead: it disappears ` +
+      `from every list and the history stays.`);
+  }
+
+  const backupFile = await backupBeforePurge();
+
+  const ids = plan.targets.map((t) => t.id);
+  const effects: PurgeEffect[] = [];
+  await db.transaction(async (tx: any) => {
+    const exec: Exec = (q) => tx.execute(q);
+    await cascade(exec, "stores", `id in (${ids.join(",")})`, effects, false);
+    await clearLooseLinks(exec, ids, effects, false);
+    await purgeAddressTree(exec, ids, effects, false);
+    await exec(sql.raw(`delete from "stores" where id in (${ids.join(",")})`));
+  });
+
+  return {
+    erased: plan.targets.map((t) => ({ id: t.id, nameEn: t.nameEn })),
+    backupFile,
+    effects,
+    rows: effects.reduce((a, e) => a + (e.action === "delete" ? e.count : 0), 0),
+  };
 }
 
 export async function updateStore(id: number, data: Partial<InsertStore>): Promise<Store> {
+  // Renaming onto a name already in use causes the same confusion as creating one.
+  const nameEn = (data as any).nameEn;
+  if (nameEn != null) {
+    const wanted = String(nameEn).trim();
+    if (!wanted) throw new Error("A name is needed.");
+    const clash = (await getStores()).find(
+      (s) => s.id !== id && s.nameEn.trim().toLowerCase() === wanted.toLowerCase());
+    if (clash) throw new Error(`"${clash.nameEn}" already exists — give this one a different name.`);
+    (data as any).nameEn = wanted;
+  }
   const [row] = await db.update(stores).set(data).where(eq(stores.id, id)).returning();
   return row;
 }

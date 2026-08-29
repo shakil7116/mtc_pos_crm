@@ -80,6 +80,24 @@ export const stores = pgTable("stores", {
   // For a store row this is null (a store owns itself).
   ownerStoreId: integer("owner_store_id"),
   active: boolean("active").notNull().default(true),
+
+  // ── Who and where. All optional: a location needs only a name to exist. ──
+  code: text("code"),                   // short tag on screens: S1, WH-27
+  phone: text("phone"),
+  email: text("email"),
+  crNumber: text("cr_number"),          // Qatar Commercial Registration
+  taxNumber: text("tax_number"),        // TRN / VAT
+  openingHours: text("opening_hours"),  // "Sat–Thu 7am–7pm, Fri closed"
+  mapUrl: text("map_url"),              // Google Maps pin — drivers open it
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+
+  // ── The recycle bin. Deleting hides; it does not erase. See shared/undo.ts. ──
+  deletedAt: timestamp("deleted_at"),
+  deletedBy: integer("deleted_by"),
+  // A store and the warehouses inside it are removed together, so they carry the
+  // same batch and one Undo brings the whole family back.
+  deleteBatch: text("delete_batch"),
 });
 
 // ─── Users ───────────────────────────────────────────────────────────────────
