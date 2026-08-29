@@ -185,8 +185,9 @@ export default function EraseLocationDialog({
                 </div>
               )}
               {plan.lastLocation && (
-                <div className="rounded-lg border border-red-300 bg-red-50 p-2.5 text-red-800 text-xs">
-                  This is the last location left. The system needs at least one.
+                <div className="rounded-lg border border-amber-300 bg-amber-50 p-2.5 text-amber-900 text-xs">
+                  This is the <b>last location</b>. Afterwards the system has none at all —
+                  a blank set-up, ready for you to add your stores again. That is allowed.
                 </div>
               )}
             </div>
@@ -217,7 +218,7 @@ export default function EraseLocationDialog({
           {step === 1 ? (
             <Button
               variant="destructive"
-              disabled={!plan || plan.tooBig || plan.lastLocation || isLoading}
+              disabled={!plan || plan.tooBig || isLoading}
               onClick={() => setStep(2)}
             >
               I understand — continue

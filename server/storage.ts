@@ -175,9 +175,9 @@ export async function deleteStore(
   const children = live.filter((s2: any) => s2.ownerStoreId === id && s2.id !== id);
   const goingIds = new Set<number>([id, ...children.map((c) => c.id)]);
 
-  if (live.every((s2) => goingIds.has(s2.id))) {
-    throw new Error("That would leave no locations at all — the system needs at least one.");
-  }
+  // No "you must keep one" rule. A business setting the system up starts with
+  // nothing and creates its own stores, so an empty list is a real, valid state —
+  // and refusing the last delete is what stopped a test set-up being cleared out.
 
   const usedBy = await storeReferences(id);
   for (const c of children) usedBy.push(...(await storeReferences(c.id)));
@@ -230,13 +230,28 @@ export async function restoreStore(id: number): Promise<{ restored: { id: number
     }
   }
 
-  await db.update(stores)
-    .set({ deletedAt: null, deleteBatch: null, deletedBy: null } as any)
-    .where(inArray(stores.id, Array.from(wanted)));
+  // The name may have been re-used while this was hidden — someone deleted
+  // "Store 2" and typed a fresh "Store 2". Two live locations with one name
+  // cannot be told apart, so the one coming back says it was restored.
+  const liveNames = new Set(
+    all.filter((s) => !(s as any).deletedAt)
+       .map((s) => s.nameEn.trim().toLowerCase()));
 
-  return {
-    restored: all.filter((s) => wanted.has(s.id)).map((s) => ({ id: s.id, nameEn: s.nameEn })),
-  };
+  const restored: { id: number; nameEn: string }[] = [];
+  for (const s of all) {
+    if (!wanted.has(s.id)) continue;
+    const patch: any = { deletedAt: null, deleteBatch: null, deletedBy: null };
+    let nameEn = s.nameEn;
+    if (liveNames.has(nameEn.trim().toLowerCase())) {
+      nameEn = `${s.nameEn} (restored)`;
+      patch.nameEn = nameEn;
+    }
+    liveNames.add(nameEn.trim().toLowerCase());
+    await db.update(stores).set(patch).where(eq(stores.id, s.id));
+    restored.push({ id: s.id, nameEn });
+  }
+
+  return { restored };
 }
 
 /** Clear out locations whose day is up — but only ones nothing points at.
@@ -484,9 +499,8 @@ export async function purgeStoreWithContents(
   if (String(confirmName || "").trim().toLowerCase() !== me.nameEn.trim().toLowerCase()) {
     throw new Error(`Type the name exactly — "${me.nameEn}" — to erase it.`);
   }
-  if (plan.lastLocation) {
-    throw new Error("That would leave no locations at all — the system needs at least one.");
-  }
+  // Erasing the last one is allowed — see deleteStore. The screen says what it
+  // means (an empty system, ready to be set up again); it is not blocked.
   if (plan.tooBig) {
     throw new Error(
       `${me.nameEn} holds ${plan.totalRows.toLocaleString()} records. That is a working ` +
@@ -5748,9 +5762,18 @@ export async function seedDatabase(): Promise<void> {
     await upsertSettings({});
   }
 
-  // Seed stores
-  const existingStores = await getStores();
-  if (existingStores.length === 0) {
+  // Seed stores — ONLY on a database nobody has used yet.
+  //
+  // This used to fire whenever the stores table was empty, which meant that
+  // clearing the locations out and restarting the server put six hard-coded
+  // ones straight back. Deleting them all is now allowed on purpose, so an
+  // empty list has to mean "the owner emptied it", not "seed me again".
+  //
+  // A database with staff accounts in it has been used. On a genuinely fresh
+  // install this runs before the users below, so the first boot still seeds.
+  const existingStores = await getStores({ includeDeleted: true });
+  const anyUsers = await db.select({ id: users.id }).from(users).limit(1);
+  if (existingStores.length === 0 && anyUsers.length === 0) {
     await db.insert(stores).values([
       { nameEn: "MAMUN TRADING OLD (72986/1)", nameAr: "مأمون للتجارة القديم", address: "Najma Street, Doha", type: "store" },
       { nameEn: "Mamun TRADING (72986/4)", nameAr: "مأمون للتجارة", address: "Doha, Qatar", type: "store" },

@@ -325,11 +325,28 @@ export default function StoreLocationsSettings() {
       </div>
 
       {!store ? (
-        <p className="text-sm text-muted-foreground py-8 text-center">
-          {shops.length === 0
-            ? "No stores yet. Add your first store above — warehouses go inside it."
-            : "Choose a store above. You will only see that store."}
-        </p>
+        shops.length === 0 ? (
+          // A blank set-up is a real state, not a fault: a business starting on
+          // this system has no locations until it makes them, and so does anyone
+          // who has just cleared the test ones out.
+          <div className="border-2 border-dashed rounded-xl p-8 text-center space-y-3">
+            <StoreIcon className="w-8 h-8 mx-auto text-muted-foreground/50" />
+            <div>
+              <p className="font-medium">No stores yet</p>
+              <p className="text-sm text-muted-foreground mt-1 max-w-md mx-auto">
+                Start with the shop that trades. Its warehouses, staff and stock go
+                inside it — and you can add a second store any time.
+              </p>
+            </div>
+            <Button onClick={() => openAdd("store")} className="gap-2">
+              <Plus className="w-4 h-4" /> Add your first store
+            </Button>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground py-8 text-center">
+            Choose a store above. You will only see that store.
+          </p>
+        )
       ) : (
         <>
           {card(store, false)}

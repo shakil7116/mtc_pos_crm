@@ -460,3 +460,19 @@ store offers to make its main warehouse in the same step.
 
 Verified 24/24 against the live database, including the backup actually running
 before an erase and the wrong name erasing nothing.
+
+**Same day — "why can't I delete everything and start again?"** Fair question, and
+two things were stopping it.
+
+The last location could not be deleted ("the system needs at least one"). That rule
+was wrong. A business setting this system up starts with **nothing** and creates its
+own stores — an empty list is a real, working state, not a fault. Guard removed from
+both delete and erase; the screen now says plainly what an empty system means.
+
+Worse, the seed put six hard-coded locations back whenever the stores table was
+empty — so clearing them and restarting the server undid the work silently. It now
+seeds only on a database nobody has used yet (no staff accounts). After that, empty
+means "the owner emptied it".
+
+Also: restoring a location whose name has since been re-used comes back as
+"<name> (restored)" rather than creating two locations that cannot be told apart.

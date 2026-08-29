@@ -44,7 +44,11 @@ const AccordionContent = React.forwardRef<
 >(({ className, children, ...props }, ref) => (
   <AccordionPrimitive.Content
     ref={ref}
-    className="overflow-hidden text-sm transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down"
+    // h-auto/overflow-visible once open: the opening animation measures the
+    // content height at the moment it starts, so a panel whose contents arrive
+    // afterwards (a list still loading) was left clipped at the old height.
+    // The animation still wins while it is running.
+    className="overflow-hidden text-sm transition-all data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down data-[state=open]:h-auto data-[state=open]:overflow-visible"
     {...props}
   >
     <div className={cn("pb-4 pt-0", className)}>{children}</div>
