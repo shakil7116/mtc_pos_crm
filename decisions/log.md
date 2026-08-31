@@ -476,3 +476,33 @@ means "the owner emptied it".
 
 Also: restoring a location whose name has since been re-used comes back as
 "<name> (restored)" rather than creating two locations that cannot be told apart.
+
+---
+
+## 2026-08-31 — Staff are listed by location, and the photo is not in the list
+
+**Context:** Staff Management was one flat table of every account across both stores.
+With two stores and more people coming, "who works at Store 2?" meant reading every
+row. The owner asked for a location dropdown, the people separated by location, and
+a photo on each person.
+
+**Decision:** The staff list is now grouped into a block per location — store,
+warehouse, and a final "Every location" block for the people not tied to one — with
+a location dropdown, a search box and an active-only toggle above it. Each person is
+a card with their photo, role and login status rather than a table row.
+
+The photo is stored on the user row as a base64 data URL (`users.photo_url`), the
+same way a scanned cheque is. The browser centre-crops and shrinks it to a 320px
+square before uploading; the server refuses anything over ~300 KB.
+
+**Why:** `/api/users` is loaded by the invoice editor, expenses, the task panel and
+the dashboards. Inlining base64 photos there would put a megabyte of pictures into
+screens that only want names. So the list sends `hasPhoto: true/false` and the
+picture itself is served by `GET /api/users/:id/photo` as a real image, with an ETag.
+The auth cookie rides along with the `<img>` request, and the browser re-downloads a
+photo only when it actually changes.
+
+**Consequence:** Adding a photo surface elsewhere means pointing an `<img>` at that
+route, not re-embedding the data URL in a list response. Changing another admin's
+photo still asks for your own password — the server's admin-on-admin rule covers
+every field, and it was not worth carving out an exception for a picture.

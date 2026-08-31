@@ -5,10 +5,13 @@ import { countsForProfit, countsForBalance } from "@shared/transactionMode";
 import { normalizeCollectability, splitReceivables } from "@shared/collectability";
 import { undoDeadline, isUndoable } from "@shared/undo";
 import {
+  reconcileReceipt, requireShortageReason, type LossKind,
+} from "@shared/stockLoss";
+import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
-  documentCounters, damageClaims,
+  documentCounters, damageClaims, stockLosses,
   supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
   ownerLoans, tasks, staffPayroll,
@@ -29,7 +32,7 @@ import {
   type ApprovalRequest, type InsertApprovalRequest,
   type EditLog,
   type MessagesLog,
-  type StockAdjustment,
+  type StockAdjustment, type StockLoss,
   type SupplierOrder, type SupplierReturn, type SupplierPayment, type Notification,
   type Cashflow, type Expense, type InsertExpense,
   type WarehouseIssue, type InsertWarehouseIssue,
@@ -553,6 +556,23 @@ export async function getUser(id: number): Promise<User | undefined> {
   return row;
 }
 
+/** A staff photo is stored in the row itself as a base64 data URL, the same way a
+ *  scanned cheque is. The browser shrinks it to 320px before sending, so this is
+ *  only the backstop: without a cap one 8MB phone photo would sit in the users
+ *  table forever and slow down every screen that loads staff. */
+const MAX_PHOTO_CHARS = 400_000; // ≈ 300 KB of image
+function cleanPhotoUrl(value: unknown): string | null {
+  if (value === null || value === "") return null;
+  const s = String(value);
+  if (!/^data:image\/(png|jpe?g|webp);base64,/.test(s)) {
+    throw new Error("Photo must be a PNG, JPEG or WebP image.");
+  }
+  if (s.length > MAX_PHOTO_CHARS) {
+    throw new Error("That photo is too large — please choose a smaller image.");
+  }
+  return s;
+}
+
 export async function getUserByName(name: string): Promise<User | undefined> {
   const [row] = await db.select().from(users).where(eq(users.name, name));
   return row;
@@ -571,6 +591,8 @@ export async function createUser(
 ): Promise<User> {
   const { password, ...rest } = data as any;
   const patch: any = { ...rest };
+
+  if (patch.photoUrl !== undefined) patch.photoUrl = cleanPhotoUrl(patch.photoUrl);
 
   const uname = String(patch.username || "").trim().toLowerCase();
   if (uname.length < 3) throw new Error("A username of at least 3 characters is required — without one this account could never log in.");
@@ -691,6 +713,8 @@ export async function updateUser(id: number, data: Partial<InsertUser>): Promise
   const [target] = await db.select().from(users).where(eq(users.id, id));
   if (!target) throw new Error("User not found.");
   const patch: any = { ...data };
+
+  if (patch.photoUrl !== undefined) patch.photoUrl = cleanPhotoUrl(patch.photoUrl);
 
   // Usernames are matched lowercased at login → store lowercased + keep them unique.
   if (patch.username !== undefined && patch.username !== null) {
@@ -1806,9 +1830,85 @@ export async function approveTransfer(id: number, userId?: number): Promise<any>
 }
 
 const CONFIRM_METHODS = ["on-system", "signature", "whatsapp", "phone"];
+/** What a transfer's lines look like to the receiving screen: what was sent,
+ *  and what one of them is worth if it does not turn up. */
+export async function getTransferForReceipt(id: number): Promise<any> {
+  const { doc, items } = await loadTransfer(id);
+  const costs = await snapshotCosts(items as any[]);
+  return {
+    id: doc.id, number: doc.number, status: doc.status,
+    fromStoreId: doc.storeId, toStoreId: (doc as any).toStoreId,
+    lines: (items as any[]).map((i) => ({
+      id: i.id, productId: i.productId, description: i.description,
+      unit: i.unit, qty: Number(i.qty || 0),
+      linePrice: Number(i.price || 0),
+      productCost: Number(costs[Number(i.productId)] ?? 0),
+    })),
+  };
+}
+
+/** Write down material that left the business without being sold.
+ *
+ *  Append-only. A loss is never edited away — it is corrected by recording the
+ *  opposite, the same way money is. */
+export async function recordStockLoss(data: {
+  productId?: number | null;
+  description: string;
+  storeId?: number | null;
+  qty: number;
+  unit?: string | null;
+  unitCost: number;
+  kind: LossKind;
+  refType?: string | null;
+  refId?: number | null;
+  reason: string;
+  reportedBy?: number | null;
+  againstUserId?: number | null;
+  date?: string;
+}): Promise<StockLoss> {
+  const qty = Number(data.qty);
+  const unitCost = Number(data.unitCost) || 0;
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("A loss needs a quantity greater than zero.");
+  if (!String(data.reason || "").trim()) throw new Error("A loss must say what happened.");
+
+  const [row] = await db.insert(stockLosses).values({
+    productId: data.productId ?? null,
+    description: String(data.description || "").toUpperCase().trim() || "UNNAMED ITEM",
+    storeId: data.storeId ?? null,
+    qty: String(qty),
+    unit: data.unit ?? null,
+    unitCost: String(unitCost),
+    value: String(Number((qty * unitCost).toFixed(2))),
+    kind: data.kind,
+    refType: data.refType ?? null,
+    refId: data.refId ?? null,
+    reason: String(data.reason).trim(),
+    reportedBy: data.reportedBy ?? null,
+    againstUserId: data.againstUserId ?? null,
+    date: data.date || new Date().toISOString().slice(0, 10),
+  } as any).returning();
+  return row;
+}
+
+/** Receive a transfer — with what ACTUALLY arrived.
+ *
+ *  This used to add the quantity that was SENT. If 100 bags left and 70 arrived,
+ *  the destination was credited with 100, so the 30 that vanished became phantom
+ *  stock on a shelf rather than a shortage anybody had to explain. That is the
+ *  single biggest reason a location turns out ~30% short when it is emptied.
+ *
+ *  Now: `lines` carries the counted quantity per line. Only what arrived lands in
+ *  stock. The difference is written to stock_losses — a quantity AND a value —
+ *  with the reason, the person confirming, and the person who sent it. A line
+ *  nobody counted is taken as arriving in full, so one-click receipt still works
+ *  exactly as before for the normal case. */
 export async function receiveTransfer(
   id: number, userId?: number,
-  opts?: { method?: string; externalReceiver?: string },
+  opts?: {
+    method?: string; externalReceiver?: string;
+    lines?: Array<{ id: number; receivedQty: number | string }>;
+    shortageReason?: string;
+  },
 ): Promise<any> {
   const { doc, items } = await loadTransfer(id);
   if (doc.status !== "approved") throw new Error("Only an approved transfer can be received.");
@@ -1817,10 +1917,136 @@ export async function receiveTransfer(
   const method = opts?.method && CONFIRM_METHODS.includes(opts.method) ? opts.method : "on-system";
   const externalReceiver = method === "on-system" ? null : (opts?.externalReceiver ? String(opts.externalReceiver).toUpperCase().trim() || null : null);
   if (method !== "on-system" && !externalReceiver) throw new Error("Name of who received the goods is required for an off-system confirmation.");
-  for (const it of items as any[]) if (it.productId) await adjustStock(it.productId, (doc as any).toStoreId, parseFloat(it.qty || "0"), "transfer", `Transfer ${doc.number} in`, id, userId); // stock lands at destination
-  await db.update(documents).set({ status: "received", receivedBy: userId ?? null, receivedAt: new Date(), confirmMethod: method, externalReceiver } as any).where(eq(documents.id, id));
-  await logEdit({ documentId: id, userId, field: "status", oldValue: "approved", newValue: "received", reason: `Transfer received (${method}${externalReceiver ? ` — ${externalReceiver}` : ""})` });
-  return { ok: true };
+
+  // Count what arrived before touching any stock, so a bad number changes nothing.
+  const costs = await snapshotCosts(items as any[]);
+  const recon = reconcileReceipt(
+    (items as any[]).map((i) => ({
+      id: i.id, productId: i.productId, description: i.description, unit: i.unit,
+      qty: Number(i.qty || 0),
+      linePrice: Number(i.price || 0),
+      productCost: Number(costs[Number(i.productId)] ?? 0),
+    })),
+    opts?.lines,
+  );
+  requireShortageReason(recon, opts?.shortageReason);
+
+  for (const line of recon.lines) {
+    if (!line.productId || line.received <= 0) continue;
+    await adjustStock(
+      line.productId, (doc as any).toStoreId, line.received, "transfer",
+      line.short > 0
+        ? `Transfer ${doc.number} in — ${line.received} of ${line.sent} arrived`
+        : `Transfer ${doc.number} in`,
+      id, userId);
+  }
+
+  // The missing ones already left the source when the transfer was approved, so
+  // no further stock moves — what is missing now is the VALUE, and that is what
+  // has never been recorded anywhere.
+  const losses: any[] = [];
+  for (const line of recon.lines) {
+    if (line.short <= 0.0001) continue;
+    losses.push(await recordStockLoss({
+      productId: line.productId, description: line.description,
+      storeId: doc.storeId, qty: line.short, unit: line.unit,
+      unitCost: line.unitCost, kind: "transfer_shortage",
+      refType: "transfer", refId: id,
+      reason: String(opts?.shortageReason || "").trim(),
+      reportedBy: userId ?? null,
+      againstUserId: (doc as any).createdBy ?? null,
+      date: doc.date as any,
+    }));
+  }
+
+  await db.update(documents).set({
+    status: "received", receivedBy: userId ?? null, receivedAt: new Date(),
+    confirmMethod: method, externalReceiver,
+  } as any).where(eq(documents.id, id));
+
+  await logEdit({
+    documentId: id, userId, field: "status", oldValue: "approved", newValue: "received",
+    reason: `Transfer received (${method}${externalReceiver ? ` — ${externalReceiver}` : ""})`
+      + (recon.hasShortage
+        ? ` — SHORT ${recon.totalShort} item(s) worth QAR ${recon.lossValue.toFixed(2)}: ${String(opts?.shortageReason || "").trim()}`
+        : ""),
+  });
+
+  if (recon.hasShortage) {
+    // The owner does not watch the transfer list. A shortage has to come and find them.
+    await createNotification({
+      targetRole: "admin", type: "stock_shortage",
+      title: `${doc.number} arrived short`,
+      message:
+        `${recon.totalShort} item(s) missing, worth QAR ${recon.lossValue.toFixed(2)}. ` +
+        `Reason given: ${String(opts?.shortageReason || "").trim()}`,
+      entityType: "document", entityId: id, createdBy: userId ?? undefined,
+      // A failed notification must never undo a receipt that physically happened.
+    }).catch(() => {});
+  }
+
+  return {
+    ok: true,
+    shortage: recon.hasShortage,
+    totalShort: recon.totalShort,
+    lossValue: recon.lossValue,
+    shortLines: recon.shortLines,
+    losses,
+  };
+}
+
+/** Every loss in a period, with the totals a person actually asks for:
+ *  what did we lose, what was it worth, and where is it coming from. */
+export async function getStockLosses(opts: {
+  start?: string; end?: string; storeId?: number | null; kind?: string;
+} = {}): Promise<any> {
+  const conds: any[] = [];
+  if (opts.start) conds.push(gte(stockLosses.date, opts.start));
+  if (opts.end) conds.push(lte(stockLosses.date, opts.end));
+  if (opts.storeId != null) conds.push(eq(stockLosses.storeId, opts.storeId));
+  if (opts.kind) conds.push(eq(stockLosses.kind, opts.kind));
+
+  const rows = await db.select().from(stockLosses)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(stockLosses.date), desc(stockLosses.id));
+
+  const storesById: Record<number, string> = {};
+  for (const st of await db.select().from(stores)) storesById[st.id] = st.nameEn;
+  const usersById: Record<number, string> = {};
+  for (const u of await db.select().from(users)) usersById[u.id] = u.name;
+
+  const r2 = (n: number) => Number(n.toFixed(2));
+  const byKind: Record<string, { qty: number; value: number; count: number }> = {};
+  const byProduct: Record<string, { description: string; qty: number; value: number; times: number }> = {};
+  let totalValue = 0;
+
+  for (const r of rows as any[]) {
+    const value = Number(r.value || 0);
+    const qty = Number(r.qty || 0);
+    totalValue += value;
+    const k = (byKind[r.kind] = byKind[r.kind] || { qty: 0, value: 0, count: 0 });
+    k.qty += qty; k.value += value; k.count++;
+    const pk = String(r.productId ?? r.description);
+    const p = (byProduct[pk] = byProduct[pk] || { description: r.description, qty: 0, value: 0, times: 0 });
+    p.qty += qty; p.value += value; p.times++;
+  }
+  for (const k of Object.values(byKind)) { k.qty = r2(k.qty); k.value = r2(k.value); }
+  for (const p of Object.values(byProduct)) { p.qty = r2(p.qty); p.value = r2(p.value); }
+
+  return {
+    rows: (rows as any[]).map((r) => ({
+      ...r,
+      qty: Number(r.qty || 0), unitCost: Number(r.unitCost || 0), value: Number(r.value || 0),
+      storeName: r.storeId ? storesById[r.storeId] ?? null : null,
+      reportedByName: r.reportedBy ? usersById[r.reportedBy] ?? null : null,
+      againstUserName: r.againstUserId ? usersById[r.againstUserId] ?? null : null,
+    })),
+    totalValue: r2(totalValue),
+    count: rows.length,
+    byKind,
+    // The ten that keep going missing. A pattern, not ten unrelated notes.
+    worst: Object.values(byProduct).sort((a, b) => b.value - a.value).slice(0, 10),
+  };
 }
 
 export async function cancelTransfer(id: number, userId?: number): Promise<any> {

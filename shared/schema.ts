@@ -109,6 +109,7 @@ export const users = pgTable("users", {
   pin: text("pin").notNull(),
   // ── JWT auth (Phase 7 — Go-Live blocker 1) ──
   email: text("email"),                           // owner/admin email (Google or business)
+  photoUrl: text("photo_url"),                    // staff photo, base64 data URL (kept out of the /api/users list)
   username: text("username").unique(),           // login identifier
   passwordHash: text("password_hash"),           // bcrypt
   mustChangePassword: boolean("must_change_password").default(true), // first login forces change
@@ -512,6 +513,32 @@ export const stockAdjustments = pgTable("stock_adjustments", {
   reason: text("reason"),
   referenceId: integer("reference_id"),
   userId: integer("user_id").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+// ─── Stock Losses ────────────────────────────────────────────────────────────
+// Material that left the business without being sold: short on a transfer,
+// missing at a stocktake, broken, or written off when a location closed.
+//
+// Stock movements record the QUANTITY. This records what it was WORTH, so a
+// loss can reach Finance instead of dying as a note on a shelf. Append-only —
+// a loss is never edited away, it is corrected by recording the opposite.
+export const stockLosses = pgTable("stock_losses", {
+  id: serial("id").primaryKey(),
+  productId: integer("product_id").references(() => products.id),
+  description: text("description").notNull(),      // kept even if the product is later renamed
+  storeId: integer("store_id").references(() => stores.id),   // where it was lost FROM
+  qty: numeric("qty").notNull(),
+  unit: text("unit"),
+  unitCost: numeric("unit_cost").notNull().default("0"),
+  value: numeric("value").notNull().default("0"),  // qty × unitCost, frozen at the moment it was recorded
+  kind: text("kind").notNull(),                    // transfer_shortage | count_variance | damage | write_off
+  refType: text("ref_type"),                       // transfer | stock_count | ...
+  refId: integer("ref_id"),                        // the document/record it came from
+  reason: text("reason").notNull(),                // mandatory — always
+  reportedBy: integer("reported_by").references(() => users.id),   // who confirmed the receipt / did the count
+  againstUserId: integer("against_user_id").references(() => users.id), // who sent it / is answerable
+  date: date("date").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -924,6 +951,8 @@ export type InsertApprovalRequest = z.infer<typeof insertApprovalRequestSchema>;
 export type EditLog = typeof editLog.$inferSelect;
 export type MessagesLog = typeof messagesLog.$inferSelect;
 export type StockAdjustment = typeof stockAdjustments.$inferSelect;
+export type StockLoss = typeof stockLosses.$inferSelect;
+export type InsertStockLoss = typeof stockLosses.$inferInsert;
 export type SupplierOrder = typeof supplierOrders.$inferSelect;
 export type SupplierReturn = typeof supplierReturns.$inferSelect;
 export type InsertSupplierReturn = z.infer<typeof insertSupplierReturnSchema>;

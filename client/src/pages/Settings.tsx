@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { Link } from "wouter";
 import { useAuth } from "@/contexts/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -75,6 +75,8 @@ import {
   Clock,
   TrendingDown,
   CalendarCheck,
+  Camera,
+  Search,
 } from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -120,9 +122,13 @@ type Store = {
 type User = {
   id: number;
   name: string;
-  role: string; // admin | manager | warehouse | salesman | driver
+  role: string; // admin | manager | worker | salesman | driver
+  username?: string | null;
   storeId: number | null;
   active: boolean;
+  // The list endpoint drops the base64 photo and sends this instead; the picture
+  // itself comes from /api/users/:id/photo.
+  hasPhoto?: boolean;
 };
 
 /* ─────────────────────────────────────────────────────────────────────
@@ -648,6 +654,192 @@ function Section2({ toast, qc }: { toast: any; qc: any }) {
   );
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+   Staff photo + role helpers
+───────────────────────────────────────────────────────────────────── */
+
+/** A phone photo is 3–8 MB. The avatar is 48 pixels wide and the picture lives in
+ *  the database row itself, so shrink it to a 320px square in the browser before
+ *  it is ever uploaded. The server refuses anything over ~300 KB as a backstop. */
+async function shrinkPhoto(file: File, size = 320): Promise<string> {
+  const bitmap = await createImageBitmap(file);
+  const side = Math.min(bitmap.width, bitmap.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Could not read that image.");
+  // Centre-crop to a square first, so faces are not stretched.
+  ctx.drawImage(
+    bitmap,
+    (bitmap.width - side) / 2, (bitmap.height - side) / 2, side, side,
+    0, 0, size, size,
+  );
+  bitmap.close?.();
+  return canvas.toDataURL("image/jpeg", 0.82);
+}
+
+function initialsOf(name: string) {
+  return (
+    name.trim().split(/\s+/).slice(0, 2).map((w) => w[0] || "").join("").toUpperCase() || "?"
+  );
+}
+
+const ROLE_STYLE: Record<string, { label: string; chip: string; ring: string }> = {
+  admin: {
+    label: "Admin",
+    chip: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900/60",
+    ring: "from-amber-400 to-orange-500",
+  },
+  ceo: {
+    label: "CEO",
+    chip: "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950/40 dark:text-rose-300 dark:border-rose-900/60",
+    ring: "from-rose-400 to-pink-500",
+  },
+  manager: {
+    label: "Manager",
+    chip: "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-950/40 dark:text-blue-300 dark:border-blue-900/60",
+    ring: "from-blue-400 to-indigo-500",
+  },
+  salesman: {
+    label: "Salesman",
+    chip: "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900/60",
+    ring: "from-emerald-400 to-teal-500",
+  },
+  worker: {
+    label: "Worker",
+    chip: "bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800/60 dark:text-slate-300 dark:border-slate-700",
+    ring: "from-slate-400 to-slate-500",
+  },
+  driver: {
+    label: "Driver",
+    chip: "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900/60",
+    ring: "from-violet-400 to-purple-500",
+  },
+};
+const roleStyle = (role: string) => ROLE_STYLE[role] || ROLE_STYLE.worker;
+
+/** Photo if there is one, coloured initials if there is not.
+ *  `src` overrides the stored photo — that is how the dialogs preview a picture
+ *  that has been chosen but not saved yet. */
+function StaffAvatar({
+  user,
+  src,
+  size = 48,
+  dim,
+}: {
+  user: { id: number; name: string; role: string; hasPhoto?: boolean };
+  src?: string | null;
+  size?: number;
+  dim?: boolean;
+}) {
+  const [broken, setBroken] = useState(false);
+  const url = src !== undefined ? src : user.hasPhoto && !broken ? `/api/users/${user.id}/photo` : null;
+  const rs = roleStyle(user.role);
+  return (
+    <div
+      className={cn(
+        "rounded-full p-[2px] bg-gradient-to-br shrink-0 shadow-sm",
+        rs.ring,
+        dim && "grayscale opacity-60",
+      )}
+      style={{ width: size, height: size }}
+    >
+      {url ? (
+        <img
+          src={url}
+          alt={user.name}
+          onError={() => setBroken(true)}
+          className="w-full h-full rounded-full object-cover bg-white"
+        />
+      ) : (
+        <div
+          className="w-full h-full rounded-full bg-white dark:bg-card flex items-center justify-center font-bold text-muted-foreground tracking-tight"
+          style={{ fontSize: Math.round(size * 0.34) }}
+        >
+          {initialsOf(user.name)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The avatar plus Choose / Remove. Used by the Add dialog, where it only holds
+ *  the picture in memory, and by the Photo dialog, where it saves. */
+function PhotoPicker({
+  user,
+  value,
+  onPick,
+  onClear,
+  toast,
+}: {
+  user: { id: number; name: string; role: string; hasPhoto?: boolean };
+  value: string | null | undefined;   // undefined = leave whatever is stored
+  onPick: (dataUrl: string) => void;
+  onClear: () => void;
+  toast: any;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [reading, setReading] = useState(false);
+
+  async function handle(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";                        // let the same file be picked twice
+    if (!file) return;
+    if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) {
+      toast({ title: "Use a PNG, JPG or WebP image", variant: "destructive" });
+      return;
+    }
+    setReading(true);
+    try {
+      onPick(await shrinkPhoto(file));
+    } catch {
+      toast({ title: "Could not read that image", variant: "destructive" });
+    } finally {
+      setReading(false);
+    }
+  }
+
+  const hasSomething = value ? true : value === null ? false : !!user.hasPhoto;
+
+  return (
+    <div className="flex items-center gap-4">
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        className="relative group rounded-full focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-400"
+        title="Choose a photo"
+      >
+        <StaffAvatar user={user} src={value} size={76} />
+        <span className="absolute inset-0 rounded-full bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          {reading ? (
+            <Loader2 className="w-5 h-5 text-white animate-spin" />
+          ) : (
+            <Camera className="w-5 h-5 text-white" />
+          )}
+        </span>
+      </button>
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={() => fileRef.current?.click()}>
+            <Upload className="w-3.5 h-3.5" />
+            {hasSomething ? "Change photo" : "Add photo"}
+          </Button>
+          {hasSomething && (
+            <Button type="button" variant="ghost" size="sm" className="text-red-600 hover:text-red-700 hover:bg-red-50" onClick={onClear}>
+              Remove
+            </Button>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Square works best. It is shrunk to 320px before saving.
+        </p>
+      </div>
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={handle} />
+    </div>
+  );
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    SECTION 3 — Staff Management
 ════════════════════════════════════════════════════════════════════ */
@@ -669,6 +861,12 @@ function Section3({
     queryFn: () => fetch("/api/stores").then((r) => r.json()),
   });
 
+  // Which location's people are on screen. "all" shows everyone, split into a
+  // block per location; "none" is the people who are not tied to one.
+  const [storeFilter, setStoreFilter] = useState<string>("all");
+  const [search, setSearch] = useState("");
+  const [showInactive, setShowInactive] = useState(true);
+
   const [addOpen, setAddOpen] = useState(false);
   const [addForm, setAddForm] = useState({
     name: "",
@@ -680,6 +878,7 @@ function Section3({
     username: "",
     password: "",
   });
+  const [addPhoto, setAddPhoto] = useState<string | null>(null);
   const [showAddPw, setShowAddPw] = useState(false);
 
   const [pinDialog, setPinDialog] = useState<{
@@ -699,6 +898,12 @@ function Section3({
   const [loginAdminPw, setLoginAdminPw] = useState("");
   const [showLoginPw, setShowLoginPw] = useState(false);
 
+  // Photo dialog. Editing ANOTHER admin's row needs your own password — the same
+  // rule the server applies to every other field on an admin account.
+  const [photoDialog, setPhotoDialog] = useState<User | null>(null);
+  const [photoDraft, setPhotoDraft] = useState<string | null | undefined>(undefined);
+  const [photoAdminPw, setPhotoAdminPw] = useState("");
+
   const addMut = useMutation({
     mutationFn: (body: typeof addForm) =>
       fetch("/api/users", {
@@ -708,17 +913,24 @@ function Section3({
           ...body,
           storeId: body.storeId ? Number(body.storeId) : null,
           username: body.username.trim().toLowerCase(),
+          photoUrl: addPhoto,
           // They pick their own on first login.
           mustChangePassword: true,
         }),
-      }).then((r) => r.json()),
+      }).then(async (r) => {
+        const b = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(b?.message || "Failed to add staff");
+        return b;
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/users"] });
       setAddOpen(false);
       setAddForm({ name: "", role: "salesman", storeId: "", pin: "", username: "", password: "" });
+      setAddPhoto(null);
       toast({ title: "Staff member added" });
     },
-    onError: () => toast({ title: "Failed to add staff", variant: "destructive" }),
+    onError: (e: any) =>
+      toast({ title: "Failed to add staff", description: String(e?.message || ""), variant: "destructive" }),
   });
 
   // Turning access off goes through its own route so any live session dies at once,
@@ -777,6 +989,32 @@ function Section3({
     onError: () => toast({ title: "Update failed", variant: "destructive" }),
   });
 
+  const photoMut = useMutation({
+    mutationFn: async () => {
+      if (!photoDialog || photoDraft === undefined) return;
+      const needsPw = photoDialog.role === "admin" && photoDialog.id !== currentUserId;
+      const r = await fetch(`/api/users/${photoDialog.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          photoUrl: photoDraft,
+          ...(needsPw ? { confirmPassword: photoAdminPw } : {}),
+        }),
+      });
+      const b = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(b?.message || "Could not save the photo.");
+      return b;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/users"] });
+      toast({ title: photoDraft ? "Photo updated" : "Photo removed" });
+      setPhotoDialog(null); setPhotoDraft(undefined); setPhotoAdminPw("");
+    },
+    onError: (e: any) =>
+      toast({ title: "Photo not saved", description: String(e?.message || ""), variant: "destructive" }),
+  });
+
   // Set username and/or a temporary password. Password reset forces the staff to
   // choose their own on next login (mustChangePassword). Editing another admin
   // needs the acting admin's own password.
@@ -809,11 +1047,6 @@ function Section3({
     onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
   });
 
-  const storeName = (id: number | null) => {
-    if (!id) return "All stores";
-    return stores.find((s) => s.id === id)?.nameEn || `Store ${id}`;
-  };
-
   const handlePinSave = async () => {
     if (!pinDialog) return;
     if (newPin.length < 4 || newPin.length > 6) {
@@ -835,6 +1068,57 @@ function Section3({
     updateMut.mutate({ id: pinDialog.userId, pin: newPin });
   };
 
+  /* ── Who is on screen, and how they are split up ────────────────── */
+  const locations = useMemo(
+    () => stores.filter((s) => s.active).slice().sort((a, b) => a.nameEn.localeCompare(b.nameEn)),
+    [stores],
+  );
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return users.filter((u) => {
+      if (!showInactive && !u.active) return false;
+      if (storeFilter === "none" && u.storeId) return false;
+      if (storeFilter !== "all" && storeFilter !== "none" && String(u.storeId ?? "") !== storeFilter) return false;
+      if (!q) return true;
+      return (
+        u.name.toLowerCase().includes(q) ||
+        ((u as any).username || "").toLowerCase().includes(q) ||
+        u.role.toLowerCase().includes(q)
+      );
+    });
+  }, [users, search, storeFilter, showInactive]);
+
+  // One block per location, then the people who work across all of them. An empty
+  // location is only worth showing when it is the one being looked at.
+  const groups = useMemo(() => {
+    const out: { key: string; title: string; subtitle: string; icon: "store" | "warehouse" | "global"; people: User[] }[] = [];
+    for (const s of locations) {
+      const people = visible.filter((u) => u.storeId === s.id);
+      if (!people.length && storeFilter !== String(s.id)) continue;
+      out.push({
+        key: `s${s.id}`,
+        title: s.nameEn,
+        subtitle: s.type === "warehouse" ? "Warehouse" : "Store",
+        icon: s.type === "warehouse" ? "warehouse" : "store",
+        people,
+      });
+    }
+    const floaters = visible.filter((u) => !u.storeId || !locations.some((s) => s.id === u.storeId));
+    if (floaters.length || storeFilter === "none") {
+      out.push({
+        key: "none",
+        title: "Every location",
+        subtitle: "Not tied to one store",
+        icon: "global",
+        people: floaters,
+      });
+    }
+    return out;
+  }, [visible, locations, storeFilter]);
+
+  const activeCount = users.filter((u) => u.active).length;
+
   return (
     <AccordionItem value="staff" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
       <AccordionTrigger className="hover:no-underline py-5">
@@ -844,154 +1128,297 @@ function Section3({
           </div>
           <div className="text-left">
             <span className="font-semibold text-[15px] block leading-tight">Staff Management</span>
-            <span className="text-xs text-muted-foreground font-normal">Users, roles, PINs, login credentials</span>
+            <span className="text-xs text-muted-foreground font-normal">
+              People by location · photos, roles, PINs, login
+            </span>
           </div>
         </div>
       </AccordionTrigger>
       <AccordionContent>
         <div className="space-y-4 pt-2 pb-4">
-          <div className="flex justify-between items-center">
-            <p className="text-sm text-muted-foreground">
-              {users.length} user{users.length !== 1 ? "s" : ""}
-            </p>
-            <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2">
-              <Plus className="w-3.5 h-3.5" />
-              Add Staff
-            </Button>
+          {/* ── Toolbar: location picker + search + add ── */}
+          <div className="flex flex-col lg:flex-row lg:items-center gap-2.5">
+            <Select value={storeFilter} onValueChange={setStoreFilter}>
+              <SelectTrigger className="lg:w-[250px] h-9">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <SelectValue />
+                </div>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All locations</SelectItem>
+                {locations.map((s) => (
+                  <SelectItem key={s.id} value={String(s.id)}>
+                    {s.nameEn}
+                    <span className="text-muted-foreground"> · {users.filter((u) => u.storeId === s.id).length}</span>
+                  </SelectItem>
+                ))}
+                <SelectItem value="none">
+                  Every location
+                  <span className="text-muted-foreground"> · {users.filter((u) => !u.storeId).length}</span>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search name, username or role…"
+                className="pl-9 h-9 no-uppercase"
+              />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Button
+                variant={showInactive ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 text-xs"
+                onClick={() => setShowInactive((v) => !v)}
+                title="Show or hide accounts that have no access"
+              >
+                {showInactive ? "Showing inactive" : "Active only"}
+              </Button>
+              <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2 h-9">
+                <Plus className="w-3.5 h-3.5" />
+                Add Staff
+              </Button>
+            </div>
           </div>
 
+          <p className="text-xs text-muted-foreground px-0.5">
+            {activeCount} active · {users.length - activeCount} inactive ·{" "}
+            {locations.length} location{locations.length !== 1 ? "s" : ""}
+          </p>
+
+          {/* ── People, grouped by location ── */}
           {isLoading ? (
-            <div className="flex items-center gap-2 text-muted-foreground">
+            <div className="flex items-center gap-2 text-muted-foreground py-8 justify-center">
               <Loader2 className="w-4 h-4 animate-spin" /> Loading…
             </div>
+          ) : groups.length === 0 ? (
+            <div className="text-center py-10 border border-dashed rounded-xl">
+              <Users className="w-8 h-8 text-muted-foreground/40 mx-auto mb-2" />
+              <p className="text-sm font-medium">Nobody here</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                {search ? "No one matches that search." : "No staff assigned to this location yet."}
+              </p>
+            </div>
           ) : (
-            <div className="border rounded-xl overflow-hidden">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/40">
-                  <tr>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Name</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground hidden sm:table-cell no-uppercase">Username</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Role</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground hidden md:table-cell">Store</th>
-                    <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Status</th>
-                    <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border/50">
-                  {users.map((u) => (
-                    <tr key={u.id} className={u.active ? "" : "opacity-50"}>
-                      <td className="px-4 py-3 font-medium">{u.name}</td>
-                      <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell no-uppercase font-mono text-xs">{(u as any).username || "— not set —"}</td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            u.role === "admin"
-                              ? "text-amber-600 border-amber-200 bg-amber-50"
-                              : "text-slate-600 border-slate-200 bg-slate-50"
-                          }
-                        >
-                          {u.role}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-muted-foreground hidden md:table-cell">
-                        {storeName(u.storeId)}
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge
-                          variant="outline"
-                          className={
-                            u.active
-                              ? "text-green-600 border-green-200 bg-green-50"
-                              : "text-red-500 border-red-200 bg-red-50"
-                          }
-                        >
-                          {u.active ? "Active" : "Inactive"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7 px-2 text-[#1e2a3a]"
-                            onClick={() => {
-                              setLoginDialog({
-                                userId: u.id,
-                                userName: u.name,
-                                currentUsername: (u as any).username || "",
-                                targetIsAdmin: u.role === "admin",
-                              });
-                              setLoginUsername((u as any).username || "");
-                              setLoginPassword("");
-                              setLoginAdminPw("");
-                              setShowLoginPw(false);
-                            }}
+            <div className="space-y-5">
+              {groups.map((g) => (
+                <div key={g.key} className="space-y-2.5">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0">
+                      {g.icon === "warehouse" ? (
+                        <Warehouse className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+                      ) : g.icon === "global" ? (
+                        <Share2 className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+                      ) : (
+                        <Store className="w-3.5 h-3.5 text-slate-600 dark:text-slate-300" />
+                      )}
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold leading-tight truncate">{g.title}</p>
+                      <p className="text-[11px] text-muted-foreground leading-tight">
+                        {g.subtitle} · {g.people.length} {g.people.length === 1 ? "person" : "people"}
+                      </p>
+                    </div>
+                    <div className="flex-1 h-px bg-gradient-to-r from-border/60 to-transparent" />
+                  </div>
+
+                  {g.people.length === 0 ? (
+                    <p className="text-xs text-muted-foreground italic pl-10">Nobody assigned here yet.</p>
+                  ) : (
+                    <div className="grid gap-2.5 sm:grid-cols-2">
+                      {g.people.map((u) => {
+                        const rs = roleStyle(u.role);
+                        const isMe = u.id === currentUserId;
+                        return (
+                          <div
+                            key={u.id}
+                            className={cn(
+                              "rounded-xl border border-border/60 bg-white dark:bg-card/60 p-3.5 transition-all duration-200",
+                              "hover:border-border hover:shadow-[var(--shadow-card)]",
+                              !u.active && "bg-muted/30",
+                            )}
                           >
-                            Login
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7 px-2"
-                            onClick={() => {
-                              setPinDialog({
-                                open: true,
-                                userId: u.id,
-                                userName: u.name,
-                                targetIsAdmin: u.role === "admin",
-                              });
-                              setNewPin("");
-                              setAdminVerifyPin("");
-                            }}
-                          >
-                            Edit PIN
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7 px-2"
-                            disabled={u.id === currentUserId || activeMut.isPending}
-                            onClick={() =>
-                              activeMut.mutate({ id: u.id, active: !u.active })
-                            }
-                          >
-                            {u.active ? "Disable" : "Enable"}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="text-xs h-7 px-2 text-red-600 hover:text-red-700 hover:bg-red-50"
-                            disabled={u.id === currentUserId || deleteMut.isPending}
-                            onClick={() => {
-                              if (!window.confirm(
-                                `Remove ${u.name} completely?\n\n` +
-                                "This only works if they have never created an invoice, taken a payment " +
-                                "or moved stock. If they have, use Disable instead — that removes their " +
-                                "access while keeping the record of what they did."
-                              )) return;
-                              deleteMut.mutate(u.id);
-                            }}
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                            <div className="flex items-start gap-3">
+                              <button
+                                type="button"
+                                className="relative group rounded-full shrink-0"
+                                title="Change photo"
+                                onClick={() => { setPhotoDialog(u); setPhotoDraft(undefined); setPhotoAdminPw(""); }}
+                              >
+                                <StaffAvatar user={u as any} size={48} dim={!u.active} />
+                                <span className="absolute inset-0 rounded-full bg-black/45 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                  <Camera className="w-4 h-4 text-white" />
+                                </span>
+                              </button>
+
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-semibold text-sm leading-tight truncate">{u.name}</span>
+                                  {isMe && (
+                                    <span className="text-[10px] font-medium text-muted-foreground bg-muted rounded px-1.5 py-0.5">you</span>
+                                  )}
+                                </div>
+                                <p className="text-[11px] text-muted-foreground font-mono no-uppercase truncate mt-0.5">
+                                  {(u as any).username || "— no login yet —"}
+                                </p>
+                                <div className="flex items-center gap-1.5 mt-2 flex-wrap">
+                                  <Badge variant="outline" className={cn("text-[10px] px-1.5 py-0 h-5 font-medium", rs.chip)}>
+                                    {rs.label}
+                                  </Badge>
+                                  <span
+                                    className={cn(
+                                      "inline-flex items-center gap-1 text-[10px] font-medium rounded px-1.5 h-5 border",
+                                      u.active
+                                        ? "text-green-700 border-green-200 bg-green-50 dark:bg-green-950/40 dark:text-green-300 dark:border-green-900/60"
+                                        : "text-red-600 border-red-200 bg-red-50 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900/60",
+                                    )}
+                                  >
+                                    <span className={cn("w-1.5 h-1.5 rounded-full", u.active ? "bg-green-500" : "bg-red-500")} />
+                                    {u.active ? "Active" : "No access"}
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-1 mt-3 pt-2.5 border-t border-border/50">
+                              <Button
+                                variant="ghost" size="sm" className="text-xs h-7 px-2"
+                                onClick={() => {
+                                  setLoginDialog({
+                                    userId: u.id,
+                                    userName: u.name,
+                                    currentUsername: (u as any).username || "",
+                                    targetIsAdmin: u.role === "admin",
+                                  });
+                                  setLoginUsername((u as any).username || "");
+                                  setLoginPassword("");
+                                  setLoginAdminPw("");
+                                  setShowLoginPw(false);
+                                }}
+                              >
+                                Login
+                              </Button>
+                              <Button
+                                variant="ghost" size="sm" className="text-xs h-7 px-2"
+                                onClick={() => {
+                                  setPinDialog({
+                                    open: true,
+                                    userId: u.id,
+                                    userName: u.name,
+                                    targetIsAdmin: u.role === "admin",
+                                  });
+                                  setNewPin("");
+                                  setAdminVerifyPin("");
+                                }}
+                              >
+                                PIN
+                              </Button>
+                              <Button
+                                variant="ghost" size="sm" className="text-xs h-7 px-2"
+                                disabled={isMe || activeMut.isPending}
+                                onClick={() => activeMut.mutate({ id: u.id, active: !u.active })}
+                              >
+                                {u.active ? "Disable" : "Enable"}
+                              </Button>
+                              <Button
+                                variant="ghost" size="sm"
+                                className="text-xs h-7 px-2 ml-auto text-red-600 hover:text-red-700 hover:bg-red-50"
+                                disabled={isMe || deleteMut.isPending}
+                                title="Remove this account"
+                                onClick={() => {
+                                  if (!window.confirm(
+                                    `Remove ${u.name} completely?\n\n` +
+                                    "This only works if they have never created an invoice, taken a payment " +
+                                    "or moved stock. If they have, use Disable instead — that removes their " +
+                                    "access while keeping the record of what they did."
+                                  )) return;
+                                  deleteMut.mutate(u.id);
+                                }}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
           )}
         </div>
 
+        {/* Photo Dialog */}
+        <Dialog
+          open={!!photoDialog}
+          onOpenChange={(v) => { if (!v) { setPhotoDialog(null); setPhotoDraft(undefined); setPhotoAdminPw(""); } }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Photo — {photoDialog?.name}</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-2">
+              {photoDialog && (
+                <PhotoPicker
+                  user={photoDialog as any}
+                  value={photoDraft}
+                  onPick={(d) => setPhotoDraft(d)}
+                  onClear={() => setPhotoDraft(null)}
+                  toast={toast}
+                />
+              )}
+              {photoDialog?.role === "admin" && photoDialog.id !== currentUserId && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 space-y-2">
+                  <p className="text-sm text-amber-700">
+                    <Shield className="w-4 h-4 inline mr-1" />
+                    Changing another admin's account needs your own password.
+                  </p>
+                  <Input
+                    type="password" value={photoAdminPw} onChange={(e) => setPhotoAdminPw(e.target.value)}
+                    placeholder="Your admin password" className="no-uppercase bg-white" autoComplete="off"
+                  />
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => { setPhotoDialog(null); setPhotoDraft(undefined); }}>Cancel</Button>
+              <Button
+                onClick={() => photoMut.mutate()}
+                disabled={
+                  photoMut.isPending ||
+                  photoDraft === undefined ||
+                  (photoDialog?.role === "admin" && photoDialog.id !== currentUserId && !photoAdminPw)
+                }
+                className="gap-2"
+              >
+                {photoMut.isPending && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                Save photo
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         {/* Add Staff Dialog */}
         <Dialog open={addOpen} onOpenChange={setAddOpen}>
-          <DialogContent>
+          <DialogContent className="max-h-[85vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Add Staff Member</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
+              <PhotoPicker
+                user={{ id: 0, name: addForm.name || "New", role: addForm.role, hasPhoto: false }}
+                value={addPhoto}
+                onPick={setAddPhoto}
+                onClear={() => setAddPhoto(null)}
+                toast={toast}
+              />
               <Field label="Full Name">
                 <Input
                   value={addForm.name}
@@ -1025,10 +1452,10 @@ function Section3({
                   onValueChange={(v) => setAddForm((f) => ({ ...f, storeId: v === "all" ? "" : v }))}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="All stores" />
+                    <SelectValue placeholder="Every location" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="all">All stores</SelectItem>
+                    <SelectItem value="all">Every location</SelectItem>
                     {stores.filter((s) => s.active).map((s) => (
                       <SelectItem key={s.id} value={String(s.id)}>
                         {s.nameEn}
@@ -1040,8 +1467,9 @@ function Section3({
               <Field label="Username (for logging in)">
                 <Input
                   value={addForm.username}
-                  onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value.replace(/s/g, "").toLowerCase() }))}
+                  onChange={(e) => setAddForm((f) => ({ ...f, username: e.target.value.replace(/\s/g, "").toLowerCase() }))}
                   placeholder="e.g. store2.manager"
+                  className="no-uppercase font-mono"
                   autoComplete="off"
                 />
               </Field>

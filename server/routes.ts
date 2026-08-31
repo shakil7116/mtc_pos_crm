@@ -1,5 +1,6 @@
 import express, { type Request, type Response } from "express";
 import { createServer, type Server } from "http";
+import { createHash } from "crypto";
 import { openai } from "./replit_integrations/audio/client";
 import { db } from "./db";
 import { settings, users, stockAdjustments } from "@shared/schema";
@@ -22,6 +23,7 @@ import {
   createSupplierOpeningBalance, createSupplierOpeningBalances,
   setCustomerCollectability, getReceivablesSummary, deleteStore,
   restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
+  getTransferForReceipt, getStockLosses,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -615,10 +617,35 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try {
       const rows = await getUsers();
       // Never expose secrets/security state to the client (any authed user can read this list).
-      const safe = rows.map(({ pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...u }) => u);
+      // The photo is dropped too — it is base64 and this list is loaded by the invoice
+      // editor, expenses and the dashboards. The list only says WHETHER there is one;
+      // the picture itself comes from /api/users/:id/photo, which the browser caches.
+      const safe = rows.map(({ pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, photoUrl, ...u }) =>
+        ({ ...u, hasPhoto: !!photoUrl }));
       res.json(safe);
     } catch (err) {
       res.json(DEMO_USERS.map(({ pin, ...u }) => u));
+    }
+  });
+
+  // The staff photo is served as a real image rather than inlined in the user list.
+  // The auth cookie rides along with the <img> request, and the ETag means the
+  // browser re-downloads it only when the photo actually changes.
+  app.get("/api/users/:id/photo", async (req: Request, res: Response) => {
+    try {
+      const user = await getUser(Number(req.params.id));
+      const src = (user as any)?.photoUrl as string | undefined;
+      const m = src && /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(src);
+      if (!m) return res.status(404).end();
+      const buf = Buffer.from(m[2], "base64");
+      const etag = '"' + createHash("sha1").update(buf).digest("hex") + '"';
+      res.setHeader("ETag", etag);
+      res.setHeader("Cache-Control", "private, no-cache");
+      res.setHeader("Content-Type", m[1]);
+      if (req.headers["if-none-match"] === etag) return res.status(304).end();
+      res.end(buf);
+    } catch {
+      res.status(404).end();
     }
   });
 
@@ -2202,6 +2229,23 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
   });
 
+  // What material has cost us — short transfers today, counts and damage next.
+  // Admin/manager only: it is a money figure, and it names people.
+  app.get("/api/stock-losses", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await getStockLosses({
+        start: req.query.start as string | undefined,
+        end: req.query.end as string | undefined,
+        kind: req.query.kind as string | undefined,
+        storeId: locked ?? (req.query.storeId ? Number(req.query.storeId) : null),
+      }));
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   app.get("/api/stock-adjustments", async (req: Request, res: Response) => {
     try {
       const locked = lockedStoreId(req);
@@ -2339,9 +2383,22 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     try { res.json(await approveTransfer(Number(req.params.id), req.user?.id || undefined)); }
     catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
+  // What was sent, and what each line is worth if it does not turn up — read by
+  // the receiving screen so the shortage and its value are shown BEFORE confirming.
+  app.get("/api/transfers/:id/receipt", async (req: Request, res: Response) => {
+    try { res.json(await getTransferForReceipt(Number(req.params.id))); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Receive with what ACTUALLY arrived. `lines` carries the counted quantity per
+  // line; anything short becomes a valued, attributed loss. Omit lines and it
+  // behaves exactly as the old one-click receipt did.
   app.post("/api/transfers/:id/receive", async (req: Request, res: Response) => {
-    const { method, externalReceiver } = req.body || {};
-    try { res.json(await receiveTransfer(Number(req.params.id), req.user?.id || undefined, { method, externalReceiver })); }
+    const { method, externalReceiver, lines, shortageReason } = req.body || {};
+    try {
+      res.json(await receiveTransfer(Number(req.params.id), req.user?.id || undefined,
+        { method, externalReceiver, lines, shortageReason }));
+    }
     catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
   app.post("/api/transfers/:id/cancel", async (req: Request, res: Response) => {
