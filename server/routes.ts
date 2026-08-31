@@ -23,7 +23,7 @@ import {
   createSupplierOpeningBalance, createSupplierOpeningBalances,
   setCustomerCollectability, getReceivablesSummary, deleteStore,
   restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
-  getTransferForReceipt, getStockLosses,
+  getTransferForReceipt, getStockLosses, recordDamage,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -815,6 +815,17 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // Confirm the signed-in person's OWN PIN. Used before they change another
+  // admin's PIN. This used to be done by POSTing to /api/auth/login with a userId
+  // and a pin — that route wants a username and a PASSWORD, so the check could
+  // never pass and nobody could change a second admin's PIN at all.
+  app.post("/api/auth/verify-pin", loginRateLimit(), async (req: Request, res: Response) => {
+    if (!req.user) return res.status(401).json({ message: "Not authenticated" });
+    const ok = await verifyUserPin(req.user.id, String(req.body?.pin || ""));
+    if (!ok) return res.status(403).json({ message: "Incorrect PIN." });
+    res.json({ ok: true });
   });
 
   // Change own PIN (forced reset routes here too). Enforces non-trivial + unique.
@@ -2204,6 +2215,27 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const counts = Array.isArray(req.body?.counts) ? req.body.counts : [];
       if (!counts.length) return res.status(400).json({ message: "Nothing to count." });
       res.json(await setStockCountBatch(storeId, counts, req.user?.id || undefined));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Own-stock damage: broken, hardened, soaked. Takes the stock down AND records
+  // what it was worth, with a photo if there is one. Admin/manager, like a count —
+  // it removes stock, so it cannot be an open door.
+  app.post("/api/stock-damage", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await recordDamage({
+        productId: Number(req.body?.productId),
+        storeId: locked ?? Number(req.body?.storeId),
+        qty: Number(req.body?.qty),
+        reason: String(req.body?.reason ?? ""),
+        photoUrl: req.body?.photoUrl ?? null,
+        date: req.body?.date,
+        userId: req.user?.id || undefined,
+      }));
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }

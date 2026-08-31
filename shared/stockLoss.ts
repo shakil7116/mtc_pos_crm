@@ -138,6 +138,61 @@ export function reconcileReceipt(
   };
 }
 
+/* ── A stocktake, priced ──────────────────────────────────────────────────────
+   Counting a shelf produces a variance. Recorded as a quantity it is a note;
+   recorded as money it is the difference between a real profit figure and a
+   flattering one.
+
+   A count can go BOTH ways. Finding 3 more than the system said is not a loss —
+   it is usually an earlier mistake correcting itself, and pretending it never
+   happened would overstate what material really costs the business. So a
+   surplus is stored as a NEGATIVE loss and nets against the shortfalls, the way
+   a credit nets against debits. The month's figure is then what actually went,
+   not the sum of everything that ever looked wrong.
+──────────────────────────────────────────────────────────────────────────────*/
+
+export type Variance = {
+  /** Signed: negative when less was found than the system said. */
+  qty: number;
+  unitCost: number;
+  /** Signed the same way as qty. Positive = a real loss. */
+  value: number;
+  direction: "short" | "surplus" | "exact";
+  /** True when there is anything at all to record. */
+  recordable: boolean;
+};
+
+/** What a count found, in money. `before` is what the system claimed,
+ *  `counted` is what the person counted. */
+export function varianceLoss(before: number, counted: number, unitCost: number): Variance {
+  const diff = round(Number(counted) - Number(before), 4);      // + found more, − found less
+  const cost = Number.isFinite(Number(unitCost)) && Number(unitCost) > 0 ? Number(unitCost) : 0;
+  const lost = round(-diff, 4);                                  // + is a loss, matching the ledger
+  return {
+    qty: lost,
+    unitCost: round(cost, 4),
+    value: round(lost * cost),
+    direction: Math.abs(diff) < 0.0001 ? "exact" : diff < 0 ? "short" : "surplus",
+    recordable: Math.abs(diff) >= 0.0001,
+  };
+}
+
+/** Does this one need to reach the owner? A steady trickle of small variances is
+ *  normal in a builders' yard; one big one is a question that needs asking today. */
+export function shouldAlertLoss(value: number, threshold: number | string | null | undefined): boolean {
+  const limit = Number(threshold);
+  if (!Number.isFinite(limit) || limit <= 0) return false;
+  return Math.abs(Number(value) || 0) >= limit;
+}
+
+/** Plain words for what a count found, for the movement log and the alert. */
+export function describeVariance(v: Variance, before: number, counted: number): string {
+  if (!v.recordable) return `Counted ${counted}; the system agreed`;
+  const word = v.direction === "short" ? "short" : "more than expected";
+  return `Counted ${counted}; system had ${before} — ${Math.abs(v.qty)} ${word}` +
+    (v.unitCost > 0 ? ` (QAR ${Math.abs(v.value).toFixed(2)})` : "");
+}
+
 /** A shortage without a reason is just a smaller number — in six months nobody
  *  remembers whether it was breakage, a miscount, or a bag that never left. */
 export function requireShortageReason(r: Reconciliation, reason?: string | null): void {

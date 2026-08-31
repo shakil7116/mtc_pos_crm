@@ -65,6 +65,8 @@ export const settings = pgTable("settings", {
     "DEWALT","STANLEY","TOTAL TOOLS","MILANO","NATIONAL",
     "BQ","BR","MÜLLER","KISTENMACHER","ORYX PAINTS","BERGER PAINTS",
   ]),
+  // A single loss worth more than this tells the owner. "Big" differs per business.
+  stockLossAlertValue: numeric("stock_loss_alert_value").default("250"),
   setupComplete: boolean("setup_complete").default(false),
 });
 
@@ -106,7 +108,11 @@ export const users = pgTable("users", {
   name: text("name").notNull(),
   // 5 roles: admin | manager | worker | salesman | driver  (legacy "staff"→salesman, "warehouse"/"warehouse_manager"/"salesman_helper"→worker)
   role: text("role").notNull().default("salesman"),
-  pin: text("pin").notNull(),
+  // Scrambled with bcrypt, never plain digits — a PIN can reset a password,
+  // so it is a credential. The old plaintext `pin` column is emptied by
+  // scripts/migrate-hash-pins.mjs and is not read any more.
+  pinHash: text("pin_hash"),
+  pin: text("pin"),                               // legacy, always null after the migration
   // ── JWT auth (Phase 7 — Go-Live blocker 1) ──
   email: text("email"),                           // owner/admin email (Google or business)
   photoUrl: text("photo_url"),                    // staff photo, base64 data URL (kept out of the /api/users list)
@@ -536,6 +542,7 @@ export const stockLosses = pgTable("stock_losses", {
   refType: text("ref_type"),                       // transfer | stock_count | ...
   refId: integer("ref_id"),                        // the document/record it came from
   reason: text("reason").notNull(),                // mandatory — always
+  photoUrl: text("photo_url"),                     // damage: a broken pallet is worth a picture
   reportedBy: integer("reported_by").references(() => users.id),   // who confirmed the receipt / did the count
   againstUserId: integer("against_user_id").references(() => users.id), // who sent it / is answerable
   date: date("date").notNull(),

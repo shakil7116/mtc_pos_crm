@@ -10,6 +10,7 @@ import { users } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { normalizeRole } from "@shared/permissions";
 import { createNotification } from "./storage";
+import { hashPin, pinMatches } from "./pin";
 
 const COOKIE_BASE = "mtc_token";
 const COOKIE = process.env.COOKIE_SUFFIX ? `${COOKIE_BASE}_${process.env.COOKIE_SUFFIX}` : COOKIE_BASE;
@@ -220,7 +221,7 @@ export async function recoverPassword(usernameRaw: string, pin: string, newPassw
     return { ok: false as const, status: 423, message: `Account locked. Try again in ${mins} minute${mins === 1 ? "" : "s"}.` };
   }
 
-  if (String(u.pin) !== String(pin)) {
+  if (!pinMatches(String(pin), u.pinHash)) {
     const fails = (u.failedAttempts || 0) + 1;
     const patch: any = { failedAttempts: fails };
     if (fails >= MAX_FAILS) {
@@ -261,10 +262,14 @@ export async function registerOwner(data: { name: string; email: string; passwor
     email: data.email.trim().toLowerCase(),
     username,
     role: "admin",
-    pin: String(Math.floor(1000 + Math.random() * 9000)),
+    // The owner is given a random PIN they are never told, so it is useless to
+    // them: they could not approve a discount with it and — worse — could not use
+    // "Forgot password?", which needs the PIN. mustChangePin sends them straight
+    // to the Set PIN screen so the very first admin has a PIN they actually know.
+    pinHash: hashPin(String(Math.floor(1000 + Math.random() * 9000))),
     passwordHash: bcrypt.hashSync(data.password, 10),
     mustChangePassword: false,
-    mustChangePin: false,
+    mustChangePin: true,
     tokenVersion: 0,
   }).returning();
 
@@ -272,6 +277,6 @@ export async function registerOwner(data: { name: string; email: string; passwor
   setTokenCookie(res, token);
   return {
     ok: true as const,
-    user: { id: u.id, name: u.name, role: u.role, storeId: u.storeId ?? null, mustChangePassword: false, mustChangePin: false },
+    user: { id: u.id, name: u.name, role: u.role, storeId: u.storeId ?? null, mustChangePassword: false, mustChangePin: true },
   };
 }

@@ -42,6 +42,13 @@ function prevRangeFor(period: PeriodKey, today: string): { start: string; end: s
   return null;
 }
 
+const LOSS_LABEL: Record<string, string> = {
+  transfer_shortage: "Short on transfer",
+  count_variance: "Found short at count",
+  damage: "Damaged",
+  write_off: "Written off",
+};
+
 export default function ProfitToday({ embedded }: { embedded?: boolean }) {
   const [, nav] = useLocation();
   const search = useSearch();
@@ -89,6 +96,13 @@ export default function ProfitToday({ embedded }: { embedded?: boolean }) {
   const awaitingAmount = Number((totalSales - realSales).toFixed(2));
   const awaitingProfit = Number((expectedProfit - realProfit).toFixed(2));
   const unpaidCount = Math.max(0, Number(data?.invoiceCount || 0) - Number(data?.realCount || 0));
+
+  // Material that left without being sold, over the same days. Read beside gross
+  // profit, never mixed into it — one profit calculation, and this is the other half.
+  const materialLosses = Number(data?.materialLosses || 0);
+  const lossesByKind: Record<string, number> = data?.materialLossesByKind || {};
+  const lossCount = Number(data?.materialLossCount || 0);
+  const afterLosses = Number((realProfit - materialLosses).toFixed(2));
 
   // Cumulative real profit across the period (paid invoices contribute on their date).
   const trend = runningTotal(invoices.map((inv: any) => ({ date: inv.date, net: inv.status === "paid" ? Number(inv.profit) || 0 : 0 })));
@@ -139,6 +153,60 @@ export default function ProfitToday({ embedded }: { embedded?: boolean }) {
         <MetricCard icon={Wallet} label="Awaiting collection" accent={CHART.slate}
           value={money(awaitingAmount)} valueClassName={awaitingAmount > 0.005 ? "text-amber-700" : "text-emerald-700"}
           sub={awaitingAmount > 0.005 ? `${unpaidCount} unpaid · ${money(awaitingProfit)} profit` : "everything collected"} />
+      </div>
+
+      {/* Material losses — the other side of profit. Gross profit is sales margin
+          and always will be; this says what left the yard without being sold, so
+          the two can be read together instead of one flattering the other. */}
+      <div className="section-card">
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h2 className="section-heading">Material losses · {periodLabel}</h2>
+          <span className="text-[11px] text-muted-foreground">
+            short transfers, stock counts, damage
+          </span>
+        </div>
+        {materialLosses === 0 && lossCount === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Nothing lost in this period — every transfer arrived complete and no count came up short.
+          </p>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl bg-muted/30 p-3">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Gross profit</p>
+                <p className="font-mono font-bold text-xl text-foreground mt-0.5 tracking-tight">{money(realProfit)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">real, collected</p>
+              </div>
+              <div className={cn("rounded-xl p-3", materialLosses > 0 ? "bg-red-500/5" : "bg-emerald-500/5")}>
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Material lost</p>
+                <p className={cn("font-mono font-bold text-xl mt-0.5 tracking-tight", materialLosses > 0 ? "text-red-700" : "text-emerald-700")}>
+                  {materialLosses > 0 ? "− " : ""}{money(Math.abs(materialLosses))}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{lossCount} record{lossCount === 1 ? "" : "s"}</p>
+              </div>
+              <div className="rounded-xl bg-slate-500/5 p-3">
+                <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">After losses</p>
+                <p className={cn("font-mono font-bold text-xl mt-0.5 tracking-tight", afterLosses < 0 ? "text-red-700" : "text-foreground")}>
+                  {money(afterLosses)}
+                </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">what the period really made</p>
+              </div>
+            </div>
+            {Object.keys(lossesByKind).length > 0 && (
+              <div className="flex flex-wrap gap-2 mt-3">
+                {Object.entries(lossesByKind).map(([kind, v]: any) => (
+                  <span key={kind} className="text-[11px] rounded-lg bg-muted/40 px-2 py-1">
+                    {LOSS_LABEL[kind] || kind}: <b className="font-mono">{money(v)}</b>
+                  </span>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+        <p className="text-[11px] text-muted-foreground mt-3">
+          A count that finds <em>more</em> than expected nets against the losses — it is an
+          earlier mistake correcting itself, not a gain.
+        </p>
       </div>
 
       {/* Owner's profit share (all-time) — earned − owner drawings = retained. Read-only:

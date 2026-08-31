@@ -621,10 +621,25 @@ main {
 
 /* ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
    ALL-CAPS INPUTS (invoicing convention)
+
+   Business names print in caps: products, customers, suppliers, stores,
+   units. Two kinds of text are deliberately left exactly as typed:
+
+   1. CREDENTIALS — username, password, PIN, one-time codes. These must be
+      whatever the computer accepts, letter for letter. Showing a password
+      in caps when it was typed in lower case locks people out of their own
+      account. Type-based and autocomplete-based exemptions below mean a new
+      credential field is safe by default, without remembering a class.
+   2. FREE TEXT — every <textarea> in the app is a reason, a note or a set
+      of terms. Sentences belong in sentence case.
+
+   Escape hatches: .no-uppercase on an input, .force-uppercase on a textarea.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */
-input:not([type="password"]):not([type="email"]):not([type="date"]):not([type="time"]):not([type="number"]):not([type="tel"]):not([type="url"]):not(.no-uppercase),
-textarea:not(.no-uppercase) {
+input:not([type="password"]):not([type="email"]):not([type="date"]):not([type="time"]):not([type="number"]):not([type="tel"]):not([type="url"]):not([autocomplete*="password"]):not([autocomplete="username"]):not([autocomplete="one-time-code"]):not(.no-uppercase) {
   text-transform: uppercase;
+}
+textarea:not(.force-uppercase) {
+  text-transform: none;
 }
 input::placeholder,
 textarea::placeholder {

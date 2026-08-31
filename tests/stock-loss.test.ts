@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   reconcileReceipt, requireShortageReason, lineUnitCost, LOSS_KINDS,
+  varianceLoss, shouldAlertLoss, describeVariance,
 } from "@shared/stockLoss";
 
 /* Receiving a transfer with what ACTUALLY arrived.
@@ -120,5 +121,86 @@ describe("kinds of loss", () => {
     expect(LOSS_KINDS).toContain("count_variance");
     expect(LOSS_KINDS).toContain("damage");
     expect(LOSS_KINDS).toContain("write_off");
+  });
+});
+
+/* ── Counting a shelf, priced ─────────────────────────────────────────────── */
+describe("what a stocktake found", () => {
+  it("prices a shortfall as a loss", () => {
+    const v = varianceLoss(68, 47, 14);
+    expect(v.direction).toBe("short");
+    expect(v.qty).toBe(21);              // 21 gone
+    expect(v.value).toBe(294);           // × QAR 14
+    expect(v.recordable).toBe(true);
+  });
+
+  it("records finding MORE as a negative loss, so it nets off", () => {
+    const v = varianceLoss(40, 43, 14);
+    expect(v.direction).toBe("surplus");
+    expect(v.qty).toBe(-3);
+    expect(v.value).toBe(-42);
+  });
+
+  it("records nothing when the count agrees", () => {
+    const v = varianceLoss(50, 50, 14);
+    expect(v.direction).toBe("exact");
+    expect(v.recordable).toBe(false);
+    expect(v.value).toBe(0);
+  });
+
+  it("a shortfall and a surplus of equal value cancel — the month lost nothing", () => {
+    const a = varianceLoss(10, 7, 55);   // 3 short
+    const b = varianceLoss(10, 13, 55);  // 3 over
+    expect(a.value + b.value).toBe(0);
+  });
+
+  it("is zero rather than NaN when the product has no cost", () => {
+    const v = varianceLoss(10, 4, 0);
+    expect(v.qty).toBe(6);
+    expect(v.value).toBe(0);
+    expect(v.recordable).toBe(true);     // still worth recording — the quantity is real
+  });
+
+  it("handles fractions", () => {
+    const v = varianceLoss(12.5, 11.25, 8);
+    expect(v.qty).toBe(1.25);
+    expect(v.value).toBe(10);
+  });
+});
+
+describe("when the owner gets told", () => {
+  it("stays quiet below the threshold", () => {
+    expect(shouldAlertLoss(120, 250)).toBe(false);
+  });
+
+  it("speaks up at or above it", () => {
+    expect(shouldAlertLoss(250, 250)).toBe(true);
+    expect(shouldAlertLoss(4000, 250)).toBe(true);
+  });
+
+  it("speaks up for a big SURPLUS too — a large mystery either way is a question", () => {
+    expect(shouldAlertLoss(-900, 250)).toBe(true);
+  });
+
+  it("never alerts when no threshold is set", () => {
+    expect(shouldAlertLoss(9999, 0)).toBe(false);
+    expect(shouldAlertLoss(9999, null)).toBe(false);
+  });
+});
+
+describe("what the movement log says", () => {
+  it("spells out both numbers and the money", () => {
+    const v = varianceLoss(68, 47, 14);
+    expect(describeVariance(v, 68, 47)).toBe("Counted 47; system had 68 — 21 short (QAR 294.00)");
+  });
+
+  it("says so plainly when more was found", () => {
+    const v = varianceLoss(40, 43, 14);
+    expect(describeVariance(v, 40, 43)).toContain("3 more than expected");
+  });
+
+  it("leaves the money out when nothing knows the cost", () => {
+    const v = varianceLoss(10, 8, 0);
+    expect(describeVariance(v, 10, 8)).toBe("Counted 8; system had 10 — 2 short");
   });
 });

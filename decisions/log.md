@@ -552,3 +552,90 @@ material losses cost this month.
 
 Verified 23/23 against the live database, including that a full receipt still
 behaves exactly as it did and invents no loss.
+
+---
+
+## 2026-08-31 — An admin sets up and recovers accounts. An admin does not log into them.
+
+**Context:** Asked how an admin gets into a staff member's account. The answer the
+owner gave is the right one: an admin is an account setter, a recovery agent and a
+system maintainer — not someone who logs in as other people. No impersonation or
+"view as" feature was built, and none should be.
+
+But the question exposed two real holes.
+
+**Hole 1 — the PIN was a master key stored in plain text.** `recoverPassword`
+compared `u.pin` directly. A PIN plus a username is enough to set a new password on
+that account. So anyone who could read the database could take over any account, and
+anyone who watched a manager type their PIN at the counter could do the same — PINs
+are typed openly to approve discounts.
+
+**Decision:** PINs are bcrypt-scrambled like passwords (`users.pin_hash`), and the
+plain `pin` column is emptied and never read again. Rules live in `shared/pin.ts`
+(pure, tested); hashing in `server/pin.ts`, its own file because both `auth.ts` and
+`storage.ts` need it and `auth.ts` already imports `storage.ts`.
+
+**Consequence:** A PIN can no longer be looked up, only compared. Uniqueness
+(`pinAlreadyTaken`) and supervisor override (`getManagerByPin`) now compare against
+each candidate instead of querying. Both are fine — the staff list is small and
+`getManagerByPin` narrows to admins/managers first. Nothing changed for staff: the
+migration hashed the PINs people already use.
+
+**Hole 2 — a single admin is a single point of failure.** With passwords AND PINs
+both unreadable, the only admin losing both means nobody can get in without opening
+the database by hand. Staff Management now carries a standing warning until a second
+active admin exists, with a one-click path to create one. A second admin can always
+reset the first (that path already existed and already demands the acting admin's
+own password).
+
+**Also fixed, found on the way:**
+
+- Onboarding gave the first owner a random PIN they were never told, with
+  `mustChangePin: false`. That owner could not approve a discount and — far worse —
+  could not use "Forgot password?", which needs the PIN. Now `mustChangePin: true`,
+  so the first admin sets a PIN they actually know.
+- Changing a second admin's PIN was impossible: the confirmation POSTed to
+  `/api/auth/login` with a `userId` and a `pin`, but that route wants a username and
+  a PASSWORD, so it always failed. Added `POST /api/auth/verify-pin`, which checks
+  the signed-in person's own PIN.
+- The Login-access dialog greyed out Save with no explanation when nothing had
+  changed, which read as "you must re-enter the password". It now says there is
+  nothing to save, and states plainly that a password can only be replaced, never
+  read back.
+
+---
+
+## 2026-08-31 (later) — Counting and damage, priced
+
+Second half of the loss work. Transfers were made honest first; now the other two
+ways material leaves without being sold.
+
+**A stocktake variance is money.** `setStockCount` already worked out that the
+system said 68 and the shelf holds 47. That "−21" was written to the movement log
+and went no further. It is now also QAR 294, in `stock_losses`, with the counter's
+name on it.
+
+**Counts go both ways, so losses are signed.** Finding 3 MORE than expected is not
+a gain to celebrate — it is an earlier mistake correcting itself. Recorded as a
+NEGATIVE loss, it nets against the shortfalls, so the month's figure is what
+actually went rather than the sum of everything that ever looked wrong. A shortfall
+and a surplus of equal value cancel exactly.
+
+**Damage finally has somewhere to live.** The damage screen that existed is for a
+CUSTOMER complaining about an invoice; a pallet that fell in the yard could only be
+recorded as an anonymous quantity change. `recordDamage` does both halves at once —
+stock down, value written down — with a photo, a compulsory reason, and a refusal
+if more is claimed than the location holds. Admin/manager only, because it removes
+stock.
+
+**One threshold, admin-editable.** `settings.stockLossAlertValue` (default QAR 250)
+decides when a single loss tells the owner. A steady trickle of small variances is
+normal in a builders' yard; one big one is a question that needs asking today.
+
+**Profit now knows.** `getProfitDetail` carries `materialLosses` and
+`realProfitAfterLosses` BESIDE the aggregates — gross profit is still exactly
+item-level sales margin from `aggregateInvoiceProfit()`, one source, untouched.
+The Profit page shows the three numbers together: gross profit, material lost,
+what the period really made. That was the whole point of the audit.
+
+Verified 22/22 against the live database, plus 30 unit assertions on the maths.

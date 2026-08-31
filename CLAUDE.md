@@ -102,6 +102,15 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**Every loss of material is money, and lands in `stock_losses`.** Counts, damage
+and transfer shortages all write there: `setStockCount` prices the variance at
+`products.costPrice`, `recordDamage` takes the stock down AND writes the value, and
+a loss over `settings.stockLossAlertValue` notifies admins. Quantities are SIGNED —
+a count finding MORE than expected is a negative loss that nets off, because it is
+an earlier mistake correcting itself, not a gain. `getProfitDetail` returns
+`materialLosses` and `realProfitAfterLosses` BESIDE the aggregates; gross profit
+itself stays exactly `aggregateInvoiceProfit()` — never fold losses into it.
+
 **Deleting a location hides it; erasing is a separate, fenced action.**
 `DELETE /api/stores/:id` stamps `deleted_at` — the row stays, leaves every list, and
 is undoable for one day (`shared/undo.ts`, `POST /api/stores/:id/restore`). A store

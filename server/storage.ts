@@ -1,11 +1,14 @@
 import bcrypt from "bcryptjs";
 import { db } from "./db";
+import { hashPin, pinMatches } from "./pin";
+import { pinProblem } from "@shared/pin";
 import { computeInvoiceType, computeInvoiceTerms } from "@shared/invoiceType";
 import { countsForProfit, countsForBalance } from "@shared/transactionMode";
 import { normalizeCollectability, splitReceivables } from "@shared/collectability";
 import { undoDeadline, isUndoable } from "@shared/undo";
 import {
-  reconcileReceipt, requireShortageReason, type LossKind,
+  reconcileReceipt, requireShortageReason, varianceLoss, shouldAlertLoss,
+  describeVariance, type LossKind,
 } from "@shared/stockLoss";
 import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
@@ -611,13 +614,13 @@ export async function createUser(
   // Same PIN rules as changing one later. A PIN approves discounts, so two people
   // sharing one makes every approval unattributable.
   const pin = String(patch.pin || "").trim();
-  if (!/^[0-9]{4,6}$/.test(pin)) throw new Error("PIN must be 4 to 6 digits.");
-  if (WEAK_PINS.has(pin) || new Set(pin).size === 1) {
-    throw new Error("Choose a less obvious PIN — not a sequence like 1234 or the same digit repeated.");
+  const pinIssue = pinProblem(pin);
+  if (pinIssue) throw new Error(pinIssue);
+  if (await pinAlreadyTaken(pin)) {
+    throw new Error("That PIN is already used by someone else — every person needs their own.");
   }
-  const pinClash = await db.select().from(users).where(eq(users.pin, pin));
-  if (pinClash.length) throw new Error("That PIN is already used by someone else — every person needs their own.");
-  patch.pin = pin;
+  patch.pinHash = hashPin(pin);
+  patch.pin = null;   // nothing keeps the plain digits, not even for a moment
 
   const [row] = await db.insert(users).values(patch).returning();
   return row;
@@ -716,6 +719,20 @@ export async function updateUser(id: number, data: Partial<InsertUser>): Promise
 
   if (patch.photoUrl !== undefined) patch.photoUrl = cleanPhotoUrl(patch.photoUrl);
 
+  // An admin setting someone's PIN comes through here. Same rules as the person
+  // setting their own, and it is scrambled before it touches the table.
+  if (patch.pin !== undefined && patch.pin !== null) {
+    const pin = String(patch.pin).trim();
+    const issue = pinProblem(pin);
+    if (issue) throw new Error(issue);
+    if (await pinAlreadyTaken(pin, id)) {
+      throw new Error("That PIN is already used by someone else — every person needs their own.");
+    }
+    patch.pinHash = hashPin(pin);
+    patch.pin = null;
+    patch.mustChangePin = false;
+  }
+
   // Usernames are matched lowercased at login → store lowercased + keep them unique.
   if (patch.username !== undefined && patch.username !== null) {
     const uname = String(patch.username).trim().toLowerCase();
@@ -740,19 +757,29 @@ export async function updateUser(id: number, data: Partial<InsertUser>): Promise
 
 export async function verifyUserPin(userId: number, pin: string): Promise<boolean> {
   const user = await getUser(userId);
-  return user?.pin === pin && user?.active === true;
+  return !!user && user.active === true && pinMatches(pin, user.pinHash);
 }
 
-const WEAK_PINS = new Set(["1234", "12345", "123456", "0123", "01234", "012345", "4321", "54321", "654321"]);
+/** Is this PIN in use by someone else? PINs are scrambled, so this cannot be a
+ *  lookup — every stored PIN has to be compared one at a time. That is fine: the
+ *  staff list is small, and this only runs when a PIN is actually being set. */
+async function pinAlreadyTaken(pin: string, exceptUserId?: number): Promise<boolean> {
+  const rows = await db.select({ id: users.id, pinHash: users.pinHash }).from(users);
+  return rows.some((r) => r.id !== exceptUserId && pinMatches(pin, r.pinHash));
+}
+
 // A staff member sets their own PIN. Must be non-trivial and unique across staff,
 // so a supervisor override (manager PIN) can't be guessed or shared.
 export async function changeOwnPin(userId: number, newPin: string): Promise<void> {
   const pin = String(newPin || "").trim();
-  if (!/^\d{4,6}$/.test(pin)) throw new Error("PIN must be 4 to 6 digits.");
-  if (WEAK_PINS.has(pin) || /^(\d)\1+$/.test(pin)) throw new Error("Choose a less obvious PIN — not a sequence like 1234 or the same digit repeated.");
-  const clash = await db.select().from(users).where(and(eq(users.pin, pin), ne(users.id, userId)));
-  if (clash.length) throw new Error("That PIN is already used by another staff member — pick a different one.");
-  await db.update(users).set({ pin, mustChangePin: false }).where(eq(users.id, userId));
+  const issue = pinProblem(pin);
+  if (issue) throw new Error(issue);
+  if (await pinAlreadyTaken(pin, userId)) {
+    throw new Error("That PIN is already used by another staff member — pick a different one.");
+  }
+  await db.update(users)
+    .set({ pinHash: hashPin(pin), pin: null, mustChangePin: false })
+    .where(eq(users.id, userId));
 }
 
 // ─── Tasks (manager → staff workflow) ────────────────────────────────────────
@@ -926,8 +953,11 @@ export class PricingApprovalRequiredError extends Error {
 export async function getManagerByPin(pin: string): Promise<User | null> {
   const clean = String(pin || "").trim();
   if (clean.length < 4) return null;
-  const rows = await db.select().from(users).where(and(eq(users.pin, clean), eq(users.active, true)));
-  return rows.find((u) => ["admin", "manager"].includes(String(u.role))) ?? null;
+  // Scrambled PINs cannot be looked up, only compared — so narrow to the handful
+  // of people who could approve anything, then check those.
+  const rows = await db.select().from(users).where(eq(users.active, true));
+  const supervisors = rows.filter((u) => ["admin", "manager"].includes(String(u.role)));
+  return supervisors.find((u) => pinMatches(clean, u.pinHash)) ?? null;
 }
 
 /** Reserve the next sequential number (increments counter). */
@@ -1362,7 +1392,10 @@ export async function setStockCount(data: {
   countedQty: number;
   userId?: number;
   note?: string;
-}): Promise<{ productId: number; storeId: number; before: number; after: number; variance: number }> {
+}): Promise<{
+  productId: number; storeId: number; before: number; after: number; variance: number;
+  unitCost: number; lossValue: number; lossId: number | null;
+}> {
   const productId = Number(data.productId);
   const storeId = Number(data.storeId);
   const counted = Number(data.countedQty);
@@ -1394,22 +1427,58 @@ export async function setStockCount(data: {
   // Counting it makes the quantity real from now on.
   if (!wasTracked) await db.update(products).set({ trackStock: true } as any).where(eq(products.id, productId));
 
+  // What the gap is WORTH. A variance recorded only as a quantity is a note on a
+  // shelf; recorded as money it is the difference between a real profit figure
+  // and a flattering one. A first count of something never tracked is not a
+  // variance — there was no figure to differ from.
+  const unitCost = Number((product as any).costPrice || 0);
+  const v = varianceLoss(before, counted, unitCost);
+  const priced = wasTracked && v.recordable;
+
   const reasonBits = [
     wasTracked
-      ? `Counted ${counted}; system had ${before} (variance ${variance >= 0 ? "+" : ""}${variance})`
+      ? describeVariance(v, before, counted)
       : `First count: ${counted} (was not previously tracked)`,
   ];
   if (data.note) reasonBits.push(data.note);
+  const reason = reasonBits.join(" — ");
 
   await db.insert(stockAdjustments).values({
     productId, storeId,
     qtyChange: String(variance),
     type: "count",
-    reason: reasonBits.join(" — "),
+    reason,
     userId: data.userId,
   });
 
-  return { productId, storeId, before, after: counted, variance };
+  let loss: StockLoss | null = null;
+  if (priced) {
+    loss = await recordStockLoss({
+      productId, description: product.name, storeId,
+      qty: v.qty, unit: (product as any).unit, unitCost: v.unitCost,
+      kind: "count_variance", refType: "stock_count", refId: null,
+      reason, reportedBy: data.userId ?? null,
+    });
+
+    // A steady trickle of small variances is normal in a builders' yard. One big
+    // one is a question that needs asking today, not at month end.
+    const cfg = await getSettings();
+    if (shouldAlertLoss(v.value, (cfg as any)?.stockLossAlertValue)) {
+      await createNotification({
+        targetRole: "admin", type: "stock_variance",
+        title: v.direction === "short"
+          ? `Stock count short — ${product.name}`
+          : `Stock count over — ${product.name}`,
+        message: `${reason}. Worth QAR ${Math.abs(v.value).toFixed(2)}.`,
+        entityType: "product", entityId: productId, createdBy: data.userId ?? undefined,
+      }).catch(() => {});
+    }
+  }
+
+  return {
+    productId, storeId, before, after: counted, variance,
+    unitCost: v.unitCost, lossValue: v.value, lossId: loss?.id ?? null,
+  };
 }
 
 /** Count a whole shelf in one go. Each line is independent: one bad line does not
@@ -1429,11 +1498,90 @@ export async function setStockCountBatch(
     }
   }
   const totalVariance = Number(applied.reduce((s2, a) => s2 + a.variance, 0).toFixed(2));
+  // What the walk cost, netted: shortfalls less anything found over. That is the
+  // number worth telling somebody, not the count of lines that disagreed.
+  const lossValue = Number(applied.reduce((s2, a) => s2 + (a.lossValue || 0), 0).toFixed(2));
   return {
     applied, failed,
     counted: applied.length,
     discrepancies: applied.filter((a) => Math.abs(a.variance) > 0.0001).length,
     totalVariance,
+    lossValue,
+    shortValue: Number(applied.reduce((s2, a) => s2 + Math.max(0, a.lossValue || 0), 0).toFixed(2)),
+    surplusValue: Number(applied.reduce((s2, a) => s2 + Math.min(0, a.lossValue || 0), 0).toFixed(2)),
+  };
+}
+
+/** Material broken, hardened, soaked or otherwise ruined in our own hands.
+ *
+ *  There was nowhere to put this. The damage screen that existed is for a
+ *  CUSTOMER complaining about an invoice; a pallet that fell in the yard could
+ *  only be recorded as an anonymous quantity change with a typed note — no
+ *  photo, no value, no pattern anybody could see.
+ *
+ *  So this does both halves at once: the stock goes down AND the money is
+ *  recorded, with a picture if there is one. */
+export async function recordDamage(data: {
+  productId: number;
+  storeId: number;
+  qty: number;
+  reason: string;
+  photoUrl?: string | null;
+  userId?: number;
+  date?: string;
+}): Promise<{ removed: number; lossValue: number; loss: StockLoss; onHand: number }> {
+  const productId = Number(data.productId);
+  const storeId = Number(data.storeId);
+  const qty = Number(data.qty);
+
+  if (!productId) throw new Error("Which product was damaged?");
+  if (!storeId) throw new Error("Where did it happen? A damage entry belongs to one location.");
+  if (!Number.isFinite(qty) || qty <= 0) throw new Error("How many were damaged?");
+  if (String(data.reason || "").trim().length < 3) {
+    throw new Error("Say what happened — a damage entry with no reason is unusable in a month's time.");
+  }
+
+  const [product] = await db.select().from(products).where(eq(products.id, productId));
+  if (!product) throw new Error("Product not found.");
+
+  const onHandBefore = await getProductStock(productId, storeId);
+  const tracked = (product as any).trackStock !== false;
+  // An uncounted product has an UNKNOWN quantity, not zero — refusing on the
+  // grounds that "there is none there" would be refusing on a figure nobody keeps.
+  if (tracked && qty > onHandBefore + 0.0001) {
+    throw new Error(
+      `Only ${onHandBefore} of ${product.name} are recorded at this location. ` +
+      `Count the shelf first if more than that were damaged.`);
+  }
+
+  const unitCost = Number((product as any).costPrice || 0);
+  const reason = String(data.reason).trim();
+
+  await adjustStock(productId, storeId, -qty, "damage", `Damaged — ${reason}`, undefined, data.userId);
+
+  const loss = await recordStockLoss({
+    productId, description: product.name, storeId,
+    qty, unit: (product as any).unit, unitCost,
+    kind: "damage", refType: "damage", refId: null,
+    reason, reportedBy: data.userId ?? null,
+    photoUrl: data.photoUrl ?? null,
+    date: data.date,
+  });
+
+  const value = Number((qty * unitCost).toFixed(2));
+  const cfg = await getSettings();
+  if (shouldAlertLoss(value, (cfg as any)?.stockLossAlertValue)) {
+    await createNotification({
+      targetRole: "admin", type: "stock_damage",
+      title: `Damage recorded — ${product.name}`,
+      message: `${qty} ${(product as any).unit || ""} written off, worth QAR ${value.toFixed(2)}. ${reason}`,
+      entityType: "product", entityId: productId, createdBy: data.userId ?? undefined,
+    }).catch(() => {});
+  }
+
+  return {
+    removed: qty, lossValue: value, loss,
+    onHand: await getProductStock(productId, storeId),
   };
 }
 
@@ -1864,11 +2012,17 @@ export async function recordStockLoss(data: {
   reason: string;
   reportedBy?: number | null;
   againstUserId?: number | null;
+  photoUrl?: string | null;
   date?: string;
 }): Promise<StockLoss> {
   const qty = Number(data.qty);
   const unitCost = Number(data.unitCost) || 0;
-  if (!Number.isFinite(qty) || qty <= 0) throw new Error("A loss needs a quantity greater than zero.");
+  // Signed on purpose. Positive = material gone. NEGATIVE = a stocktake found MORE
+  // than the system claimed, which is an earlier mistake correcting itself — it
+  // nets against the losses so the month's figure is what actually went.
+  if (!Number.isFinite(qty) || Math.abs(qty) < 0.0001) {
+    throw new Error("A loss needs a quantity.");
+  }
   if (!String(data.reason || "").trim()) throw new Error("A loss must say what happened.");
 
   const [row] = await db.insert(stockLosses).values({
@@ -1877,6 +2031,7 @@ export async function recordStockLoss(data: {
     storeId: data.storeId ?? null,
     qty: String(qty),
     unit: data.unit ?? null,
+    photoUrl: data.photoUrl ?? null,
     unitCost: String(unitCost),
     value: String(Number((qty * unitCost).toFixed(2))),
     kind: data.kind,
@@ -5618,7 +5773,33 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
     };
   }).sort((a, b) => (b.date || "").localeCompare(a.date || "") || b.id - a.id);
   const agg = aggregateInvoiceProfit(docs as any[], profitByDoc, cogsByDoc);
-  return { period: { start, end }, invoices, ...agg };
+
+  // Material that left without being sold, over the same days. Gross profit stays
+  // exactly what it has always been — item-level margin from sales, one source —
+  // and this sits BESIDE it, because a month that lost QAR 4,000 of cement did not
+  // really earn what the margin says. Netted: a stocktake that finds more than
+  // expected is an earlier mistake correcting itself, not a gain to celebrate.
+  const lossRows = await db.select().from(stockLosses).where(and(
+    gte(stockLosses.date, start), lte(stockLosses.date, end),
+    ...(storeId ? [eq(stockLosses.storeId, storeId)] : []),
+  ));
+  const byKind: Record<string, number> = {};
+  let materialLosses = 0;
+  for (const r of lossRows as any[]) {
+    const v = Number(r.value || 0);
+    materialLosses += v;
+    byKind[r.kind] = Number(((byKind[r.kind] || 0) + v).toFixed(2));
+  }
+  materialLosses = Number(materialLosses.toFixed(2));
+
+  return {
+    period: { start, end }, invoices, ...agg,
+    materialLosses,
+    materialLossesByKind: byKind,
+    materialLossCount: lossRows.length,
+    realProfitAfterLosses: Number(((agg as any).realProfit - materialLosses).toFixed(2)),
+    expectedProfitAfterLosses: Number(((agg as any).expectedProfit - materialLosses).toFixed(2)),
+  };
 }
 
 export async function getProfitSummary() {
@@ -6014,9 +6195,12 @@ export async function seedDatabase(): Promise<void> {
   const existingUsers = await getUsers();
   if (existingUsers.length === 0) {
     await db.insert(users).values([
-      { name: "Shakil", role: "admin", pin: "1234", storeId: null },
-      { name: "Store Salesman", role: "salesman", pin: "1111", storeId: 1 },
-      { name: "General Worker", role: "worker", pin: "2222", storeId: 2 },
+      // Starter accounts on a brand-new database. The PINs are trivial on purpose
+      // (they are announced in the setup guide) and mustChangePin forces a real
+      // one before anybody can approve anything.
+      { name: "Shakil", role: "admin", pinHash: hashPin("1379"), mustChangePin: true, storeId: null },
+      { name: "Store Salesman", role: "salesman", pinHash: hashPin("2468"), mustChangePin: true, storeId: 1 },
+      { name: "General Worker", role: "worker", pinHash: hashPin("3759"), mustChangePin: true, storeId: 2 },
     ]);
   }
 

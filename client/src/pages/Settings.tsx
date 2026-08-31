@@ -977,8 +977,15 @@ function Section3({
       fetch(`/api/users/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body),
-      }).then((r) => r.json()),
+      }).then(async (r) => {
+        const b = await r.json().catch(() => ({}));
+        // "PIN already used" and "too obvious" arrive here — showing a bare
+        // "Update failed" would leave the owner with no idea what to change.
+        if (!r.ok) throw new Error(b?.message || "Update failed");
+        return b;
+      }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/users"] });
       setPinDialog(null);
@@ -986,7 +993,8 @@ function Section3({
       setAdminVerifyPin("");
       toast({ title: "User updated" });
     },
-    onError: () => toast({ title: "Update failed", variant: "destructive" }),
+    onError: (e: any) =>
+      toast({ title: "Update failed", description: String(e?.message || ""), variant: "destructive" }),
   });
 
   const photoMut = useMutation({
@@ -1053,12 +1061,15 @@ function Section3({
       toast({ title: "PIN must be 4–6 digits", variant: "destructive" });
       return;
     }
-    // Require admin PIN verification when changing another admin's PIN
+    // Require admin PIN verification when changing another admin's PIN.
+    // This used to POST to /api/auth/login, which wants a username and PASSWORD —
+    // so it always failed and no second admin's PIN could ever be changed.
     if (pinDialog.targetIsAdmin && pinDialog.userId !== currentUserId) {
-      const res = await fetch("/api/auth/login", {
+      const res = await fetch("/api/auth/verify-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: currentUserId, pin: adminVerifyPin }),
+        credentials: "include",
+        body: JSON.stringify({ pin: adminVerifyPin }),
       });
       if (!res.ok) {
         toast({ title: "Incorrect admin PIN", variant: "destructive" });
@@ -1118,6 +1129,18 @@ function Section3({
   }, [visible, locations, storeFilter]);
 
   const activeCount = users.filter((u) => u.active).length;
+
+  // A single admin is a single point of failure. Passwords are scrambled and PINs
+  // now are too, so if the only admin loses BOTH, there is no way back in short of
+  // opening the database by hand. A second admin can always reset the first.
+  const activeAdmins = users.filter((u) => u.active && u.role === "admin");
+  const soloAdmin = !isLoading && activeAdmins.length < 2;
+
+  // Same username, no new password → the Save button has nothing to do.
+  const loginNothingToSave =
+    !!loginDialog &&
+    loginUsername.trim().toLowerCase() === (loginDialog.currentUsername || "").toLowerCase() &&
+    !loginPassword;
 
   return (
     <AccordionItem value="staff" className="bg-white dark:bg-card rounded-2xl border border-border/40 px-6 shadow-[var(--shadow-card)] hover:shadow-[var(--shadow-card-hover)] transition-all duration-200">
@@ -1191,6 +1214,32 @@ function Section3({
             {activeCount} active · {users.length - activeCount} inactive ·{" "}
             {locations.length} location{locations.length !== 1 ? "s" : ""}
           </p>
+
+          {soloAdmin && (
+            <div className="rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/30 p-3.5 flex items-start gap-3">
+              <Shield className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-amber-900 dark:text-amber-200 leading-tight">
+                  Only one admin account
+                </p>
+                <p className="text-xs text-amber-800/90 dark:text-amber-300/90 mt-1 leading-relaxed">
+                  Nobody can read a password or a PIN back — not even from the database.
+                  If this account loses both, there is no way back into the system without a
+                  developer opening the database by hand. A second admin can always reset the
+                  first, so make one and keep it with someone you trust.
+                </p>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-2.5 h-8 text-xs gap-1.5 bg-white dark:bg-transparent border-amber-300 dark:border-amber-800"
+                  onClick={() => { setAddForm((f) => ({ ...f, role: "admin" })); setAddOpen(true); }}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add a second admin
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* ── People, grouped by location ── */}
           {isLoading ? (
@@ -1480,6 +1529,7 @@ function Section3({
                     value={addForm.password}
                     onChange={(e) => setAddForm((f) => ({ ...f, password: e.target.value }))}
                     placeholder="They change it on first login"
+                    className="no-uppercase"
                     autoComplete="new-password"
                   />
                   <button
@@ -1498,6 +1548,7 @@ function Section3({
                     value={addForm.pin}
                     onChange={(e) => setAddForm((f) => ({ ...f, pin: e.target.value.replace(/\D/g, "").slice(0, 6) }))}
                     placeholder="••••"
+                    className="no-uppercase"
                     maxLength={6}
                   />
                   <button
@@ -1595,9 +1646,16 @@ function Section3({
               <DialogTitle>Login access — {loginDialog?.userName}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4 py-2">
-              <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-muted-foreground">
-                Set the username and a temporary password. On next login the staff member is
-                forced to choose their own password — you never keep it.
+              <div className="bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-lg p-3 text-xs text-muted-foreground space-y-1.5">
+                <p>
+                  Nobody can read a staff password back — not even you. It is stored scrambled.
+                  You can only <strong className="font-medium text-foreground">replace</strong> it
+                  with a temporary one.
+                </p>
+                <p>
+                  If you set one here, {loginDialog?.userName || "they"} are signed out everywhere at
+                  once and must choose a new password the next time they log in.
+                </p>
               </div>
               <Field label="Username">
                 <Input
@@ -1636,14 +1694,21 @@ function Section3({
                 </div>
               )}
             </div>
+            {/* A disabled button with no reason next to it reads as "you must fill
+                this in". Say plainly that there is simply nothing to save yet. */}
+            {loginNothingToSave && (
+              <p className="text-[11px] text-muted-foreground -mt-1">
+                Nothing to save yet — change the username, or type a temporary password to replace the current one.
+              </p>
+            )}
             <DialogFooter>
               <Button variant="ghost" onClick={() => setLoginDialog(null)}>Cancel</Button>
               <Button
                 onClick={() => credMut.mutate()}
                 disabled={
                   credMut.isPending ||
+                  loginNothingToSave ||
                   (loginPassword.length > 0 && loginPassword.length < 8) ||
-                  (loginUsername.trim().toLowerCase() === (loginDialog?.currentUsername || "").toLowerCase() && !loginPassword) ||
                   (!!loginDialog?.targetIsAdmin && loginDialog.userId !== currentUserId && !loginAdminPw)
                 }
                 className="gap-2"

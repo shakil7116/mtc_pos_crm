@@ -64,6 +64,7 @@ import ScanToInventory from "@/components/ScanToInventory";
 import ImportProductsCsv from "@/components/ImportProductsCsv";
 import GoodsReceiptDialog from "@/components/GoodsReceiptDialog";
 import StockCountDialog from "@/components/StockCountDialog";
+import DamageDialog from "@/components/DamageDialog";
 import TransferVoucher from "@/components/TransferVoucher";
 import TransferReceiveDialog from "@/components/TransferReceiveDialog";
 
@@ -2322,6 +2323,7 @@ export default function Inventory() {
   const [scanOpen, setScanOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
+  const [damageOpen, setDamageOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
@@ -2359,6 +2361,10 @@ export default function Inventory() {
                 <ClipboardCheck className="w-4 h-4" />
                 Count Stock
               </Button>
+              <Button variant="outline" onClick={() => setDamageOpen(true)} className="gap-2 rounded-lg text-amber-700 border-amber-300 hover:bg-amber-50">
+                <AlertTriangle className="w-4 h-4" />
+                Damage
+              </Button>
               <Button variant="outline" onClick={() => setImportOpen(true)} className="gap-2 rounded-lg">
                 <Upload className="w-4 h-4" />
                 Import CSV
@@ -2389,6 +2395,7 @@ export default function Inventory() {
       <ScanToInventory open={scanOpen} onClose={() => setScanOpen(false)} stores={stores} suppliers={suppliers} />
       <GoodsReceiptDialog open={receiptOpen} onClose={() => setReceiptOpen(false)} stores={stores} suppliers={suppliers} />
       <StockCountDialog open={countOpen} onClose={() => setCountOpen(false)} stores={stores} />
+      <DamageDialog open={damageOpen} onClose={() => setDamageOpen(false)} products={products} stores={stores} />
 
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} stores={stores} products={products} prefill={transferPrefill} />
 
