@@ -758,3 +758,37 @@ products, two quantities, one line saying why, with the value gap worked out as
 you type.
 
 Verified 26/26 against the live database.
+
+---
+
+## 2026-08-31 — Boxes and pieces
+
+Sixth audit item. A unit was only a word on the screen — BOX, PCS, BAG — and
+nothing said how many pieces are in a box. Receiving 10 boxes added 10, selling
+120 pieces took away 120, and the shelf figure was nonsense within a week. Silent,
+permanent drift on every item you break down, and a real part of the stock that
+cannot be found when a place is emptied.
+
+**One base unit, one optional pack.** Stock is ALWAYS counted in the product's own
+unit. A product may also name a bigger buying unit and how many base units are in
+it. Everything entered in the big unit is multiplied once, on the way in.
+
+**The snapshot is the important part.** `document_items.base_qty` freezes what the
+line actually moved — 2 BOX stores qty 2 and baseQty 24 — exactly like
+`cost_at_sale` freezes the cost. Without it, correcting a pack size next year would
+silently rewrite what every past sale took off the shelf, and a return would give
+back a different number from what the sale removed. Verified directly: the pack
+size was changed to 24 between the sale and the void, and the void still gave back
+24, not 48.
+
+**Where it applies:** goods receipt (quantity AND cost — QAR 120 a box becomes QAR
+10 a piece, or a whole catalogue's margins go wrong), the sale, the void, customer
+returns, supplier returns, PO receipts, and the stocktake. The stock count now takes
+"5 boxes and 3 loose" because that is how a rack is actually counted, and the stock
+list shows "127 PCS (10 BOX + 7)".
+
+**A wrong pack size is worse than none** — it multiplies every future movement of
+that product — so `validatePack` refuses a pack of one, a size with no name, a name
+with no size, and a pack named the same as the base unit.
+
+Verified 13/13 against the live database, plus 25 unit assertions.

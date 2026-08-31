@@ -221,7 +221,12 @@ export const products = pgTable("products", {
   sku: text("sku"),
   name: text("name").notNull(),
   category: text("category"),
+  // The unit stock is COUNTED in. Everything on the shelf is this.
   unit: text("unit").notNull().default("PCS"),
+  // Optional bigger buying unit: 1 BOX = 12 PCS. Quantities entered in it are
+  // multiplied on the way in, once — see shared/unit.ts.
+  packUnit: text("pack_unit"),
+  packSize: numeric("pack_size"),
   salePrice: numeric("sale_price").default("0"),        // retail (walk-in) price
   wholesalePrice: numeric("wholesale_price").default("0"), // contractor/corporate/government price
   costPrice: numeric("cost_price").default("0"),
@@ -362,6 +367,12 @@ export const documentItems = pgTable("document_items", {
   // rewrote every historical margin. NULL on rows written before this column existed —
   // those fall back to the current cost (see resolveItemCost in server/storage.ts).
   costAtSale: numeric("cost_at_sale"),
+  // QUANTITY SNAPSHOT: what this line actually moved, in the product's base unit,
+  // frozen when it was written. 2 BOX of 12 stores qty 2, baseQty 24. Changing a
+  // pack size later must never rewrite what a past sale took off the shelf, and a
+  // return has to give back exactly what the sale took. NULL on older rows, which
+  // fall back to qty (see resolveBaseQty in server/storage.ts).
+  baseQty: numeric("base_qty"),
   // Physical location this line is pulled from (per-line, staff-only — NEVER printed on
   // the customer copy). Drives per-location stock deduction + Delivery Note pick grouping.
   locationStoreId: integer("location_store_id").references(() => stores.id),

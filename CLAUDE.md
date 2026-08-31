@@ -102,6 +102,16 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**Stock is always counted in the product's base `unit`.** `packUnit` + `packSize`
+give an optional bigger buying unit (1 BOX = 12 PCS). Everything entered in the big
+unit is multiplied ONCE, on the way in, by `shared/unit.ts` — receiving, selling,
+counting, returning. `document_items.base_qty` freezes what a line actually moved,
+and `resolveBaseQty(baseQty, qty)` reads it: same lesson as `costAtSale`, so
+changing a pack size later cannot rewrite what a past sale took off the shelf and a
+void gives back exactly what was taken. `validatePack` refuses a pack of one or a
+pack named like the base unit — a wrong pack size multiplies every future movement.
+Never write a raw entered quantity to stock without converting.
+
 **A swap is one record with both halves in it.** `recordSwap` writes a `stock_swaps`
 row and BOTH stock movements carrying its id as `referenceId`, so the pair can never
 be read as two unrelated mysteries at the next count. Deliberately open to

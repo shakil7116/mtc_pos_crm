@@ -2245,7 +2245,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json(await setStockCount({
         productId: Number(req.body?.productId),
         storeId: locked ?? Number(req.body?.storeId),
-        countedQty: Number(req.body?.countedQty),
+        countedQty: req.body?.countedQty !== undefined ? Number(req.body.countedQty) : undefined,
+        packs: req.body?.packs,          // "5 boxes and 3 loose"
+        loose: req.body?.loose,
         note: req.body?.note,
         userId: req.user?.id || undefined,
       }));

@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { hasPack, toBaseQty } from "@shared/unit";
 
 /* ── Stocktake ────────────────────────────────────────────────────────────────
    You type what you COUNTED, not a difference. Someone at a shelf knows "there
@@ -28,6 +29,7 @@ type Store = { id: number; nameEn?: string; name_en?: string; name?: string };
 type Product = {
   id: number; name: string; sku?: string | null; unit?: string | null;
   category?: string | null; trackStock?: boolean | null;
+  packUnit?: string | null; packSize?: number | string | null;
 };
 type InvRow = { productId: number; storeId: number; qty: string | number };
 
@@ -40,6 +42,8 @@ export default function StockCountDialog({
   const [storeId, setStoreId] = useState<string>("");
   const [search, setSearch] = useState("");
   const [counts, setCounts] = useState<Record<number, string>>({});
+  // Whole packs counted, kept apart from the loose pieces beside them.
+  const [packCounts, setPackCounts] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
   const [result, setResult] = useState<any>(null);
 
@@ -74,19 +78,31 @@ export default function StockCountDialog({
     return [...typed, ...list].slice(0, 120);
   }, [products, search, counts]);
 
-  const entered = Object.entries(counts).filter(([, v]) => String(v).trim() !== "");
+  // A row counts as entered if EITHER box was filled — five boxes and no loose
+  // pieces is a complete count, not a blank one.
+  const entered = Array.from(new Set([
+    ...Object.entries(counts).filter(([, v]) => String(v).trim() !== "").map(([id]) => id),
+    ...Object.entries(packCounts).filter(([, v]) => String(v).trim() !== "").map(([id]) => id),
+  ]));
 
-  const variances = entered.map(([id, v]) => {
+  const variances = entered.map((id) => {
     const pid = Number(id);
     const p = products.find((x) => x.id === pid);
     const before = p?.trackStock === false ? null : (systemQty.get(pid) || 0);
-    const after = Number(v);
+    const after = p ? countedBase(p) : Number(counts[pid] || 0);
     return { pid, name: p?.name || `#${pid}`, before, after, variance: before === null ? null : after - before };
   });
   const discrepancies = variances.filter((x) => x.variance !== null && Math.abs(x.variance) > 0.0001);
 
   function reset() {
-    setCounts({}); setSearch(""); setResult(null);
+    setCounts({}); setPackCounts({}); setSearch(""); setResult(null);
+  }
+
+  // What a row adds up to, in the unit stock is kept in.
+  function countedBase(p: any): number {
+    const packs = Number(packCounts[p.id] || 0);
+    const loose = Number(counts[p.id] || 0);
+    return Number((toBaseQty(packs, p.packUnit, p) + (Number.isFinite(loose) ? loose : 0)).toFixed(4));
   }
 
   async function submit() {
@@ -100,7 +116,11 @@ export default function StockCountDialog({
         credentials: "include",
         body: JSON.stringify({
           storeId: Number(storeId),
-          counts: entered.map(([id, v]) => ({ productId: Number(id), countedQty: Number(v) })),
+          counts: entered.map((id) => ({
+            productId: Number(id),
+            packs: packCounts[Number(id)] ?? null,
+            loose: String(counts[Number(id)] ?? "").trim() === "" ? 0 : Number(counts[Number(id)]),
+          })),
         }),
       });
       const body = await r.json();
@@ -227,13 +247,34 @@ export default function StockCountDialog({
                             {before === null ? "—" : before}
                           </td>
                           <td className="py-1.5 text-right">
-                            <Input
-                              type="number" min="0" step="any" inputMode="decimal"
-                              className="h-8 w-24 text-right ml-auto"
-                              placeholder={p.unit || "qty"}
-                              value={typed ?? ""}
-                              onChange={(e) => setCounts((c) => ({ ...c, [p.id]: e.target.value }))}
-                            />
+                            {/* Nobody counts 127 pieces. They count ten boxes and
+                                seven loose, so both boxes are offered. */}
+                            <div className="flex items-center gap-1 justify-end">
+                              {hasPack(p as any) && (
+                                <>
+                                  <Input
+                                    type="number" min="0" step="any" inputMode="decimal"
+                                    className="h-8 w-16 text-right"
+                                    placeholder={String(p.packUnit || "BOX").toUpperCase()}
+                                    value={packCounts[p.id] ?? ""}
+                                    onChange={(e) => setPackCounts((c) => ({ ...c, [p.id]: e.target.value }))}
+                                  />
+                                  <span className="text-[11px] text-muted-foreground">+</span>
+                                </>
+                              )}
+                              <Input
+                                type="number" min="0" step="any" inputMode="decimal"
+                                className="h-8 w-24 text-right"
+                                placeholder={p.unit || "qty"}
+                                value={typed ?? ""}
+                                onChange={(e) => setCounts((c) => ({ ...c, [p.id]: e.target.value }))}
+                              />
+                            </div>
+                            {hasPack(p as any) && (packCounts[p.id] || typed) && (
+                              <span className="block text-[11px] text-muted-foreground mt-0.5">
+                                = {countedBase(p)} {p.unit}
+                              </span>
+                            )}
                           </td>
                           <td className={cn(
                             "py-1.5 text-right tabular-nums text-xs",

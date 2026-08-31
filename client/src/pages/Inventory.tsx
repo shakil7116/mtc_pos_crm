@@ -58,6 +58,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { cn } from "@/lib/utils";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
 import { validateSku, validatePositivePrice, validateNonNegative } from "@/lib/validation";
+import { hasPack, splitPacks, formatQty } from "@shared/unit";
 import { Link, useSearch } from "wouter";
 import TransferModal from "@/components/TransferModal";
 import ScanToInventory from "@/components/ScanToInventory";
@@ -98,6 +99,8 @@ type Product = {
   name: string;
   category: string | null;
   unit: string | null;
+  packUnit?: string | null;
+  packSize?: number | string | null;
   salePrice: number | string | null;
   wholesalePrice?: number | string | null;
   costPrice: number | string | null;
@@ -684,6 +687,8 @@ type ProductForm = {
   name: string;
   category: string;
   unit: string;
+  packUnit: string;
+  packSize: string;
   salePrice: string;
   wholesalePrice: string;
   costPrice: string;
@@ -704,6 +709,8 @@ const BLANK_PRODUCT: ProductForm = {
   name: "",
   category: "",
   unit: "",
+  packUnit: "",
+  packSize: "",
   salePrice: "",
   wholesalePrice: "",
   costPrice: "",
@@ -742,6 +749,8 @@ function ProductDialog({
           name: editProduct.name,
           category: editProduct.category ?? "",
           unit: editProduct.unit ?? "",
+          packUnit: (editProduct as any).packUnit ?? "",
+          packSize: (editProduct as any).packSize != null ? String((editProduct as any).packSize) : "",
           salePrice: editProduct.salePrice != null ? String(editProduct.salePrice) : "",
           wholesalePrice: (editProduct as any).wholesalePrice != null ? String((editProduct as any).wholesalePrice) : "",
           costPrice: editProduct.costPrice != null ? String(editProduct.costPrice) : "",
@@ -836,6 +845,8 @@ function ProductDialog({
       name: form.name.trim(),
       category: form.category || null,
       unit: form.unit || null,
+      packUnit: form.packUnit.trim() || null,
+      packSize: form.packSize.trim() ? Number(form.packSize) : null,
       salePrice: form.salePrice ? parseFloat(form.salePrice) : null,
       wholesalePrice: form.wholesalePrice ? parseFloat(form.wholesalePrice) : null,
       costPrice: form.costPrice ? parseFloat(form.costPrice) : null,
@@ -917,6 +928,40 @@ function ProductDialog({
                 {unitOpts.map((u: any) => <option key={u.id} value={u.value} />)}
               </datalist>
             </div>
+          </div>
+
+          {/* Bought by the box, kept by the piece. Without this, receiving 10
+              boxes adds 10 and the shelf figure is wrong for ever. */}
+          <div className="rounded-lg border p-3 space-y-2">
+            <p className="text-xs font-medium">Bought in a bigger unit?</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="p-pack-unit" className="text-xs">Bigger unit</Label>
+                <Input
+                  id="p-pack-unit" value={form.packUnit}
+                  onChange={(e) => set("packUnit", e.target.value)}
+                  placeholder="BOX, BUNDLE, PALLET"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="p-pack-size" className="text-xs">
+                  {form.unit ? `How many ${form.unit} inside?` : "How many inside?"}
+                </Label>
+                <Input
+                  id="p-pack-size" inputMode="decimal" value={form.packSize}
+                  onChange={(e) => set("packSize", e.target.value)}
+                  placeholder="12"
+                />
+              </div>
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {form.packUnit && Number(form.packSize) > 1 ? (
+                <>Buy <b>1 {form.packUnit.toUpperCase()}</b> and <b>{form.packSize} {(form.unit || "PCS").toUpperCase()}</b> go
+                  on the shelf. Stock is always counted in {(form.unit || "PCS").toUpperCase()}.</>
+              ) : (
+                <>Leave both empty if you buy and sell in the same unit.</>
+              )}
+            </p>
           </div>
 
           {canEditPrice && (<div className="grid grid-cols-2 gap-3">
@@ -1357,6 +1402,19 @@ function AllStockTab({
                       </TableCell>
                       <TableCell className="text-right font-mono font-semibold">
                         {qty}
+                        {/* 127 pieces is ten boxes and seven loose — which is what
+                            the person walking to the rack actually needs. */}
+                        {(() => {
+                          const prod: any = productMap[row.productId] ?? {};
+                          if (!hasPack(prod)) return null;
+                          const { packs, loose } = splitPacks(qty, prod);
+                          if (!packs) return null;
+                          return (
+                            <span className="block text-[11px] font-normal text-muted-foreground">
+                              {packs} {String(prod.packUnit).toUpperCase()}{loose ? ` + ${loose}` : ""}
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-right font-mono text-muted-foreground">
                         {min}

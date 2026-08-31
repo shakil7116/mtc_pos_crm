@@ -17,6 +17,9 @@ import {
   readSwap, swapNeedsApproval, describeSwap,
 } from "@shared/stockSwap";
 import {
+  toBaseQty, toBaseCost, unitFactor, hasPack, validatePack, formatQty,
+} from "@shared/unit";
+import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
@@ -1497,11 +1500,18 @@ export async function getProduct(id: number): Promise<Product | undefined> {
 }
 
 export async function createProduct(data: InsertProduct): Promise<Product> {
+  // A wrong pack size is worse than none — it multiplies every future movement
+  // of this product by the wrong number.
+  validatePack(data as any);
   const [row] = await db.insert(products).values(upperFields(data, PRODUCT_UP)).returning();
   return row;
 }
 
 export async function updateProduct(id: number, data: Partial<InsertProduct>): Promise<Product> {
+  if ("packUnit" in (data as any) || "packSize" in (data as any) || "unit" in (data as any)) {
+    const [current] = await db.select().from(products).where(eq(products.id, id));
+    validatePack({ ...(current as any), ...(data as any) });
+  }
   const [row] = await db.update(products).set(upperFields(data, PRODUCT_UP)).where(eq(products.id, id)).returning();
   return row;
 }
@@ -1686,7 +1696,11 @@ export function applyStockDelta(current: number, qtyChange: number): { newQty: n
 export async function setStockCount(data: {
   productId: number;
   storeId: number;
-  countedQty: number;
+  /** In base units. Use packs/loose instead when counting boxes on a shelf. */
+  countedQty?: number;
+  /** "5 boxes and 3 loose" — how a person actually counts a rack. */
+  packs?: number | string | null;
+  loose?: number | string | null;
   userId?: number;
   note?: string;
 }): Promise<{
@@ -1695,15 +1709,31 @@ export async function setStockCount(data: {
 }> {
   const productId = Number(data.productId);
   const storeId = Number(data.storeId);
-  const counted = Number(data.countedQty);
 
   if (!productId) throw new Error("A product is required to record a count.");
   if (!storeId) throw new Error("A location is required — a count is always of one shelf.");
-  if (!Number.isFinite(counted)) throw new Error("The counted quantity must be a number.");
-  if (counted < 0) throw new Error("A counted quantity cannot be negative — you cannot have less than none.");
 
   const [product] = await db.select().from(products).where(eq(products.id, productId));
   if (!product) throw new Error("Product not found.");
+
+  // Nobody counts 127 pieces. They count ten boxes and seven loose, so that is
+  // what the screen sends, and the pieces are worked out here.
+  const usedPacks = data.packs !== undefined && data.packs !== null && String(data.packs) !== "";
+  const usedLoose = data.loose !== undefined && data.loose !== null && String(data.loose) !== "";
+  let counted: number;
+  if (usedPacks || usedLoose) {
+    const packs = Number(data.packs || 0);
+    const loose = Number(data.loose || 0);
+    if (!Number.isFinite(packs) || !Number.isFinite(loose)) {
+      throw new Error("The counted quantities must be numbers.");
+    }
+    if (packs < 0 || loose < 0) throw new Error("A counted quantity cannot be negative — you cannot have less than none.");
+    counted = Number((toBaseQty(packs, (product as any).packUnit, product as any) + loose).toFixed(4));
+  } else {
+    counted = Number(data.countedQty);
+  }
+  if (!Number.isFinite(counted)) throw new Error("The counted quantity must be a number.");
+  if (counted < 0) throw new Error("A counted quantity cannot be negative — you cannot have less than none.");
 
   const existing = await db.select().from(inventory)
     .where(and(eq(inventory.productId, productId), eq(inventory.storeId, storeId)));
@@ -1782,7 +1812,7 @@ export async function setStockCount(data: {
  *  lose the rest of the shelf, it comes back in `failed` with its reason. */
 export async function setStockCountBatch(
   storeId: number,
-  counts: Array<{ productId: number; countedQty: number; note?: string }>,
+  counts: Array<{ productId: number; countedQty?: number; packs?: number | string | null; loose?: number | string | null; note?: string }>,
   userId?: number,
 ) {
   const applied: Awaited<ReturnType<typeof setStockCount>>[] = [];
@@ -2799,6 +2829,38 @@ export async function cancelTransfer(id: number, userId?: number): Promise<any> 
   return { ok: true };
 }
 
+/** What a line actually moved, in the product's base unit.
+ *
+ *  Prefers the snapshot frozen when the line was written; falls back to the
+ *  entered quantity only for rows written before base_qty existed.
+ *
+ *  Same lesson as resolveItemCost: changing a pack size later must never rewrite
+ *  what a past sale took off the shelf, and a return has to give back exactly
+ *  what the sale took — not what the pack size happens to say today. */
+/** Convert a quantity that carries a unit but no frozen base figure — a supplier
+ *  order line, a return line — into base units, by reading the product. */
+export async function baseQtyFor(
+  productId: number, qty: number | string, unit?: string | null,
+): Promise<number> {
+  const n = Number(qty) || 0;
+  if (!productId || !unit) return n;
+  const [p] = await db.select({
+    unit: products.unit,
+    packUnit: (products as any).packUnit,
+    packSize: (products as any).packSize,
+  }).from(products).where(eq(products.id, Number(productId)));
+  return p ? toBaseQty(n, unit, p as any) : n;
+}
+
+export function resolveBaseQty(baseQty: any, qty: any): number {
+  if (baseQty !== null && baseQty !== undefined && baseQty !== "") {
+    const pinned = Number(baseQty);
+    if (Number.isFinite(pinned)) return pinned;
+  }
+  const entered = Number(qty);
+  return Number.isFinite(entered) ? entered : 0;
+}
+
 /** Cost of a sold line. Prefers the snapshot frozen at the moment of sale;
  *  falls back to the product CURRENT cost only for rows written before the
  *  cost_at_sale column existed. Never returns NaN.
@@ -2816,6 +2878,23 @@ export function resolveItemCost(costAtSale: any, currentCost: any): number {
 
 /** Current cost of every referenced product, keyed by id. Read at WRITE time so
  *  the cost that applied at sale is what gets stored on the line. */
+/** The pack setup of every referenced product, keyed by id. Read at WRITE time so
+ *  the base quantity frozen on a line reflects the pack size that applied then. */
+async function snapshotPacks(
+  items: Array<{ productId?: any }>,
+): Promise<Record<number, { unit: string | null; packUnit: string | null; packSize: any }>> {
+  const ids = Array.from(new Set(
+    (items || []).map((i) => Number(i?.productId)).filter((n) => Number.isFinite(n) && n > 0)));
+  if (!ids.length) return {};
+  const rows = await db.select({
+    id: products.id, unit: products.unit,
+    packUnit: (products as any).packUnit, packSize: (products as any).packSize,
+  }).from(products).where(inArray(products.id, ids));
+  const out: Record<number, any> = {};
+  for (const r of rows as any[]) out[r.id] = { unit: r.unit, packUnit: r.packUnit, packSize: r.packSize };
+  return out;
+}
+
 async function snapshotCosts(items: Array<{ productId?: any }>): Promise<Record<number, string>> {
   const ids = Array.from(new Set(
     (items || []).map((i) => Number(i?.productId)).filter((n) => Number.isFinite(n) && n > 0)));
@@ -3141,6 +3220,7 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
   const items: DocumentItem[] = [];
   if (req.items.length > 0) {
     const costSnap = await snapshotCosts(req.items as any[]);
+    const packSnap = await snapshotPacks(req.items as any[]);
     const inserted = await db.insert(documentItems).values(
       req.items.map(item => ({
         documentId: doc.id,
@@ -3154,6 +3234,10 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
         costAtSale: costSnap[Number(item.productId)] ?? null,
+        // 2 BOX of 12 is stored as qty 2 for the printed document, baseQty 24 for
+        // the shelf. Frozen now, so a later pack-size change cannot rewrite it.
+        baseQty: String(toBaseQty(
+          item.qty, item.unit, packSnap[Number(item.productId)] ?? { unit: item.unit })),
         locationStoreId: (item as any).locationStoreId ?? null,
       }))
     ).returning();
@@ -3186,9 +3270,13 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
         // Non-product line (custom description) — no stock to split.
         continue;
       }
-      const totalQty = parseFloat(String(item.qty));
-      const preferredLoc = (item as any).locationStoreId ?? invoiceStoreId;
+      // A line sold in the bigger unit moves the base quantity: 2 BOX of 12 takes
+      // 24 pieces off the shelf, not 2. Converted here, once, so both deduction
+      // paths below and the pick note all speak the same language.
       const insertedItem = items[idx];
+      const totalQty = resolveBaseQty(
+        (insertedItem as any)?.baseQty, parseFloat(String(item.qty)));
+      const preferredLoc = (item as any).locationStoreId ?? invoiceStoreId;
 
       if (preferredLoc && sameOwnerIds.length <= 1) {
         // Single location — deduct directly (backward compat for simple setups).
@@ -3482,6 +3570,7 @@ export async function updateDocumentItems(documentId: number, items: Omit<Insert
   await db.delete(documentItems).where(eq(documentItems.documentId, documentId));
   if (items.length > 0) {
     const costSnap = await snapshotCosts(items as any[]);
+    const packSnap = await snapshotPacks(items as any[]);
     await db.insert(documentItems).values(
       items.map(item => ({
         documentId,
@@ -3495,6 +3584,8 @@ export async function updateDocumentItems(documentId: number, items: Omit<Insert
         discountAmount: String(item.discountAmount || "0"),
         amount: String(item.amount),
         costAtSale: costSnap[Number(item.productId)] ?? null,
+        baseQty: String(toBaseQty(
+          item.qty, item.unit, packSnap[Number(item.productId)] ?? { unit: item.unit })),
         locationStoreId: (item as any).locationStoreId ?? null,
       }))
     );
@@ -3539,7 +3630,7 @@ export async function voidDocument(id: number, userId?: number): Promise<{ ok: b
   // 1. Reverse inventory — add each sold line back to its store.
   if (doc.storeId) {
     for (const it of (doc.items || [])) {
-      if (it.productId) await adjustStock(it.productId, doc.storeId, parseFloat(String(it.qty || 0)), "void", "Invoice void", id, userId);
+      if (it.productId) await adjustStock(it.productId, doc.storeId, resolveBaseQty((it as any).baseQty, it.qty), "void", "Invoice void", id, userId);
     }
   }
 
@@ -4462,7 +4553,8 @@ export async function reverseReturnApproval(id: number, reason: string, userId?:
   if (ret.storeId) {
     for (const it of (ret.items || []) as any[]) {
       if (it.productId) {
-        await adjustStock(Number(it.productId), Number(ret.storeId), -Number(it.qty || 0),
+        await adjustStock(Number(it.productId), Number(ret.storeId),
+          -(await baseQtyFor(Number(it.productId), it.qty, it.unit)),
           "correction", `Return ${ret.voucherNumber} approval reversed`, ret.originalInvoiceId ?? undefined, userId);
       }
     }
@@ -4691,7 +4783,8 @@ export async function approveReturn(id: number, userId?: number, refundMethodOve
     for (const it of (ret.items || []) as any[]) {
       if (it.productId) {
         await adjustStock(
-          Number(it.productId), Number(storeId), Number(it.qty || 0),
+          Number(it.productId), Number(storeId),
+          await baseQtyFor(Number(it.productId), it.qty, it.unit),
           "return", `Return ${ret.voucherNumber} approved${ret.originalInvoiceNumber ? ` vs ${ret.originalInvoiceNumber}` : ""}`,
           ret.originalInvoiceId ?? undefined, userId,
         );
@@ -5465,18 +5558,25 @@ export async function quickGoodsReceipt(data: {
       byName.set(String(product.name).toUpperCase(), product);
     }
 
+    // A delivery entered in the bigger unit is converted here, once: 10 BOX of 12
+    // becomes 120 pieces, and QAR 120 a box becomes QAR 10 a piece. Entering a box
+    // price against a piece is how a whole catalogue's margins go wrong.
+    const enteredUnit = it.unit || product.unit || "PCS";
+    const factor = unitFactor(enteredUnit, product as any);
     lines.push({
       productId: product.id,
       name: product.name,
-      qty: Number(it.qty),
-      unit: it.unit || product.unit || "PCS",
-      cost: it.cost !== undefined && it.cost !== null ? Number(it.cost) : Number(product.costPrice || 0),
+      qty: Number(it.qty) * factor,
+      unit: product.unit || "PCS",
+      cost: it.cost !== undefined && it.cost !== null
+        ? toBaseCost(it.cost, enteredUnit, product as any)
+        : Number(product.costPrice || 0),
     });
 
     // Refresh the standing cost when this delivery came in at a different price.
     if (data.updateCost !== false && it.cost !== undefined && it.cost !== null) {
       const from = Number(product.costPrice || 0);
-      const to = Number(it.cost);
+      const to = toBaseCost(it.cost, enteredUnit, product as any);
       if (Number.isFinite(to) && Math.abs(to - from) > 0.005) {
         await updateProduct(product.id, { costPrice: String(to) } as any);
         costsUpdated.push({ id: product.id, name: product.name, from, to });
@@ -5547,8 +5647,11 @@ export async function receiveSupplierOrderItems(
     if (take <= 0) continue;
     line.receivedQty = already + take;
     if (line.productId) {
-      await adjustStock(Number(line.productId), storeId, take, "purchase",
-        `PO ${order.poNumber || id} receipt`, id, userId);
+      // 10 BOX received puts 120 PCS on the shelf. The order keeps its own units.
+      const inBase = await baseQtyFor(Number(line.productId), take, line.unit);
+      await adjustStock(Number(line.productId), storeId, inBase, "purchase",
+        `PO ${order.poNumber || id} receipt${inBase !== take ? ` (${take} ${String(line.unit).toUpperCase()})` : ""}`,
+        id, userId);
     }
   }
 
@@ -5605,7 +5708,8 @@ export async function createSupplierReturn(data: {
   if (data.returnType === "initiated" && data.storeId) {
     for (const it of data.items || []) {
       if (it.productId) {
-        await adjustStock(Number(it.productId), Number(data.storeId), -Number(it.qty || 0),
+        await adjustStock(Number(it.productId), Number(data.storeId),
+          -(await baseQtyFor(Number(it.productId), it.qty, (it as any).unit)),
           "supplier_return", `Supplier return #${row.id}`, undefined, data.createdBy);
       }
     }
