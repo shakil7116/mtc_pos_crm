@@ -693,7 +693,9 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       const { pin, passwordHash, tokenVersion, failedAttempts, lockedUntil, ...safe } = row;
       res.status(201).json(safe);
     } catch (err) {
-      res.status(500).json({ message: String(err) });
+      // A taken username or a rejected PIN is the caller's to fix, and the screen
+      // shows this text — a 500 with a stringified error told the owner nothing.
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
@@ -753,16 +755,35 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   // SETUP / ONBOARDING (no auth required)
   // ══════════════════════════════════════════════════════════════
 
+  // What state is this copy of the app in? The very first screen asks this before
+  // it decides between "sign in" and "set yourself up as the owner", so it must
+  // answer even when NOTHING is set up yet — including when the tables do not
+  // exist. A 500 here on a fresh install used to send the owner to a login screen
+  // for an account that had never been created.
   app.get("/api/setup/status", async (_req: Request, res: Response) => {
+    let dbReady = true;
+    let adminCount = 0;
     try {
       const adminUsers = await db.select({ id: users.id }).from(users).where(eq(users.role, "admin"));
-      let setupComplete = false;
+      adminCount = adminUsers.length;
+    } catch {
+      dbReady = false;   // no database, or the schema has never been pushed
+    }
+
+    let setupComplete = false;
+    if (dbReady) {
       try {
         const rows = await db.execute(sql`SELECT setup_complete FROM settings LIMIT 1`);
         setupComplete = !!(rows as any)?.rows?.[0]?.setup_complete;
       } catch { /* column may not exist yet — treat as not complete */ }
-      res.json({ setupComplete, hasAdmin: adminUsers.length > 0 });
-    } catch (err) { res.status(500).json({ message: String(err) }); }
+    }
+
+    res.json({
+      setupComplete,
+      hasAdmin: adminCount > 0,
+      dbReady,
+      ...(dbReady ? {} : { message: "The database is not ready yet. Set DATABASE_URL in .env, then run: npm run db:push" }),
+    });
   });
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {

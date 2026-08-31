@@ -758,3 +758,51 @@ products, two quantities, one line saying why, with the value gap worked out as
 you type.
 
 Verified 26/26 against the live database.
+
+---
+
+## 2026-08-31 — The first admin, on a machine with nothing on it
+
+A fresh copy — downloaded, cloned, or restored onto a new computer — has no accounts
+in it. Somebody has to be able to walk up to it once and become the owner, and then
+create everyone else. The setup screen already existed; three things in it did not
+work, and all three only show up on a genuinely empty install, which is why they
+survived.
+
+**The owner was never told their username.** The screen asked for an email and
+silently derived the username from the part before the `@`. The sign-in screen asks
+for a **username**. So the owner finished setup, logged out, and could not get back
+into their own system — they had never been shown the thing to type. The username is
+now chosen on the form (suggested from the email, editable), and printed on the last
+screen under "Write this down".
+
+**The team step silently created nobody.** It posted a name, a username and a random
+PIN. `createUser` requires a starting password, so every one of those calls failed —
+and the screen never read the response, so it moved straight on to "You're all set!"
+with an empty staff list. Each member now takes a starting password, failures are
+listed by name, and `POST /api/users` answers 400 with the real reason instead of a
+stringified 500.
+
+**A PIN nobody is told, for anyone who must set their own.** The owner already got
+one; staff now do too. `createUser` picks a temporary unique PIN when none is given
+and `mustChangePin` is set. The alternative — the owner inventing PINs for staff —
+puts the digits that sign off someone's approvals in a second person's head.
+
+**Same rules on both sides of the wire.** Password strength moved to
+`shared/password.ts` and the account rules to `shared/setup.ts`, so the screen runs
+the exact functions the server runs. A rule that lives only on the server rejects the
+form after the password fields have already been cleared. The first admin was also
+the one account exempt from the strength rules — the most powerful one in the
+business. It is not exempt now.
+
+**Two dead ends closed.** `/api/setup/status` used to 500 when the tables did not
+exist, and the screen read that as "set up already" and showed a login for an account
+that had never been created; it now answers `dbReady: false` and the app says to set
+`DATABASE_URL` and run `npm run db:push`. And the first-run gate now turns on
+`hasAdmin` alone rather than `hasAdmin && setupComplete`: a copied database carrying
+`setup_complete` but no admin row left the owner locked out of an empty system.
+
+`scripts/create-admin.mjs` is the way in when a browser is not — headless box, or an
+admin row lost in a restore. It refuses while an active admin exists, so it is a
+first-run tool and not a back door. `references/first-run.md` is the whole path from
+`git clone` to a working login.

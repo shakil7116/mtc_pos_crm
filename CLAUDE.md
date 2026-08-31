@@ -30,6 +30,7 @@ npm run test:watch    # vitest in watch mode
 npm run test:live     # read-only smoke test against the REAL db (not in the gate)
 npm run backup        # full verified backup -> backups/ (see BACKUP.md)
 npm run backup:restore-check   # dry-run a restore; writes nothing
+node scripts/create-admin.mjs  # first admin on a fresh copy, from the terminal
 ```
 
 Tests never touch the database. `tests/setup.ts` deletes `DATABASE_URL`, so an
@@ -56,6 +57,7 @@ Documentation:
 - `CLAUDE.md` — this file. Conventions and landmines. Read first.
 - `connections.md` — every external system, what breaks without it.
 - `BACKUP.md` — how to back up and restore the database. Read it BEFORE you need it.
+- `references/first-run.md` — a fresh copy on a new machine: env, schema, first admin.
 - `decisions/log.md` — why things are the way they are. Log decisions here.
 - `references/` — the master spec, per-page status audit, go-live checklist.
 - `archives/` — Jul 2026 session logs. History only, NOT current truth.
@@ -153,6 +155,19 @@ location with ZERO references; one with history stays hidden for good.
 `POST /api/stores/:id/erase` is the destructive path: preview → typed name → an
 automatic backup → one transaction → a 25,000-row cap. Optional links are cleared,
 required links go with the row. Do not loosen any of those five gates.
+
+**The first admin is created once, then that door shuts.** A fresh copy has no
+accounts, so `POST /api/auth/register` is open — until one admin exists, after which
+it answers 409 for ever and every other account is created by that admin. Sign-in is
+by **username**, never email: the owner picks theirs on the setup screen and it is
+printed back to them on the last one, because the version that derived it silently
+from the email locked the owner out the first time they logged out. Anyone told to
+set their own PIN (`mustChangePin`) and given none gets a temporary unique one from
+`generateUnusedPin` that nobody is ever shown — the owner must not know the digits
+that sign off a salesman's approvals. Rules live in `shared/setup.ts` and
+`shared/password.ts` so the screen and the server run the same functions.
+`scripts/create-admin.mjs` does the same job from a terminal and refuses once an
+active admin exists.
 
 **Roles.** Five: `admin`, `manager`, `worker`, `salesman`, `driver`. Manager sees the
 same dashboard as admin. Salesman and worker share `SalesmanDashboard.tsx`, store-scoped.

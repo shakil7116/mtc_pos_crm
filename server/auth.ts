@@ -11,6 +11,8 @@ import { eq } from "drizzle-orm";
 import { normalizeRole } from "@shared/permissions";
 import { createNotification } from "./storage";
 import { hashPin, pinMatches } from "./pin";
+import { passwordProblem } from "@shared/password";
+import { normalizeUsername, ownerAccountProblem, suggestUsername } from "@shared/setup";
 
 const COOKIE_BASE = "mtc_token";
 const COOKIE = process.env.COOKIE_SUFFIX ? `${COOKIE_BASE}_${process.env.COOKIE_SUFFIX}` : COOKIE_BASE;
@@ -22,17 +24,11 @@ const LOCK_MINUTES = 10;
 // ── Password strength ────────────────────────────────────────────────────────
 // The per-account lockout stops guessing a *specific* account; this stops staff
 // from setting a weak/known password in the first place. Applied on every change.
-const WEAK_PASSWORDS = new Set([
-  "test123", "test1234", "password", "password1", "passw0rd", "12345678", "123456789",
-  "1234567890", "qwerty123", "11111111", "00000000", "abc12345", "admin123", "welcome1",
-  "iloveyou", "letmein1", "changeme", "mtc12345",
-]);
+// The rules themselves live in shared/password.ts so the setup and change-password
+// SCREENS can apply exactly the same ones before they submit.
 export function assertStrongPassword(pw: string, username?: string): void {
-  const p = String(pw || "");
-  if (p.length < 8) throw new Error("Password must be at least 8 characters.");
-  if (WEAK_PASSWORDS.has(p.toLowerCase())) throw new Error("That password is too common — pick something harder to guess.");
-  if (username && p.toLowerCase() === String(username).toLowerCase()) throw new Error("Password must be different from the username.");
-  if (!/[a-zA-Z]/.test(p) || !/[0-9]/.test(p)) throw new Error("Password must include both letters and numbers.");
+  const problem = passwordProblem(pw, username);
+  if (problem) throw new Error(problem);
 }
 
 // ── Login rate limiter (per IP) ──────────────────────────────────────────────
@@ -249,34 +245,68 @@ export async function recoverPassword(usernameRaw: string, pin: string, newPassw
   };
 }
 
-/** Register the first admin account during onboarding. Only works when no admin exists yet. */
-export async function registerOwner(data: { name: string; email: string; password: string }, res: Response) {
+/** Register the very first admin account — the ONLY account that can be created
+ *  without already being signed in as an admin.
+ *
+ *  Three things this has to get right, because a fresh install has nobody to ask:
+ *
+ *  1. It closes for good. The moment one admin exists this returns 409, so the
+ *     open door on a brand-new copy is not an open door on a running business.
+ *  2. The owner CHOOSES and IS TOLD their username. Sign-in is by username, not
+ *     email. This used to derive one silently from the email and never show it,
+ *     which locked the owner out of their own system the first time they logged
+ *     out. The username comes back in the response so the screen can print it.
+ *  3. The first admin gets the same password rules as everyone else. It is the
+ *     most powerful account in the business; it was the only one exempt. */
+export async function registerOwner(
+  data: { name: string; email: string; username?: string; password: string },
+  res: Response,
+) {
   const existing = await db.select().from(users).where(eq(users.role, "admin"));
-  if (existing.length > 0) return { ok: false as const, status: 409, message: "An admin account already exists." };
-  if (!data.email?.includes("@")) return { ok: false as const, status: 400, message: "Valid email required." };
-  if (String(data.password || "").length < 8) return { ok: false as const, status: 400, message: "Password must be at least 8 characters." };
+  if (existing.length > 0) return { ok: false as const, status: 409, message: "An admin account already exists. Ask that admin to create your account." };
 
-  const username = data.email.split("@")[0].toLowerCase().replace(/[^a-z0-9._-]/g, "");
-  const [u] = await db.insert(users).values({
-    name: data.name.trim(),
-    email: data.email.trim().toLowerCase(),
-    username,
-    role: "admin",
-    // The owner is given a random PIN they are never told, so it is useless to
-    // them: they could not approve a discount with it and — worse — could not use
-    // "Forgot password?", which needs the PIN. mustChangePin sends them straight
-    // to the Set PIN screen so the very first admin has a PIN they actually know.
-    pinHash: hashPin(String(Math.floor(1000 + Math.random() * 9000))),
-    passwordHash: bcrypt.hashSync(data.password, 10),
-    mustChangePassword: false,
-    mustChangePin: true,
-    tokenVersion: 0,
-  }).returning();
+  const name = String(data?.name ?? "").trim();
+  const email = String(data?.email ?? "").trim().toLowerCase();
+  const username = normalizeUsername(data?.username || suggestUsername(email));
+  const password = String(data?.password ?? "");
 
-  const token = signToken({ id: u.id, role: u.role, storeId: u.storeId ?? null, tokenVersion: u.tokenVersion });
-  setTokenCookie(res, token);
+  const problem = ownerAccountProblem({ name, email, username, password });
+  if (problem) return { ok: false as const, status: 400, message: problem };
+
+  const clash = await db.select({ id: users.id }).from(users).where(eq(users.username, username));
+  if (clash.length) return { ok: false as const, status: 409, message: `Username "${username}" is already taken — choose another.` };
+
+  let u;
+  try {
+    [u] = await db.insert(users).values({
+      name,
+      email,
+      username,
+      role: "admin",
+      // The owner is given a random PIN they are never told, so it is useless to
+      // them: they could not approve a discount with it and — worse — could not use
+      // "Forgot password?", which needs the PIN. mustChangePin sends them straight
+      // to the Set PIN screen so the very first admin has a PIN they actually know.
+      pinHash: hashPin(String(Math.floor(1000 + Math.random() * 9000))),
+      passwordHash: bcrypt.hashSync(password, 10),
+      mustChangePassword: false,
+      mustChangePin: true,
+      tokenVersion: 0,
+    }).returning();
+  } catch (err) {
+    // Two setup screens open at once, or a username that slipped past the check a
+    // moment ago: the database's own unique index is the last word. Say what to do
+    // rather than showing a raw constraint error.
+    return { ok: false as const, status: 409, message: `Could not create that account — the username "${username}" may already be taken. Try another.` };
+  }
+
+  const token = signToken({ id: u.id, role: u.role, storeId: u.storeId ?? null, tokenVersion: u.tokenVersion }, false);
+  setTokenCookie(res, token, false);
   return {
     ok: true as const,
-    user: { id: u.id, name: u.name, role: u.role, storeId: u.storeId ?? null, mustChangePassword: false, mustChangePin: true },
+    user: {
+      id: u.id, name: u.name, username: u.username, role: u.role, storeId: u.storeId ?? null,
+      mustChangePassword: false, mustChangePin: true,
+    },
   };
 }

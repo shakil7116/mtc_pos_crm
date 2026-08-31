@@ -84,13 +84,15 @@ class ChunkErrorBoundary extends Component<{ children: ReactNode }, { failed: bo
 function ProtectedApp() {
   const { user, loading } = useAuth();
   const [location, navigate] = useLocation();
-  const [setupStatus, setSetupStatus] = useState<{ setupComplete: boolean; hasAdmin: boolean } | null>(null);
+  const [setupStatus, setSetupStatus] = useState<{ setupComplete: boolean; hasAdmin: boolean; dbReady: boolean } | null>(null);
 
   useEffect(() => {
     fetch("/api/setup/status")
       .then(r => { if (!r.ok) throw new Error(); return r.json(); })
-      .then(d => setSetupStatus({ setupComplete: !!d.setupComplete, hasAdmin: !!d.hasAdmin }))
-      .catch(() => setSetupStatus({ setupComplete: true, hasAdmin: true }));
+      .then(d => setSetupStatus({ setupComplete: !!d.setupComplete, hasAdmin: !!d.hasAdmin, dbReady: d.dbReady !== false }))
+      // Server unreachable: assume a running system rather than offering to create
+      // a second owner. Login will fail with its own message.
+      .catch(() => setSetupStatus({ setupComplete: true, hasAdmin: true, dbReady: true }));
   }, []);
 
   // Role-based route guard: if this role can't access the current module, bounce home.
@@ -101,7 +103,29 @@ function ProtectedApp() {
   }, [denied, user, navigate]);
 
   if (loading || !setupStatus) return <div className="min-h-screen flex items-center justify-center text-sm text-muted-foreground">Loading…</div>;
-  if (!setupStatus.setupComplete && !setupStatus.hasAdmin) return <Onboarding />;
+
+  // No database yet — a fresh copy on a new machine. Say what to do; a login screen
+  // here is a dead end, because there is nothing to log in to.
+  if (!setupStatus.dbReady) return (
+    <div className="min-h-screen flex items-center justify-center p-6 bg-[#0a0f1e] text-white">
+      <div className="max-w-md text-center space-y-3">
+        <h1 className="text-2xl font-bold">Database not ready</h1>
+        <p className="text-sm text-white/60">This copy of MTC POS has no database behind it yet.</p>
+        <ol className="text-sm text-white/60 text-left list-decimal pl-5 space-y-1">
+          <li>Copy <code className="text-blue-300">.env.example</code> to <code className="text-blue-300">.env</code></li>
+          <li>Set <code className="text-blue-300">DATABASE_URL</code> and <code className="text-blue-300">JWT_SECRET</code></li>
+          <li>Run <code className="text-blue-300">npm run db:push</code></li>
+          <li>Restart the server and reload this page</li>
+        </ol>
+        <button onClick={() => window.location.reload()} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold mt-2">Try again</button>
+      </div>
+    </div>
+  );
+
+  // Nobody has ever been an admin here → first run, whatever the setup flag says.
+  // The flag alone was not enough: a copied database with setup_complete set but no
+  // admin row left the owner staring at a login for an account that did not exist.
+  if (!setupStatus.hasAdmin) return <Onboarding />;
   if (!user) return <Login />;
   if (user.mustChangePassword) return <Login />; // Login renders the forced change-password step
   if (user.mustChangePin) return <SetPin />;     // forced PIN reset before the app loads

@@ -907,7 +907,14 @@ export async function createUser(
 
   // Same PIN rules as changing one later. A PIN approves discounts, so two people
   // sharing one makes every approval unattributable.
-  const pin = String(patch.pin || "").trim();
+  //
+  // No PIN given AND they are being told to set one on first login (mustChangePin)
+  // is the one case where the machine picks: a temporary PIN nobody is told, which
+  // exists only so the account is valid until they choose their own. That is how
+  // the first-run setup screen adds staff — the owner has no business inventing a
+  // PIN for someone else, since the PIN is what signs off THEIR approvals.
+  let pin = String(patch.pin || "").trim();
+  if (!pin && patch.mustChangePin) pin = await generateUnusedPin();
   const pinIssue = pinProblem(pin);
   if (pinIssue) throw new Error(pinIssue);
   if (await pinAlreadyTaken(pin)) {
@@ -1060,6 +1067,18 @@ export async function verifyUserPin(userId: number, pin: string): Promise<boolea
 async function pinAlreadyTaken(pin: string, exceptUserId?: number): Promise<boolean> {
   const rows = await db.select({ id: users.id, pinHash: users.pinHash }).from(users);
   return rows.some((r) => r.id !== exceptUserId && pinMatches(pin, r.pinHash));
+}
+
+/** A temporary PIN for an account that must set its own before it can be used.
+ *  Random, acceptable by the same rules staff are held to, and not already in use.
+ *  Nobody is told this number — it is replaced on the holder's first login. */
+async function generateUnusedPin(): Promise<string> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+    if (pinProblem(candidate)) continue;
+    if (!(await pinAlreadyTaken(candidate))) return candidate;
+  }
+  throw new Error("Could not find a free PIN — too many staff share the small pool. Set one by hand.");
 }
 
 // A staff member sets their own PIN. Must be non-trivial and unique across staff,
