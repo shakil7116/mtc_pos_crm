@@ -90,6 +90,18 @@ print path) and `client/src/pages/DocumentEditor.tsx` (editor preview). Change o
 mirror the other. `min-height: 272mm` + `height: auto` + `@page { size: A4 }` is what
 pins the totals block to the bottom of the page. Do not "simplify" it.
 
+**A transfer is received with what ARRIVED, and shortages are money.**
+`receiveTransfer` takes `lines: [{id, receivedQty}]` and adds ONLY that to the
+destination. It used to add the quantity sent, which turned every short delivery
+into phantom stock — the reason a location comes out ~30% short when emptied. The
+gap is written to `stock_losses` (quantity AND value, at `linePrice || productCost`,
+since a same-owner transfer is priced at 0 but a lost bag still cost money), with a
+mandatory reason, the receiver and the sender, and an admin notification. A line
+with no counted quantity means "arrived in full", so one-click receipt still works.
+`shared/stockLoss.ts` holds the maths — screen and server both read it, and they
+must never disagree. `stock_losses` is append-only: correct a loss by recording the
+opposite, never by editing. Stock counts and damage are meant to write here too.
+
 **Deleting a location hides it; erasing is a separate, fenced action.**
 `DELETE /api/stores/:id` stamps `deleted_at` — the row stays, leaves every list, and
 is undoable for one day (`shared/undo.ts`, `POST /api/stores/:id/restore`). A store

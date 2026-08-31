@@ -506,3 +506,49 @@ photo only when it actually changes.
 route, not re-embedding the data URL in a list response. Changing another admin's
 photo still asks for your own password — the server's admin-on-admin rule covers
 every field, and it was not worth carving out an exception for a picture.
+
+---
+
+## 2026-08-31 — Receiving a transfer with what actually arrived
+
+**Where this came from.** The owner asked what happens when a store or warehouse
+closes: the stock has to be sold off or moved, but roughly **30% of what the
+system says is there cannot be found**. Not theft — mistakes, breakage, and
+informal swaps (somebody needed white, exchanged it for white bought earlier,
+same unit and same price, never went through the system).
+
+A full audit of 23 building-materials scenarios followed. Eight were handled
+properly, seven half, eight not at all — and they all reduced to one sentence:
+**the system counts materials and never counts what the missing ones were worth.**
+
+**The worst single hole, fixed first.** Receiving a transfer added the quantity
+that was SENT. 100 bags leave, 70 arrive, the destination is credited with 100 —
+so 30 phantom bags sit in the reports until somebody counts that shelf months
+later and records a mystery variance with no money attached. This is the direct
+manufacturing process for the 30%.
+
+Receipt now counts. `lines: [{id, receivedQty}]`, only what arrived lands in
+stock, and the difference becomes a row in the new `stock_losses` table: quantity,
+unit cost, value, kind, mandatory reason, who received it, who sent it. An admin
+is notified without opening the transfer list. A line nobody counted is taken as
+arriving in full, so the ordinary case is still one click.
+
+**Three judgements worth keeping:**
+
+- **The value falls back to product cost.** A same-owner transfer is priced at
+  zero — moving your own stock between your own buildings earns nothing. But a bag
+  lost on that trip cost exactly as much as one lost on a cross-owner trip, so the
+  loss is valued at `linePrice || productCost`, never zero.
+- **No reason, no receipt.** A shortage with no note is just a smaller number. The
+  message names the quantity AND the value, because "30 missing" and "QAR 420 gone"
+  land differently.
+- **More than was sent is refused.** If extra turned up it belongs on its own
+  transfer — silently accepting it would invent stock.
+
+`stock_losses` is append-only and deliberately generic: `kind` covers
+`transfer_shortage`, `count_variance`, `damage` and `write_off`. Stock counts and
+damage write into the same table next, which is what finally lets Finance say what
+material losses cost this month.
+
+Verified 23/23 against the live database, including that a full receipt still
+behaves exactly as it did and invents no loss.

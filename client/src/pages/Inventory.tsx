@@ -65,6 +65,7 @@ import ImportProductsCsv from "@/components/ImportProductsCsv";
 import GoodsReceiptDialog from "@/components/GoodsReceiptDialog";
 import StockCountDialog from "@/components/StockCountDialog";
 import TransferVoucher from "@/components/TransferVoucher";
+import TransferReceiveDialog from "@/components/TransferReceiveDialog";
 
 /* ─────────────────────────────────────────
    Types
@@ -2096,11 +2097,20 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "Action failed");
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ["/api/transfers"] });
       qc.invalidateQueries({ queryKey: ["/api/transfers/settlement"] }); // net owed changes on receive/return/cancel
       qc.invalidateQueries({ queryKey: ["/api/inventory"] });
       qc.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
+      qc.invalidateQueries({ queryKey: ["/api/stock-losses"] });
+      // A short receipt must never look like a clean one.
+      if (res?.shortage) {
+        toast({
+          title: `Received short - ${res.totalShort} item(s) missing`,
+          description: `Recorded as a loss of QAR ${Number(res.lossValue || 0).toFixed(2)}. An admin has been notified.`,
+          variant: "destructive",
+        });
+      }
     },
     onError: (e: any) => toast({ title: "Failed", description: String(e?.message || ""), variant: "destructive" }),
   });
@@ -2225,7 +2235,7 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         )}
       </div>
       <TransferVoucher transfer={voucher} onClose={() => setVoucher(null)} />
-      <ReceiveConfirmDialog
+      <TransferReceiveDialog
         transfer={receiveT}
         currentUserName={user?.name || ""}
         pending={act.isPending}
@@ -2241,70 +2251,6 @@ function TransfersTab({ isAdmin, stores, products, onNew }: { isAdmin: boolean; 
         reverseTransfer={reverseT || undefined}
       />
     </div>
-  );
-}
-
-// Confirm-receipt dialog. Default = on-system (our own staff took delivery, one click).
-// For an off-system store, pick how they confirmed (signature/WhatsApp/phone) and name them.
-const CONFIRM_METHODS: { key: string; label: string }[] = [
-  { key: "on-system", label: "Our staff (on-system)" },
-  { key: "signature", label: "Signed voucher" },
-  { key: "whatsapp", label: "WhatsApp" },
-  { key: "phone", label: "Phone" },
-];
-function ReceiveConfirmDialog({
-  transfer, currentUserName, pending, onClose, onConfirm,
-}: {
-  transfer: any | null;
-  currentUserName: string;
-  pending: boolean;
-  onClose: () => void;
-  onConfirm: (body: { method: string; externalReceiver?: string }) => void;
-}) {
-  const [method, setMethod] = useState("on-system");
-  const [name, setName] = useState("");
-  useEffect(() => { if (transfer) { setMethod("on-system"); setName(""); } }, [transfer]);
-  if (!transfer) return null;
-  const offSystem = method !== "on-system";
-  const canSubmit = !offSystem || name.trim().length > 0;
-
-  return (
-    <Dialog open={!!transfer} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Confirm receipt — {transfer.number}</DialogTitle></DialogHeader>
-        <div className="space-y-4 py-1">
-          <p className="text-xs text-muted-foreground">
-            {transfer.fromStore} → <b>{transfer.toStore}</b>. Records who took delivery and how it was confirmed.
-          </p>
-          <div>
-            <Label className="text-xs">How was receipt confirmed?</Label>
-            <div className="grid grid-cols-2 gap-1.5 mt-1">
-              {CONFIRM_METHODS.map((m) => (
-                <button key={m.key} type="button" onClick={() => setMethod(m.key)}
-                  className={cn("text-xs rounded-md border px-2 py-1.5 text-left", method === m.key ? "border-[#1e2a3a] bg-[#1e2a3a] text-white" : "border-border hover:bg-muted")}>
-                  {m.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          {offSystem ? (
-            <div>
-              <Label className="text-xs">Received by (name at destination) <span className="text-destructive">*</span></Label>
-              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Who signed / replied for the goods" className="h-9" />
-            </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground">Will record <b>{currentUserName || "you"}</b> as the receiver.</p>
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose} disabled={pending}>Cancel</Button>
-          <Button className="bg-green-600 text-white" disabled={pending || !canSubmit}
-            onClick={() => onConfirm(offSystem ? { method, externalReceiver: name.trim() } : { method: "on-system" })}>
-            {pending ? "Saving…" : "Confirm receipt"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 
