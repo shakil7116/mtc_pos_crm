@@ -723,3 +723,38 @@ place with stock in it. Switching one back ON stays a plain toggle.
 Verified 25/25 against the live database, including the blockers, the real transfer
 voucher, the QAR 420 write-off on 30 missing bags, and nothing being able to trade
 through the closed location afterwards.
+
+---
+
+## 2026-08-31 — The swap, in one action
+
+The owner's own example, and the one that has no home anywhere in a normal POS: a
+customer needs white, somebody hands over the white bought earlier — same size,
+same price — and it never goes through the system. Nothing was sold, so nothing
+was recorded. Months later one product is short and another is over, and nobody
+alive can connect them. Two wrong shelves instead of one honest swap, and the
+reorder buys the wrong colour.
+
+**One record, both halves.** `stock_swaps` holds what went out and what came in,
+and both stock movements carry its id, so either side leads to the other for ever.
+
+**Three judgements:**
+
+- **Not admin-only.** Every other control this week got tighter; this one is
+  deliberately open to salesman and worker as well. Gating it to the owner
+  guarantees staff keep swapping quietly, which is the entire problem. The act
+  itself is safe — both halves move together.
+- **The difference is what is policed, not the act.** Cement swapped for a tin of
+  paint is theft with extra steps. A gap of `stockLossAlertValue` or more (QAR 250
+  by default) becomes an approval request and NOTHING moves until it is agreed.
+  Both directions: an unexplained gain is as much a question as a loss.
+- **Every non-zero difference lands in the loss ledger** as a signed
+  `swap_difference`, so swapping down and swapping back cancel out and the month's
+  figure is what the exchanges really cost.
+
+Swapping a product for itself is refused, pointing at the stocktake — that is a
+correction, not a swap. And the screen has to be FASTER than not using it: two
+products, two quantities, one line saying why, with the value gap worked out as
+you type.
+
+Verified 26/26 against the live database.

@@ -102,6 +102,16 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**A swap is one record with both halves in it.** `recordSwap` writes a `stock_swaps`
+row and BOTH stock movements carrying its id as `referenceId`, so the pair can never
+be read as two unrelated mysteries at the next count. Deliberately open to
+admin/manager/salesman/worker — gating it to the owner guarantees staff keep swapping
+off-system, which is the whole problem. The act is safe (both halves move together);
+the DIFFERENCE in value is what can hide something, so a gap ≥
+`settings.stockLossAlertValue` becomes a `stock_swap` approval request instead, and
+any non-zero difference is a signed `swap_difference` row in the loss ledger.
+Swapping a product for itself is refused — that is a stocktake, not a swap.
+
 **Closing a location is a procedure, not a switch.** `getClosurePlan` says what is
 inside and what blocks it (transfers in progress, supplier orders still due, owned
 warehouses); `closeLocation` counts each line, moves what is found out as ONE real

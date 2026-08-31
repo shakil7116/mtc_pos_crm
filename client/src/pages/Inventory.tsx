@@ -65,6 +65,7 @@ import ImportProductsCsv from "@/components/ImportProductsCsv";
 import GoodsReceiptDialog from "@/components/GoodsReceiptDialog";
 import StockCountDialog from "@/components/StockCountDialog";
 import DamageDialog from "@/components/DamageDialog";
+import SwapDialog from "@/components/SwapDialog";
 import TransferVoucher from "@/components/TransferVoucher";
 import TransferReceiveDialog from "@/components/TransferReceiveDialog";
 
@@ -2388,6 +2389,7 @@ export default function Inventory() {
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [countOpen, setCountOpen] = useState(false);
   const [damageOpen, setDamageOpen] = useState(false);
+  const [swapOpen, setSwapOpen] = useState(false);
   const [transferOpen, setTransferOpen] = useState(false);
   const [transferPrefill, setTransferPrefill] = useState<{ productId?: number; fromStoreId?: number } | undefined>(undefined);
 
@@ -2443,6 +2445,10 @@ export default function Inventory() {
             <FileText className="w-4 h-4" />
             Export CSV
           </Button>
+          <Button variant="outline" onClick={() => setSwapOpen(true)} className="gap-2 rounded-lg">
+            <ArrowLeftRight className="w-4 h-4" />
+            Swap
+          </Button>
           <Button variant="outline" onClick={() => { setTransferPrefill(undefined); setTransferOpen(true); }} className="gap-2 rounded-lg">
             <ArrowLeftRight className="w-4 h-4" />
             Transfer
@@ -2460,6 +2466,7 @@ export default function Inventory() {
       <GoodsReceiptDialog open={receiptOpen} onClose={() => setReceiptOpen(false)} stores={stores} suppliers={suppliers} />
       <StockCountDialog open={countOpen} onClose={() => setCountOpen(false)} stores={stores} />
       <DamageDialog open={damageOpen} onClose={() => setDamageOpen(false)} products={products} stores={stores} />
+      <SwapDialog open={swapOpen} onClose={() => setSwapOpen(false)} products={products} stores={stores} />
 
       <TransferModal open={transferOpen} onClose={() => setTransferOpen(false)} stores={stores} products={products} prefill={transferPrefill} />
 

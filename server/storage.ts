@@ -14,10 +14,13 @@ import {
   readAdjustment, needsSecondPerson, describeAdjustment, LOSING_REASONS,
 } from "@shared/stockAdjust";
 import {
+  readSwap, swapNeedsApproval, describeSwap,
+} from "@shared/stockSwap";
+import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
-  documentCounters, damageClaims, stockLosses,
+  documentCounters, damageClaims, stockLosses, stockSwaps,
   supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
   ownerLoans, tasks, staffPayroll,
@@ -38,7 +41,7 @@ import {
   type ApprovalRequest, type InsertApprovalRequest,
   type EditLog,
   type MessagesLog,
-  type StockAdjustment, type StockLoss,
+  type StockAdjustment, type StockLoss, type StockSwap,
   type SupplierOrder, type SupplierReturn, type SupplierPayment, type Notification,
   type Cashflow, type Expense, type InsertExpense,
   type WarehouseIssue, type InsertWarehouseIssue,
@@ -1877,6 +1880,171 @@ export async function recordDamage(data: {
   return {
     removed: qty, lossValue: value, loss,
     onHand: await getProductStock(productId, storeId),
+  };
+}
+
+/** One thing swapped for another, in a single action.
+ *
+ *  A customer needs white and somebody hands over the white bought earlier —
+ *  same size, same price, and it never goes through the system. Months later one
+ *  product is short and another is over, and nobody can connect them. Two wrong
+ *  shelves instead of one honest swap, and the reorder buys the wrong colour.
+ *
+ *  Both movements are written here, pointing at the same record, so the pair can
+ *  never be read as two unrelated mysteries. Only the DIFFERENCE in value can
+ *  hide anything — cement swapped for a tin of paint would be theft with extra
+ *  steps — so that is what needs agreeing, not the act itself. */
+export async function recordSwap(data: {
+  storeId: number;
+  outProductId: number;
+  outQty: number | string;
+  inProductId: number;
+  inQty: number | string;
+  reason: string;
+  customerName?: string | null;
+  actorId: number;
+  date?: string;
+  /** Set only by the approval replay — never by a caller. */
+  approvedBy?: number | null;
+  skipApprovalGate?: boolean;
+}): Promise<{
+  applied: boolean; pendingApproval: boolean; requestNumber?: string;
+  swap?: StockSwap; difference: number; lossId: number | null;
+}> {
+  const storeId = Number(data.storeId);
+  if (!storeId) throw new Error("Where did the swap happen? It belongs to one location.");
+  if (!data.actorId) throw new Error("Sign in first — a swap has to have a name against it.");
+  const reason = String(data.reason ?? "").trim();
+  if (reason.length < 3) {
+    throw new Error("Say why in a few words — without it, this is the same mystery it was before.");
+  }
+
+  await assertLocationOpen(storeId, "a swap");
+  const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
+  if (!store) throw new Error("Location not found.");
+
+  const [outP] = await db.select().from(products).where(eq(products.id, Number(data.outProductId)));
+  const [inP] = await db.select().from(products).where(eq(products.id, Number(data.inProductId)));
+  if (!outP) throw new Error("The product going out was not found.");
+  if (!inP) throw new Error("The product coming in was not found.");
+
+  const swap = readSwap({
+    outProductId: outP.id, outQty: data.outQty, outCost: (outP as any).costPrice, outUnit: (outP as any).unit,
+    inProductId: inP.id, inQty: data.inQty, inCost: (inP as any).costPrice, inUnit: (inP as any).unit,
+  });
+
+  // You cannot hand over what is not on the shelf.
+  const onHand = await getProductStock(outP.id, storeId);
+  if ((outP as any).trackStock !== false && swap.outQty > onHand + 0.0001) {
+    throw new Error(
+      `Only ${onHand} of ${outP.name} are recorded at ${store.nameEn}. ` +
+      `Count the shelf first if more than that were handed over.`);
+  }
+
+  const headline = describeSwap(swap, outP.name, inP.name, store.nameEn);
+  const cfg = await getSettings();
+
+  // A lopsided swap is where value can disappear, so somebody else agrees first.
+  if (!data.skipApprovalGate && swapNeedsApproval(swap, (cfg as any)?.stockLossAlertValue)) {
+    const request = await createApprovalRequest({
+      type: "stock_swap",
+      requestedBy: data.actorId,
+      storeId,
+      title: `Swap ${outP.name} for ${inP.name}`,
+      summary: `${headline} · the two sides differ by QAR ${Math.abs(swap.difference).toFixed(2)}`,
+      message: reason,
+      amount: Math.abs(swap.difference),
+      entityType: "product",
+      entityId: outP.id,
+      payload: {
+        storeId, outProductId: outP.id, outQty: swap.outQty,
+        inProductId: inP.id, inQty: swap.inQty,
+        reason, customerName: data.customerName ?? null, requestedBy: data.actorId,
+      },
+    });
+    return {
+      applied: false, pendingApproval: true, requestNumber: request.requestNumber || undefined,
+      difference: swap.difference, lossId: null,
+    };
+  }
+
+  const date = data.date || new Date().toISOString().slice(0, 10);
+  const [row] = await db.insert(stockSwaps).values({
+    storeId,
+    outProductId: outP.id, outName: outP.name, outQty: String(swap.outQty),
+    outUnit: (outP as any).unit ?? null, outCost: String((outP as any).costPrice ?? 0),
+    outValue: String(swap.outValue),
+    inProductId: inP.id, inName: inP.name, inQty: String(swap.inQty),
+    inUnit: (inP as any).unit ?? null, inCost: String((inP as any).costPrice ?? 0),
+    inValue: String(swap.inValue),
+    difference: String(swap.difference),
+    reason, customerName: data.customerName ? String(data.customerName).toUpperCase().trim() : null,
+    recordedBy: data.actorId, approvedBy: data.approvedBy ?? null, date,
+  } as any).returning();
+
+  // Both halves carry the same reference, so the pair is findable from either side.
+  await adjustStock(outP.id, storeId, -swap.outQty, "swap", `Swapped out — ${reason} [swap #${row.id}]`, row.id, data.actorId);
+  await adjustStock(inP.id, storeId, swap.inQty, "swap", `Swapped in — ${reason} [swap #${row.id}]`, row.id, data.actorId);
+
+  // Whatever the two sides did not cover is a real gain or loss. Signed, so a
+  // swap that came out ahead nets against one that did not.
+  let lossId: number | null = null;
+  if (!swap.even) {
+    const loss = await recordStockLoss({
+      productId: outP.id, description: `${outP.name} → ${inP.name}`, storeId,
+      qty: swap.difference > 0 ? 1 : -1,          // one swap, in whichever direction
+      unit: "SWAP",
+      unitCost: Math.abs(swap.difference),
+      kind: "swap_difference", refType: "stock_swap", refId: row.id,
+      reason: `${headline} — ${reason}`,
+      reportedBy: data.actorId, againstUserId: data.approvedBy ?? null, date,
+    });
+    lossId = loss.id;
+  }
+
+  if (shouldAlertLoss(swap.difference, (cfg as any)?.stockLossAlertValue)) {
+    await createNotification({
+      targetRole: "admin", type: "stock_swap",
+      title: `Swap recorded — ${outP.name} for ${inP.name}`,
+      message: `${headline}. ${reason}`,
+      entityType: "store", entityId: storeId, createdBy: data.actorId,
+    }).catch(() => {});
+  }
+
+  return { applied: true, pendingApproval: false, swap: row, difference: swap.difference, lossId };
+}
+
+/** Every swap in a period, with what the exchanges cost or gained overall. */
+export async function getSwaps(opts: {
+  start?: string; end?: string; storeId?: number | null;
+} = {}): Promise<any> {
+  const conds: any[] = [];
+  if (opts.start) conds.push(gte(stockSwaps.date, opts.start));
+  if (opts.end) conds.push(lte(stockSwaps.date, opts.end));
+  if (opts.storeId != null) conds.push(eq(stockSwaps.storeId, opts.storeId));
+
+  const rows = await db.select().from(stockSwaps)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(stockSwaps.date), desc(stockSwaps.id));
+
+  const usersById: Record<number, string> = {};
+  for (const u of await db.select().from(users)) usersById[u.id] = u.name;
+  const storesById: Record<number, string> = {};
+  for (const st of await db.select().from(stores)) storesById[st.id] = st.nameEn;
+
+  const net = rows.reduce((a, r: any) => a + Number(r.difference || 0), 0);
+  return {
+    rows: (rows as any[]).map((r) => ({
+      ...r,
+      outQty: Number(r.outQty), inQty: Number(r.inQty),
+      outValue: Number(r.outValue), inValue: Number(r.inValue),
+      difference: Number(r.difference),
+      storeName: r.storeId ? storesById[r.storeId] ?? null : null,
+      recordedByName: r.recordedBy ? usersById[r.recordedBy] ?? null : null,
+      approvedByName: r.approvedBy ? usersById[r.approvedBy] ?? null : null,
+    })),
+    count: rows.length,
+    netDifference: Number(net.toFixed(2)),
   };
 }
 
@@ -5016,6 +5184,20 @@ export async function approveApprovalRequest(id: number, deciderId?: number, not
     } else if (reqRow.entityId) {
       await db.update(documents).set({ pricingApprovedBy: deciderId ?? null } as any).where(eq(documents.id, reqRow.entityId));
     }
+  } else if (reqRow.type === "stock_swap") {
+    // Carry out the held swap now, recorded against the person who ASKED.
+    const payload = (reqRow.payload || {}) as any;
+    const done = await recordSwap({
+      storeId: Number(payload.storeId),
+      outProductId: Number(payload.outProductId), outQty: Number(payload.outQty),
+      inProductId: Number(payload.inProductId), inQty: Number(payload.inQty),
+      reason: `${payload.reason || ""} [approved by ${decider?.name ?? "admin"}]`.trim(),
+      customerName: payload.customerName ?? null,
+      actorId: Number(payload.requestedBy) || (deciderId as number),
+      approvedBy: deciderId ?? null,
+      skipApprovalGate: true,                 // it has just been approved
+    });
+    resultNote = note || `Swap recorded${done.swap ? ` (#${done.swap.id})` : ""}.`;
   } else if (reqRow.type === "stock_adjustment") {
     // Carry out the held removal now, recorded against the person who ASKED —
     // they are the one who took the stock off; the approver is stamped separately.

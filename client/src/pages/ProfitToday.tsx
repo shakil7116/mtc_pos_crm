@@ -47,6 +47,7 @@ const LOSS_LABEL: Record<string, string> = {
   count_variance: "Found short at count",
   damage: "Damaged",
   write_off: "Written off",
+  swap_difference: "Swap difference",
 };
 
 export default function ProfitToday({ embedded }: { embedded?: boolean }) {

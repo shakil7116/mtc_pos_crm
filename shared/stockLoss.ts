@@ -22,6 +22,7 @@ export const LOSS_KINDS = [
   "count_variance",      // a stocktake found less than the system said
   "damage",              // broken, hardened, water-damaged
   "write_off",           // written off deliberately (e.g. closing a location)
+  "swap_difference",     // one thing exchanged for another, and the two sides differed
 ] as const;
 export type LossKind = (typeof LOSS_KINDS)[number];
 

@@ -551,6 +551,35 @@ export const stockLosses = pgTable("stock_losses", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ─── Stock Swaps ─────────────────────────────────────────────────────────────
+// One thing exchanged for another, at one location, in a single record — because
+// the two halves recorded separately become two unrelated mysteries at the next
+// count. Both stock movements point back here through referenceId.
+export const stockSwaps = pgTable("stock_swaps", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => stores.id),
+  outProductId: integer("out_product_id").references(() => products.id),
+  outName: text("out_name").notNull(),          // kept even if the product is renamed later
+  outQty: numeric("out_qty").notNull(),
+  outUnit: text("out_unit"),
+  outCost: numeric("out_cost").notNull().default("0"),
+  outValue: numeric("out_value").notNull().default("0"),
+  inProductId: integer("in_product_id").references(() => products.id),
+  inName: text("in_name").notNull(),
+  inQty: numeric("in_qty").notNull(),
+  inUnit: text("in_unit"),
+  inCost: numeric("in_cost").notNull().default("0"),
+  inValue: numeric("in_value").notNull().default("0"),
+  // Out minus in. Positive = the business gave away more than it got back.
+  difference: numeric("difference").notNull().default("0"),
+  reason: text("reason").notNull(),
+  customerName: text("customer_name"),          // who it was done for, when there was one
+  recordedBy: integer("recorded_by").references(() => users.id),
+  approvedBy: integer("approved_by").references(() => users.id),
+  date: date("date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ─── Supplier Orders ─────────────────────────────────────────────────────────
 export const supplierOrders = pgTable("supplier_orders", {
   id: serial("id").primaryKey(),
@@ -961,6 +990,7 @@ export type EditLog = typeof editLog.$inferSelect;
 export type MessagesLog = typeof messagesLog.$inferSelect;
 export type StockAdjustment = typeof stockAdjustments.$inferSelect;
 export type StockLoss = typeof stockLosses.$inferSelect;
+export type StockSwap = typeof stockSwaps.$inferSelect;
 export type InsertStockLoss = typeof stockLosses.$inferInsert;
 export type SupplierOrder = typeof supplierOrders.$inferSelect;
 export type SupplierReturn = typeof supplierReturns.$inferSelect;

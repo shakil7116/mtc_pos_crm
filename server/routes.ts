@@ -25,6 +25,7 @@ import {
   restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
   getTransferForReceipt, getStockLosses, recordDamage, adjustStockManual,
   getClosurePlan, closeLocation, reopenLocation,
+  recordSwap, getSwaps,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -2287,6 +2288,50 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       }));
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // One thing swapped for another, in a single action.
+  //
+  // Deliberately NOT admin-only: this is the informal thing staff already do all
+  // day, and gating it to the owner guarantees it keeps happening off-system.
+  // The act is safe — both halves move together. The DIFFERENCE in value is what
+  // could hide something, and that is what needs approval.
+  const SWAP_ROLES = ["admin", "manager", "salesman", "worker"];
+
+  app.post("/api/stock-swaps", async (req: Request, res: Response) => {
+    if (!SWAP_ROLES.includes(normalizeRoleStrict(req))) {
+      return res.status(403).json({ message: "You cannot record a swap." });
+    }
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await recordSwap({
+        storeId: locked ?? Number(req.body?.storeId),
+        outProductId: Number(req.body?.outProductId),
+        outQty: req.body?.outQty,
+        inProductId: Number(req.body?.inProductId),
+        inQty: req.body?.inQty,
+        reason: String(req.body?.reason ?? ""),
+        customerName: req.body?.customerName ?? null,
+        date: req.body?.date,
+        actorId: req.user!.id,                 // never from the body
+      }));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.get("/api/stock-swaps", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await getSwaps({
+        start: req.query.start as string | undefined,
+        end: req.query.end as string | undefined,
+        storeId: locked ?? (req.query.storeId ? Number(req.query.storeId) : null),
+      }));
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 
