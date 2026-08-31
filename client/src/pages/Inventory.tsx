@@ -312,11 +312,21 @@ function AdjustmentDialog({
       }
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (res: any) => {
       qc.invalidateQueries({ queryKey: ["/api/inventory"] });
       qc.invalidateQueries({ queryKey: ["/api/inventory/low-stock"] });
       qc.invalidateQueries({ queryKey: ["/api/reports/inventory"] });
-      toast({ title: "Stock adjusted" });
+      qc.invalidateQueries({ queryKey: ["/api/stock-losses"] });
+      qc.invalidateQueries({ queryKey: ["/api/approvals"] });
+      // A big removal is not carried out — it is asked for.
+      if (res?.pendingApproval) {
+        toast({
+          title: "Sent for approval",
+          description: `${res.requestNumber || "The request"} is waiting in Approvals. No stock has moved yet.`,
+        });
+      } else {
+        toast({ title: "Stock adjusted" });
+      }
       onClose();
     },
     onError: (e: Error) => {
@@ -346,6 +356,8 @@ function AdjustmentDialog({
       errs.qty = "Enter a positive quantity";
     if (form.mode !== "transfer" && !form.adjustReason)
       errs.adjustReason = "Select a reason";
+    if (form.notes.trim().length < 3)
+      errs.notes = "Say why in a few words";
     setErrors(errs);
     return Object.keys(errs).length === 0;
   }
@@ -407,11 +419,25 @@ function AdjustmentDialog({
         productId: Number(form.productId),
         storeId: Number(form.fromStoreId),
         qtyChange: form.mode === "add" ? qty : -qty,
+        direction: form.mode,
         type: form.adjustReason,
-        reason: [reasonLabel, form.notes].filter(Boolean).join(" — ") || null,
+        note: [reasonLabel, form.notes].filter(Boolean).join(" — "),
       });
     }
   }
+
+  // What the removal is worth, and whether it will need a second person. The
+  // same two numbers the server checks — shown before the button is pressed.
+  const { data: adjSettings } = useQuery<any>({
+    queryKey: ["/api/settings"],
+    queryFn: () => fetch("/api/settings").then((r) => r.json()).catch(() => ({})),
+  });
+  const adjProduct = products.find((p) => String(p.id) === form.productId);
+  const adjValue =
+    (parseFloat(form.qty) || 0) * Number((adjProduct as any)?.costPrice || 0);
+  const approvalLimit = Number(adjSettings?.stockAdjustApprovalValue ?? 1000);
+  const needsApproval =
+    form.mode === "remove" && approvalLimit > 0 && adjValue >= approvalLimit;
 
   const isPending = mut.isPending || transferMut.isPending;
 
@@ -441,7 +467,7 @@ function AdjustmentDialog({
           <div className="space-y-1.5">
             <Label>Adjustment Type</Label>
             <div className="flex gap-2">
-              {(["add", "remove", "transfer"] as AdjMode[]).map((m) => (
+              {(["add", "remove"] as AdjMode[]).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -455,10 +481,14 @@ function AdjustmentDialog({
                 >
                   {m === "add" && "+ Add"}
                   {m === "remove" && "- Remove"}
-                  {m === "transfer" && "↔ Transfer"}
                 </button>
               ))}
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Moving stock between locations is a <b>Transfer</b> — it gets a voucher, an
+              approval, and somebody counting what actually arrives. Use the Transfer
+              button for that.
+            </p>
           </div>
 
           {/* Product */}
@@ -597,16 +627,39 @@ function AdjustmentDialog({
             </div>
           )}
 
-          {/* Notes */}
+          {/* Why. Compulsory: a quantity change nobody explained cannot be
+              checked in a month's time. */}
           <div className="space-y-1.5">
-            <Label>Notes</Label>
+            <Label>
+              Why? <span className="text-red-500">*</span>
+            </Label>
             <Textarea
               rows={2}
               value={form.notes}
               onChange={(e) => set("notes", e.target.value)}
-              placeholder="Optional details..."
+              placeholder="e.g. 4 bags hardened in the rain behind the rack"
             />
+            {errors.notes && <p className="text-xs text-red-500">{errors.notes}</p>}
           </div>
+
+          {/* What this is worth, before it happens. */}
+          {form.mode === "remove" && adjValue > 0 && (
+            <div className={cn(
+              "rounded-lg border p-2.5 text-sm",
+              needsApproval
+                ? "border-amber-300 bg-amber-50 text-amber-900"
+                : "border-red-200 bg-red-50 text-red-800")}>
+              {needsApproval ? (
+                <>
+                  This writes off <b>QAR {adjValue.toFixed(2)}</b>, which is over the
+                  QAR {approvalLimit.toFixed(0)} limit. It will be sent to
+                  <b> Approvals</b> for an admin to agree before any stock moves.
+                </>
+              ) : (
+                <>This writes off <b>QAR {adjValue.toFixed(2)}</b> and is recorded as a loss.</>
+              )}
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -614,7 +667,7 @@ function AdjustmentDialog({
             Cancel
           </Button>
           <Button onClick={handleSubmitFinal} disabled={isPending}>
-            {isPending ? "Saving…" : "Apply Adjustment"}
+            {isPending ? "Saving…" : needsApproval ? "Send for approval" : "Apply Adjustment"}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -1121,6 +1174,9 @@ function AllStockTab({
     storeId?: number;
     mode?: AdjMode;
   }>({});
+  // The ↔ button on a row opens a REAL transfer — voucher, approval, and
+  // somebody counting what arrives. It used to open two hand adjustments.
+  const [rowTransfer, setRowTransfer] = useState<{ productId?: number; fromStoreId?: number } | null>(null);
 
   const url = (() => {
     if (storeFilter === "all") return "/api/inventory";
@@ -1333,7 +1389,8 @@ function AllStockTab({
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 text-xs gap-1"
-                            onClick={() => openAdj("transfer", row.productId, row.storeId)}
+                            title="Transfer to another location"
+                            onClick={() => setRowTransfer({ productId: row.productId, fromStoreId: row.storeId })}
                           >
                             <ArrowRightLeft className="w-3 h-3" />
                           </Button>
@@ -1362,6 +1419,13 @@ function AllStockTab({
         prefillProductId={adjPrefill.productId}
         prefillStoreId={adjPrefill.storeId}
         prefillMode={adjPrefill.mode}
+      />
+      <TransferModal
+        open={!!rowTransfer}
+        onClose={() => setRowTransfer(null)}
+        stores={stores}
+        products={products}
+        prefill={rowTransfer ?? undefined}
       />
     </div>
   );

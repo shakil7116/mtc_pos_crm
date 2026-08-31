@@ -67,6 +67,8 @@ export const settings = pgTable("settings", {
   ]),
   // A single loss worth more than this tells the owner. "Big" differs per business.
   stockLossAlertValue: numeric("stock_loss_alert_value").default("250"),
+  // Taking stock off by hand above this becomes an approval request, not a change.
+  stockAdjustApprovalValue: numeric("stock_adjust_approval_value").default("1000"),
   setupComplete: boolean("setup_complete").default(false),
 });
 

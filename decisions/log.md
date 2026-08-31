@@ -639,3 +639,40 @@ The Profit page shows the three numbers together: gross profit, material lost,
 what the period really made. That was the whole point of the audit.
 
 Verified 22/22 against the live database, plus 30 unit assertions on the maths.
+
+---
+
+## 2026-08-31 (later still) — Locking the back door
+
+Third item from the audit, and the one that made the other two mean something.
+
+`POST /api/inventory/adjust` had **no role check at all** — any signed-in account
+could add or remove any quantity anywhere. It took the staff name from the REQUEST
+BODY, so a change could be filed under somebody else's name. The reason was
+optional. And it accepted `transfer` as a reason code, which meant two calls moved
+stock between locations with no document, no approval and nobody counting what
+arrived — straight past everything built this week.
+
+Which is to say: the audit trail underneath every other control was not evidence.
+
+**Now:** admin/manager only; the actor is `req.user.id` and nothing else; a note of
+at least a few words is compulsory; the reason has to match the direction (a
+"Customer Return" cannot remove stock); and `transfer`, `sale` and `count` are
+refused by name, pointing at the flow that should be used instead.
+
+**Removals reach the loss ledger.** `damaged`, `expired`, `lost` and plain `remove`
+write a valued `write_off` row, so Adjust is not the quiet way round what Damage
+and the stocktake now record. `correction` deliberately does NOT — the figure was
+wrong, nothing went anywhere, and counting it as a loss would inflate the number.
+
+**Big removals stop being a change and become a question.** Over
+`settings.stockAdjustApprovalValue` (default QAR 1,000) nothing moves: it becomes a
+`stock_adjustment` request in the approvals inbox that already exists. Approving it
+carries it out against the person who ASKED, with the approver stamped separately.
+Adding stock never needs approval — finding stock destroys nothing.
+
+**The transfer shortcut is gone from the screen too.** The Stock Adjustment dialog
+offered add / remove / transfer, and the ↔ button on a stock row opened it. Both now
+lead to the real transfer, which gets a voucher, an approval, and a counted receipt.
+
+Verified 21/21 against the live database, plus 24 unit assertions.

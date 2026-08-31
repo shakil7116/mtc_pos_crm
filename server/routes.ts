@@ -23,7 +23,7 @@ import {
   createSupplierOpeningBalance, createSupplierOpeningBalances,
   setCustomerCollectability, getReceivablesSummary, deleteStore,
   restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
-  getTransferForReceipt, getStockLosses, recordDamage,
+  getTransferForReceipt, getStockLosses, recordDamage, adjustStockManual,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -2165,21 +2165,34 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     }
   });
 
+  // Changing a quantity by hand — the most dangerous action in the system.
+  //
+  // This route used to have NO role check, and took the staff name from the
+  // request body, so an adjustment could be filed under somebody else's name.
+  // It also accepted "transfer", which let two calls move stock between
+  // locations with no document, no approval and nobody counting what arrived.
+  //
+  // Now: admin/manager only, the name comes from the token and nowhere else,
+  // the reason is compulsory, removals reach the loss ledger, and a big one
+  // becomes an approval request instead of a change.
   app.post("/api/inventory/adjust", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
     try {
-      const { productId, storeId, qtyChange, type, reason, userId } = req.body;
-      await adjustStock(
-        Number(productId),
-        Number(storeId),
-        Number(qtyChange),
-        type,
-        reason,
-        undefined,
-        userId ? Number(userId) : undefined,
-      );
-      res.json({ success: true });
+      const locked = lockedStoreId(req);
+      const out = await adjustStockManual({
+        productId: Number(req.body?.productId),
+        storeId: locked ?? Number(req.body?.storeId),
+        qtyChange: req.body?.qtyChange,
+        qty: req.body?.qty,
+        direction: req.body?.direction,
+        reasonCode: String(req.body?.type ?? req.body?.reasonCode ?? ""),
+        note: req.body?.note ?? req.body?.reason ?? "",
+        actorId: req.user!.id,                 // never req.body.userId
+        actorRole: normalizeRoleStrict(req),
+      });
+      res.json({ success: out.applied, ...out });
     } catch (err) {
-      res.status(500).json({ message: String(err) });
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 

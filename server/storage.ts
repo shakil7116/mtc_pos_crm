@@ -11,6 +11,9 @@ import {
   describeVariance, type LossKind,
 } from "@shared/stockLoss";
 import {
+  readAdjustment, needsSecondPerson, describeAdjustment, LOSING_REASONS,
+} from "@shared/stockAdjust";
+import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
@@ -1613,6 +1616,124 @@ export async function adjustStock(
       : reason,
     referenceId, userId,
   });
+}
+
+/** Change a quantity by hand — the locked version.
+ *
+ *  The old endpoint had no role check, took the staff name from the REQUEST
+ *  rather than from who was signed in, made the reason optional, and accepted
+ *  "transfer" as a reason — two calls and stock moved between locations with no
+ *  document, no approval and nobody counting what arrived. Every other control
+ *  in the system rests on the audit trail, and that trail was not evidence.
+ *
+ *  Now: the caller is whoever is signed in, full stop. The reason is compulsory
+ *  and has to match the direction. Material leaving writes a valued row to the
+ *  loss ledger, so Adjust cannot be used to dodge what Damage records. And a
+ *  removal worth more than the threshold is not carried out at all — it becomes
+ *  a request an admin has to agree to. */
+export async function adjustStockManual(data: {
+  productId: number;
+  storeId: number;
+  qtyChange?: number | string | null;
+  qty?: number | string | null;
+  direction?: string | null;
+  reasonCode: string;
+  note?: string | null;
+  /** ALWAYS the signed-in user. Never anything the caller sent. */
+  actorId: number;
+  actorRole?: string;
+}): Promise<{
+  applied: boolean; pendingApproval: boolean; requestNumber?: string;
+  qtyChange: number; value: number; onHand: number; lossId: number | null;
+}> {
+  const productId = Number(data.productId);
+  const storeId = Number(data.storeId);
+  if (!productId) throw new Error("Which product?");
+  if (!storeId) throw new Error("Which location? A quantity always belongs to one place.");
+  if (!data.actorId) throw new Error("Sign in first — an adjustment has to have a name against it.");
+
+  const [product] = await db.select().from(products).where(eq(products.id, productId));
+  if (!product) throw new Error("Product not found.");
+  const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
+  if (!store) throw new Error("Location not found.");
+
+  const adj = readAdjustment({
+    qtyChange: data.qtyChange, qty: data.qty, direction: data.direction,
+    reasonCode: data.reasonCode, unitCost: (product as any).costPrice,
+  });
+
+  const note = String(data.note ?? "").trim();
+  if (note.length < 3) {
+    throw new Error("Say why in a few words — a quantity change with no explanation cannot be checked later.");
+  }
+
+  const onHandBefore = await getProductStock(productId, storeId);
+  const tracked = (product as any).trackStock !== false;
+  // An uncounted product has an UNKNOWN quantity, not zero — refusing on a figure
+  // nobody keeps would block honest corrections.
+  if (adj.direction === "remove" && tracked && adj.qty > onHandBefore + 0.0001) {
+    throw new Error(
+      `Only ${onHandBefore} of ${product.name} are recorded at ${store.nameEn}. ` +
+      `Count the shelf first if the figure is wrong.`);
+  }
+
+  const headline = describeAdjustment(adj, product.name, store.nameEn);
+  const reason = [headline, note].filter(Boolean).join(" — ");
+  const cfg = await getSettings();
+
+  // Big removals stop being a change and become a question for somebody else.
+  if (needsSecondPerson(adj, (cfg as any)?.stockAdjustApprovalValue)) {
+    const request = await createApprovalRequest({
+      type: "stock_adjustment",
+      requestedBy: data.actorId,
+      storeId,
+      title: `Remove ${adj.qty} × ${product.name}`,
+      summary: `${store.nameEn} · QAR ${adj.value.toFixed(2)} of stock written off`,
+      message: note,
+      amount: adj.value,
+      entityType: "product",
+      entityId: productId,
+      payload: {
+        productId, storeId, qtyChange: adj.signed,
+        reasonCode: adj.reasonCode, note, requestedBy: data.actorId,
+      },
+    });
+    return {
+      applied: false, pendingApproval: true, requestNumber: request.requestNumber || undefined,
+      qtyChange: adj.signed, value: adj.value, onHand: onHandBefore, lossId: null,
+    };
+  }
+
+  await adjustStock(productId, storeId, adj.signed, adj.reasonCode, reason, undefined, data.actorId);
+
+  // Material that physically left has to reach the loss ledger, or Adjust becomes
+  // the quiet way round everything Damage and the stocktake now record.
+  let lossId: number | null = null;
+  if (adj.isLoss) {
+    const loss = await recordStockLoss({
+      productId, description: product.name, storeId,
+      qty: adj.qty, unit: (product as any).unit, unitCost: Number((product as any).costPrice || 0),
+      kind: "write_off", refType: "manual_adjustment", refId: null,
+      reason, reportedBy: data.actorId,
+    });
+    lossId = loss.id;
+
+    if (shouldAlertLoss(adj.value, (cfg as any)?.stockLossAlertValue)) {
+      await createNotification({
+        targetRole: "admin", type: "stock_write_off",
+        title: `Stock removed by hand — ${product.name}`,
+        message: `${reason}`,
+        entityType: "product", entityId: productId, createdBy: data.actorId,
+      }).catch(() => {});
+    }
+  }
+
+  return {
+    applied: true, pendingApproval: false,
+    qtyChange: adj.signed, value: adj.value,
+    onHand: await getProductStock(productId, storeId),
+    lossId,
+  };
 }
 
 export async function getLowStockItems(): Promise<(Inventory & { product: Product; store: Store })[]> {
@@ -4596,6 +4717,25 @@ export async function approveApprovalRequest(id: number, deciderId?: number, not
     } else if (reqRow.entityId) {
       await db.update(documents).set({ pricingApprovedBy: deciderId ?? null } as any).where(eq(documents.id, reqRow.entityId));
     }
+  } else if (reqRow.type === "stock_adjustment") {
+    // Carry out the held removal now, recorded against the person who ASKED —
+    // they are the one who took the stock off; the approver is stamped separately.
+    const payload = (reqRow.payload || {}) as any;
+    const [prod] = await db.select().from(products).where(eq(products.id, Number(payload.productId)));
+    const qty = Math.abs(Number(payload.qtyChange || 0));
+    const reason = `${reqRow.title} — ${payload.note || ""} [approved by ${decider?.name ?? "admin"}]`.trim();
+    await adjustStock(
+      Number(payload.productId), Number(payload.storeId), Number(payload.qtyChange),
+      String(payload.reasonCode || "remove"), reason, id, Number(payload.requestedBy) || undefined);
+    if (prod && LOSING_REASONS.includes(String(payload.reasonCode || "remove"))) {
+      await recordStockLoss({
+        productId: prod.id, description: prod.name, storeId: Number(payload.storeId),
+        qty, unit: (prod as any).unit, unitCost: Number((prod as any).costPrice || 0),
+        kind: "write_off", refType: "approval_request", refId: id,
+        reason, reportedBy: Number(payload.requestedBy) || null, againstUserId: deciderId ?? null,
+      });
+    }
+    resultNote = note || `${qty} × ${prod?.name ?? "stock"} removed on approval.`;
   }
   // "manual" → decision recorded only (informational authorization).
 

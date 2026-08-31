@@ -102,6 +102,17 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**Hand adjustments go through `adjustStockManual` — never `adjustStock` from a route.**
+`POST /api/inventory/adjust` is admin/manager, takes the actor from `req.user.id` and
+NEVER from the body (it used to accept `userId`, so a change could be filed under
+someone else's name), demands a note, and refuses `transfer`/`sale`/`count` as reason
+codes — moving stock between locations must be a TR document with a counted receipt.
+A losing removal (`damaged`/`expired`/`lost`/`remove`) writes a `write_off` row so
+Adjust cannot dodge the loss ledger; `correction` does not, because the figure was
+wrong rather than material moving. Removals worth ≥ `settings.stockAdjustApprovalValue`
+are NOT carried out — they become a `stock_adjustment` approval request, replayed by
+`approveApprovalRequest` against the requester. Rules live in `shared/stockAdjust.ts`.
+
 **Every loss of material is money, and lands in `stock_losses`.** Counts, damage
 and transfer shortages all write there: `setStockCount` prices the variance at
 `products.costPrice`, `recordDamage` takes the stock down AND writes the value, and
