@@ -21,6 +21,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { useToast } from "@/hooks/use-toast";
 import LocationAddressTree from "@/components/LocationAddressTree";
 import EraseLocationDialog from "@/components/EraseLocationDialog";
+import CloseLocationDialog from "@/components/CloseLocationDialog";
 import { formatUndoLeft } from "@shared/undo";
 import { cn } from "@/lib/utils";
 
@@ -97,6 +98,7 @@ export default function StoreLocationsSettings() {
   const [alsoWarehouse, setAlsoWarehouse] = useState(true);
   const [editing, setEditing] = useState<Store | null>(null);
   const [erasing, setErasing] = useState<Store | null>(null);
+  const [closing, setClosing] = useState<Store | null>(null);
   // What the dialog is creating. A warehouse belongs to the chosen store; a shared
   // one belongs to nobody and is usable by every store; a store owns warehouses.
   const [mode, setMode] = useState<"store" | "warehouse" | "shared">("warehouse");
@@ -277,7 +279,15 @@ export default function StoreLocationsSettings() {
           >
             <Trash2 size={13} />
           </Button>
-          <Switch checked={loc.active} onCheckedChange={() => toggle.mutate(loc)} />
+          <Switch
+            checked={loc.active}
+            onCheckedChange={() => {
+              // Switching a location OFF is closing it, and a place with stock in
+              // it needs the stock dealt with. Switching one back on is harmless.
+              if (loc.active) setClosing(loc);
+              else toggle.mutate(loc);
+            }}
+          />
         </div>
       </div>
       <LocationAddressTree locationId={loc.id} locationName={loc.nameEn} />
@@ -535,6 +545,13 @@ export default function StoreLocationsSettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CloseLocationDialog
+        location={closing}
+        open={!!closing}
+        onOpenChange={(o) => { if (!o) setClosing(null); }}
+        stores={stores}
+      />
 
       <EraseLocationDialog
         location={erasing}

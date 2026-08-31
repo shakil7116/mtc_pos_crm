@@ -102,6 +102,17 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**Closing a location is a procedure, not a switch.** `getClosurePlan` says what is
+inside and what blocks it (transfers in progress, supplier orders still due, owned
+warehouses); `closeLocation` counts each line, moves what is found out as ONE real
+TR document (created + approved + received in the same call, so it has a voucher and
+cross-owner value still settles), writes off what is missing as `write_off` losses,
+then sets `active = false` — never deleted, because every invoice that names the
+place must keep working. `assertLocationOpen` blocks documents, transfers, hand
+adjustments and damage against a closed or deleted location — the screens used to be
+the only thing enforcing that. `getInventory` also skips deleted locations, so a
+hidden building cannot keep counting towards stock value.
+
 **Hand adjustments go through `adjustStockManual` — never `adjustStock` from a route.**
 `POST /api/inventory/adjust` is admin/manager, takes the actor from `req.user.id` and
 NEVER from the body (it used to accept `userId`, so a change could be filed under

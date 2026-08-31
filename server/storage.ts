@@ -537,6 +537,294 @@ export async function purgeStoreWithContents(
   };
 }
 
+/* ── Closing a store or a warehouse ───────────────────────────────────────────
+   The owner's own question: when a place closes, the stock has to be sold off or
+   moved — and roughly 30% of what the system says is there cannot be found.
+
+   Switching a location off was always possible, and it keeps the history, which
+   is right. What was missing is everything around it: nothing checked whether
+   stock was still sitting in it, nothing helped move it, and the shortfall — the
+   largest single stock loss this business ever takes — landed nowhere at all.
+
+   So closing is now a procedure:
+     1. a plan: what is inside, what is worth, and what would block the closure
+     2. a move-out: count each line, move what is there, write off what is not
+     3. a statement: what the closure cost, in one number
+──────────────────────────────────────────────────────────────────────────────*/
+
+export type ClosurePlan = {
+  store: { id: number; nameEn: string; type: string; active: boolean };
+  stock: Array<{
+    productId: number; name: string; unit: string | null;
+    qty: number; unitCost: number; value: number; tracked: boolean;
+  }>;
+  stockValue: number;
+  stockLines: number;
+  /** Things that must be dealt with BEFORE closing — not warnings, blockers. */
+  blockers: Array<{ kind: string; count: number; detail: string }>;
+  /** Worth knowing, but they do not stop a closure. */
+  warnings: Array<{ kind: string; count: number; detail: string }>;
+  ownedWarehouses: Array<{ id: number; nameEn: string }>;
+  canClose: boolean;
+};
+
+/** What is inside a location, and what stands in the way of closing it. Reads only. */
+export async function getClosurePlan(storeId: number): Promise<ClosurePlan> {
+  const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
+  if (!store) throw new Error("Location not found.");
+
+  const held = await db.select({ inv: inventory, product: products })
+    .from(inventory)
+    .innerJoin(products, eq(inventory.productId, products.id))
+    .where(eq(inventory.storeId, storeId));
+
+  const stock = held
+    .map((r: any) => {
+      const qty = Number(r.inv.qty || 0);
+      const unitCost = Number(r.product.costPrice || 0);
+      return {
+        productId: r.product.id, name: r.product.name, unit: r.product.unit ?? null,
+        qty, unitCost, value: Number((qty * unitCost).toFixed(2)),
+        tracked: r.product.trackStock !== false,
+      };
+    })
+    .filter((l) => Math.abs(l.qty) > 0.0001)
+    .sort((a, b) => b.value - a.value);
+
+  const blockers: ClosurePlan["blockers"] = [];
+  const warnings: ClosurePlan["warnings"] = [];
+
+  // Stock on the road, in either direction, has nowhere to land if this shuts.
+  const openTransfers = await db.select().from(documents).where(and(
+    eq(documents.type, "TR"),
+    inArray(documents.status, ["draft", "approved"]),
+    or(eq(documents.storeId, storeId), eq((documents as any).toStoreId, storeId)),
+  ));
+  if (openTransfers.length) {
+    blockers.push({
+      kind: "open_transfers", count: openTransfers.length,
+      detail: `${openTransfers.length} transfer(s) still in progress: ${openTransfers.map((d) => d.number).join(", ")}. Receive or cancel them first.`,
+    });
+  }
+
+  // Goods still expected from a supplier would be delivered to a closed place.
+  const openOrders = await db.select().from(supplierOrders).where(and(
+    eq(supplierOrders.storeId, storeId),
+    inArray(supplierOrders.status, ["draft", "sent", "partial"]),
+  ));
+  if (openOrders.length) {
+    blockers.push({
+      kind: "open_orders", count: openOrders.length,
+      detail: `${openOrders.length} supplier order(s) are still due here: ${openOrders.map((o) => o.poNumber).filter(Boolean).join(", ")}. Receive or cancel them, or send them elsewhere.`,
+    });
+  }
+
+  // A store cannot close over the top of its own warehouses.
+  const owned = (await getStores()).filter((s2: any) => s2.ownerStoreId === storeId && s2.active !== false);
+  if (owned.length) {
+    blockers.push({
+      kind: "owned_warehouses", count: owned.length,
+      detail: `${owned.length} warehouse(s) belong to it: ${owned.map((w) => w.nameEn).join(", ")}. Close those first.`,
+    });
+  }
+
+  // Staff still pointed at it would open the app to a place that is shut.
+  const staff = await db.select().from(users).where(and(eq(users.storeId, storeId), eq(users.active, true)));
+  if (staff.length) {
+    warnings.push({
+      kind: "staff", count: staff.length,
+      detail: `${staff.length} member(s) of staff are assigned here: ${staff.map((u) => u.name).join(", ")}. Move them to another location afterwards.`,
+    });
+  }
+
+  return {
+    store: { id: store.id, nameEn: store.nameEn, type: store.type, active: store.active },
+    stock,
+    stockValue: Number(stock.reduce((a, l) => a + l.value, 0).toFixed(2)),
+    stockLines: stock.length,
+    blockers, warnings,
+    ownedWarehouses: owned.map((w) => ({ id: w.id, nameEn: w.nameEn })),
+    canClose: blockers.length === 0,
+  };
+}
+
+export type ClosureStatement = {
+  store: { id: number; nameEn: string };
+  movedTo: { id: number; nameEn: string } | null;
+  transferNumber: string | null;
+  movedLines: number;
+  movedValue: number;
+  missingLines: number;
+  missingValue: number;
+  totalBefore: number;
+  lines: Array<{
+    productId: number; name: string; unit: string | null;
+    systemQty: number; foundQty: number; missing: number;
+    unitCost: number; movedValue: number; lostValue: number;
+  }>;
+  closedAt: string;
+};
+
+/** Close a location: move out what is there, write off what is not, switch it off.
+ *
+ *  `counts` is what was physically found, line by line. Anything not counted is
+ *  taken as fully present — a closure where nobody counted is still better than
+ *  no closure, and it moves everything rather than inventing a loss.
+ *
+ *  What is found becomes ONE transfer document to the destination, created,
+ *  approved and received in the same breath — so the move has a voucher, and a
+ *  cross-owner move still carries its value into the settlement.
+ *
+ *  What is missing becomes write-off rows in the loss ledger, with the reason,
+ *  the location and the person closing it. That is the number the owner has
+ *  never been able to see. */
+export async function closeLocation(data: {
+  storeId: number;
+  moveToStoreId?: number | null;
+  counts?: Array<{ productId: number; foundQty: number | string }>;
+  reason: string;
+  actorId: number;
+  date?: string;
+}): Promise<ClosureStatement> {
+  const storeId = Number(data.storeId);
+  if (!data.actorId) throw new Error("Sign in first — closing a location has to have a name against it.");
+  const reason = String(data.reason ?? "").trim();
+  if (reason.length < 3) {
+    throw new Error("Say why it is closing, in a few words — this is the record of what happened to the stock.");
+  }
+
+  const plan = await getClosurePlan(storeId);
+  if (!plan.canClose) {
+    throw new Error(plan.blockers.map((b) => b.detail).join(" "));
+  }
+
+  const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
+  const date = data.date || new Date().toISOString().slice(0, 10);
+
+  const counted = new Map<number, number>();
+  for (const c of data.counts || []) {
+    const n = Number(c.foundQty);
+    if (!Number.isFinite(n) || n < 0) {
+      throw new Error("A counted quantity must be a number, and cannot be less than none.");
+    }
+    counted.set(Number(c.productId), n);
+  }
+
+  const lines: ClosureStatement["lines"] = plan.stock.map((l) => {
+    const found = counted.has(l.productId) ? Math.min(counted.get(l.productId)!, l.qty) : l.qty;
+    const missing = Number((l.qty - found).toFixed(4));
+    return {
+      productId: l.productId, name: l.name, unit: l.unit,
+      systemQty: l.qty, foundQty: found, missing,
+      unitCost: l.unitCost,
+      movedValue: Number((found * l.unitCost).toFixed(2)),
+      lostValue: Number((missing * l.unitCost).toFixed(2)),
+    };
+  });
+
+  const toMove = lines.filter((l) => l.foundQty > 0.0001);
+  const missing = lines.filter((l) => l.missing > 0.0001);
+
+  if (toMove.length && !data.moveToStoreId) {
+    throw new Error("Where is the stock going? Choose the location it moves to.");
+  }
+
+  // ── 1. Move what is actually there, as a real transfer ──
+  let transferNumber: string | null = null;
+  let movedTo: { id: number; nameEn: string } | null = null;
+  if (toMove.length && data.moveToStoreId) {
+    const dest = Number(data.moveToStoreId);
+    if (dest === storeId) throw new Error("The stock cannot move to the location that is closing.");
+    const [destStore] = await db.select().from(stores).where(eq(stores.id, dest));
+    if (!destStore) throw new Error("The destination location was not found.");
+    if (destStore.active === false) throw new Error(`${destStore.nameEn} is closed — pick a location that is open.`);
+    movedTo = { id: destStore.id, nameEn: destStore.nameEn };
+
+    const tr = await createTransfer({
+      fromStoreId: storeId, toStoreId: dest, date,
+      takenBy: `CLOSING ${store.nameEn}`,
+      notes: `Closing ${store.nameEn} — ${reason}`,
+      createdBy: data.actorId,
+      items: toMove.map((l) => ({
+        productId: l.productId, description: l.name, qty: l.foundQty, unit: l.unit || "PCS",
+      })),
+    } as any);
+    transferNumber = tr.number;
+
+    // The person closing is at both ends: they counted it out and they are
+    // receiving it. Received in full, because the counted figure IS what moved.
+    await approveTransfer(tr.id, data.actorId);
+    await receiveTransfer(tr.id, data.actorId, {});
+  }
+
+  // ── 2. Write off what could not be found ──
+  for (const l of missing) {
+    await adjustStock(
+      l.productId, storeId, -l.missing, "lost",
+      `Closing ${store.nameEn} — not found (system had ${l.systemQty}, found ${l.foundQty})`,
+      undefined, data.actorId);
+    await recordStockLoss({
+      productId: l.productId, description: l.name, storeId,
+      qty: l.missing, unit: l.unit, unitCost: l.unitCost,
+      kind: "write_off", refType: "closure", refId: storeId,
+      reason: `Closing ${store.nameEn} — ${reason} (system had ${l.systemQty}, found ${l.foundQty})`,
+      reportedBy: data.actorId, date,
+    });
+  }
+
+  // ── 3. Shut it. Switched off, never deleted: every invoice, transfer and
+  //       expense that names this place has to keep working. ──
+  await db.update(stores).set({ active: false } as any).where(eq(stores.id, storeId));
+
+  const movedValue = Number(toMove.reduce((a, l) => a + l.movedValue, 0).toFixed(2));
+  const missingValue = Number(missing.reduce((a, l) => a + l.lostValue, 0).toFixed(2));
+
+  if (missingValue > 0) {
+    await createNotification({
+      targetRole: "admin", type: "location_closed",
+      title: `${store.nameEn} closed`,
+      message:
+        `${missing.length} line(s) could not be found — QAR ${missingValue.toFixed(2)} written off. ` +
+        `QAR ${movedValue.toFixed(2)} moved${movedTo ? ` to ${movedTo.nameEn}` : ""}. ${reason}`,
+      entityType: "store", entityId: storeId, createdBy: data.actorId,
+    }).catch(() => {});
+  }
+
+  return {
+    store: { id: store.id, nameEn: store.nameEn },
+    movedTo, transferNumber,
+    movedLines: toMove.length, movedValue,
+    missingLines: missing.length, missingValue,
+    totalBefore: plan.stockValue,
+    lines, closedAt: date,
+  };
+}
+
+/** Re-open a location that was closed. The stock does not come back — it was
+ *  moved out or written off — but the place can trade again. */
+export async function reopenLocation(storeId: number): Promise<Store> {
+  const [row] = await db.update(stores).set({ active: true } as any)
+    .where(eq(stores.id, storeId)).returning();
+  if (!row) throw new Error("Location not found.");
+  return row;
+}
+
+/** Nothing may be traded through a location that has been closed.
+ *
+ *  Every screen already hides an inactive location, but the screens were the
+ *  only thing enforcing it — a request that skipped them was accepted. */
+export async function assertLocationOpen(storeId: number | null | undefined, what = "this"): Promise<void> {
+  if (storeId == null) return;
+  const [row] = await db.select().from(stores).where(eq(stores.id, Number(storeId)));
+  if (!row) return;                       // a missing location is somebody else's error
+  if ((row as any).deletedAt) {
+    throw new Error(`${row.nameEn} has been deleted — ${what} cannot go through it.`);
+  }
+  if (row.active === false) {
+    throw new Error(`${row.nameEn} is closed — ${what} cannot go through it. Re-open it first if this is wrong.`);
+  }
+}
+
 export async function updateStore(id: number, data: Partial<InsertStore>): Promise<Store> {
   // Renaming onto a name already in use causes the same confusion as creating one.
   const nameEn = (data as any).nameEn;
@@ -1346,6 +1634,9 @@ export async function getInventory(
       filter = eq(inventory.storeId, storeId);
     }
   }
+  // A DELETED location is hidden everywhere else, so its stock must not keep
+  // counting towards inventory value — otherwise the valuation quietly includes
+  // a building that has been given up.
   const rows = await db.select({
     inv: inventory,
     product: products,
@@ -1354,7 +1645,7 @@ export async function getInventory(
     .from(inventory)
     .innerJoin(products, eq(inventory.productId, products.id))
     .innerJoin(stores, eq(inventory.storeId, stores.id))
-    .where(filter)
+    .where(filter ? and(filter, isNull(stores.deletedAt)) : isNull(stores.deletedAt))
     .orderBy(asc(products.name));
   return rows.map(r => ({ ...r.inv, product: r.product, store: r.store }));
 }
@@ -1546,6 +1837,7 @@ export async function recordDamage(data: {
 
   const [product] = await db.select().from(products).where(eq(products.id, productId));
   if (!product) throw new Error("Product not found.");
+  await assertLocationOpen(storeId, "a damage entry");
 
   const onHandBefore = await getProductStock(productId, storeId);
   const tracked = (product as any).trackStock !== false;
@@ -1656,6 +1948,7 @@ export async function adjustStockManual(data: {
   if (!product) throw new Error("Product not found.");
   const [store] = await db.select().from(stores).where(eq(stores.id, storeId));
   if (!store) throw new Error("Location not found.");
+  await assertLocationOpen(storeId, "a stock adjustment");
 
   const adj = readAdjustment({
     qtyChange: data.qtyChange, qty: data.qty, direction: data.direction,
@@ -1921,6 +2214,8 @@ async function priceTransferItems(fromStoreId: number, toStoreId: number, items:
 export async function createTransfer(req: TransferReq): Promise<any> {
   if (!req.fromStoreId || !req.toStoreId) throw new Error("Source and destination are required.");
   if (req.fromStoreId === req.toStoreId) throw new Error("Source and destination must differ.");
+  await assertLocationOpen(req.fromStoreId, "a transfer");
+  await assertLocationOpen(req.toStoreId, "a transfer");
   if (!req.items?.length) throw new Error("Add at least one item to transfer.");
   for (const it of req.items) if (!(Number(it.qty) > 0)) throw new Error(`Quantity must be greater than zero for ${it.description || "an item"}.`);
 
@@ -2549,6 +2844,10 @@ export async function createDocument(req: CreateDocumentRequest): Promise<Docume
   if (req.type === "INV" && req.storeId == null) {
     throw new Error("A store is required for every invoice — assign the user to a store or select one.");
   }
+
+  // The screens hide a closed location, but the screens were the only thing
+  // enforcing it — a request that skipped them was accepted.
+  await assertLocationOpen(req.storeId, "a document");
 
   // ── Credit-limit gate (server-side, money integrity) ──
   // The client (SaveInterceptorModal) blocks this too, but a direct API POST must

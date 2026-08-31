@@ -676,3 +676,50 @@ offered add / remove / transfer, and the ↔ button on a stock row opened it. Bo
 lead to the real transfer, which gets a voucher, an approval, and a counted receipt.
 
 Verified 21/21 against the live database, plus 24 unit assertions.
+
+---
+
+## 2026-08-31 — Closing a location properly
+
+The question that started the whole audit: when a store or warehouse closes, the
+stock has to be moved — and about 30% of what the system says is there cannot be
+found. Not theft; mistakes, breakage, informal swaps.
+
+Switching a location off was always possible and kept the history, which is right.
+Everything around it was missing. Nothing checked whether stock was still in there.
+Nothing helped move it. And the shortfall — the largest single stock loss this
+business ever takes — landed nowhere at all.
+
+**Closing is now three steps.**
+
+*The plan* lists what is inside at cost, and what BLOCKS the closure: transfers
+still in progress (stock on the road with nowhere to land), supplier orders still
+due there, warehouses still belonging to it. Staff assigned there is a warning, not
+a blocker. Blockers refuse the closure and say exactly which documents to deal with.
+
+*The move-out* counts every line — what the system says against what is actually
+found. What is found leaves as ONE real transfer document, created, approved and
+received in the same call, so the move has a voucher and a cross-owner move still
+carries its value into the settlement. What is missing is written off at cost into
+the loss ledger, with the reason, the location and the closer's name.
+
+*The statement* is one page: held before, moved out, could not be found. That last
+number is the answer to the owner's original question, and it has never existed.
+
+**Two holes closed on the way.** `assertLocationOpen` now blocks documents,
+transfers, hand adjustments and damage against a closed location — every screen
+already hid it, but the screens were the only thing enforcing it. And `getInventory`
+now skips DELETED locations, which were quietly still counting towards stock value:
+a valuation that included a building already given up.
+
+**Switched off, never deleted.** Deleting is for a location typed in by mistake. A
+place that traded keeps its row for ever, and can be re-opened if the closure was
+premature — the stock does not come back, because it was moved or written off, but
+the place can trade again.
+
+The Active switch in Settings now opens this flow instead of silently shutting a
+place with stock in it. Switching one back ON stays a plain toggle.
+
+Verified 25/25 against the live database, including the blockers, the real transfer
+voucher, the QAR 420 write-off on 30 missing bags, and nothing being able to trade
+through the closed location afterwards.

@@ -24,6 +24,7 @@ import {
   setCustomerCollectability, getReceivablesSummary, deleteStore,
   restoreStore, getDeletedStores, planStorePurge, purgeStoreWithContents,
   getTransferForReceipt, getStockLosses, recordDamage, adjustStockManual,
+  getClosurePlan, closeLocation, reopenLocation,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -556,6 +557,41 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
     } catch (err) {
       res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
     }
+  });
+
+  // What is inside a location and what would block closing it. Reads only.
+  app.get("/api/stores/:id/closure-plan", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try { res.json(await getClosurePlan(Number(req.params.id))); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
+  });
+
+  // Close it: move out what is there, write off what is not, switch it off.
+  // Admin only — it writes stock off and shuts a place down.
+  app.post("/api/stores/:id/close", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try {
+      const out = await closeLocation({
+        storeId: Number(req.params.id),
+        moveToStoreId: req.body?.moveToStoreId ?? null,
+        counts: Array.isArray(req.body?.counts) ? req.body.counts : [],
+        reason: String(req.body?.reason ?? ""),
+        date: req.body?.date,
+        actorId: req.user!.id,
+      });
+      console.log(
+        `🔒 CLOSED ${out.store.nameEn} — moved QAR ${out.movedValue}, ` +
+        `written off QAR ${out.missingValue}, by user ${req.user?.id}`);
+      res.json(out);
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post("/api/stores/:id/reopen", async (req: Request, res: Response) => {
+    if (!requireAdmin(req, res)) return;
+    try { res.json(await reopenLocation(Number(req.params.id))); }
+    catch (err) { res.status(400).json({ message: err instanceof Error ? err.message : String(err) }); }
   });
 
   // Undo — brings it back exactly as it was, warehouses and all.
