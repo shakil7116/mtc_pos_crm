@@ -792,3 +792,41 @@ that product — so `validatePack` refuses a pack of one, a size with no name, a
 with no size, and a pack named the same as the base unit.
 
 Verified 13/13 against the live database, plus 25 unit assertions.
+
+---
+
+## 2026-08-31 — Counting the till at close
+
+The last of the eight audit items. A cash sale that never gets entered is the
+oldest hole in retail and no system prevents it. What a system CAN do is make it
+visible: count the drawer, compare it with what the day says was taken, and write
+the difference down every day. One day short is nothing. The same till short every
+day is the only evidence anybody will ever get — and it did not exist.
+
+**The expected figure is not a new sum.** It comes from the same `cashflow` ledger
+the cash position already reads, filtered through `methodInstrument` to genuine
+cash — so a QAR 5,000 bank transfer is never expected in the drawer, and the count
+and the cash position can never disagree.
+
+**The difference goes back through the ledger.** A till that counts 50 short posts
+a "Till shortage" cash-out row. Without that, the recorded cash position stays
+wrong from that moment on, for ever, and every later balance is fiction. This is
+the whole reason the feature is worth building rather than writing on paper.
+
+**Banking the takings is two rows** — out of the till, into the bank — because the
+ledger tells instruments apart by what the note says. Whatever is left in becomes
+tomorrow's opening float automatically.
+
+**Notes are counted the way notes are counted:** how many 500s, how many 100s,
+adding up as you go. A difference over `settings.cashCountTolerance` (QAR 5 by
+default) cannot be saved without a written reason, and tells the owner. A surplus
+counts as much as a shortfall — unexplained extra money is also a question.
+
+Verified 21/21 against the live database, plus 20 unit assertions.
+
+---
+
+**That closes the audit.** All eight findings from "Where Stock and Money Leak"
+are built: short receipts, valued count variances, damage, the locked adjustment
+door, the closing procedure, swaps, pack units, and the till count. Materials and
+money now meet at every point where things go wrong.

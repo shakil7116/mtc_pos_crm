@@ -67,6 +67,8 @@ export const settings = pgTable("settings", {
   ]),
   // A single loss worth more than this tells the owner. "Big" differs per business.
   stockLossAlertValue: numeric("stock_loss_alert_value").default("250"),
+  // A till difference bigger than this has to be explained, and tells the owner.
+  cashCountTolerance: numeric("cash_count_tolerance").default("5"),
   // Taking stock off by hand above this becomes an approval request, not a change.
   stockAdjustApprovalValue: numeric("stock_adjust_approval_value").default("1000"),
   setupComplete: boolean("setup_complete").default(false),
@@ -730,6 +732,27 @@ export const cashflow = pgTable("cashflow", {
   createdAt: timestamp("created_at").defaultNow(),
 });
 
+// ─── Cash Counts (the till, counted at close) ────────────────────────────────
+// What the drawer actually held, against what the day says was taken. The one
+// practical check on a cash sale that never got entered.
+export const cashCounts = pgTable("cash_counts", {
+  id: serial("id").primaryKey(),
+  storeId: integer("store_id").references(() => stores.id),
+  date: date("date").notNull(),
+  openingFloat: numeric("opening_float").notNull().default("0"),  // what was left in yesterday
+  cashIn: numeric("cash_in").notNull().default("0"),              // the day's cash movements,
+  cashOut: numeric("cash_out").notNull().default("0"),            // from the cashflow ledger
+  expected: numeric("expected").notNull().default("0"),           // float + in − out
+  counted: numeric("counted").notNull().default("0"),             // what was in the drawer
+  breakdown: jsonb("breakdown").default({}),                      // { "500": 2, "100": 7, … }
+  difference: numeric("difference").notNull().default("0"),       // counted − expected
+  closingFloat: numeric("closing_float").notNull().default("0"),  // left in for tomorrow
+  banked: numeric("banked").notNull().default("0"),               // taken to the bank
+  reason: text("reason"),                                         // required past the tolerance
+  countedBy: integer("counted_by").references(() => users.id),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // ─── Owner Loans / Cash Injections ───────────────────────────────────────────
 // Money the owner/office lends the business (in), and repayments (out). Tracked
 // separately from expenses so cash position stays accurate and outstanding-owed is clear.
@@ -1002,6 +1025,7 @@ export type MessagesLog = typeof messagesLog.$inferSelect;
 export type StockAdjustment = typeof stockAdjustments.$inferSelect;
 export type StockLoss = typeof stockLosses.$inferSelect;
 export type StockSwap = typeof stockSwaps.$inferSelect;
+export type CashCount = typeof cashCounts.$inferSelect;
 export type InsertStockLoss = typeof stockLosses.$inferInsert;
 export type SupplierOrder = typeof supplierOrders.$inferSelect;
 export type SupplierReturn = typeof supplierReturns.$inferSelect;

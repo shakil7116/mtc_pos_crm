@@ -102,6 +102,15 @@ with no counted quantity means "arrived in full", so one-click receipt still wor
 must never disagree. `stock_losses` is append-only: correct a loss by recording the
 opposite, never by editing. Stock counts and damage are meant to write here too.
 
+**The till is counted against the cashflow ledger, not a separate sum.**
+`getCashCountPlan` reads the SAME `cashflow` rows `getCashPosition` reads, filtered
+by `methodInstrument` to genuine cash, so the two can never drift. Expected =
+yesterday's `closingFloat` + cash in − cash out. `recordCashCount` posts the
+difference back through `logCashflow` ("Till shortage"/"Till surplus") — without
+that the recorded cash position stays wrong for ever — and banking the takings
+writes TWO rows (cash out, bank in, tagged in `notes`). A difference over
+`settings.cashCountTolerance` needs a written reason and notifies admins.
+
 **Stock is always counted in the product's base `unit`.** `packUnit` + `packSize`
 give an optional bigger buying unit (1 BOX = 12 PCS). Everything entered in the big
 unit is multiplied ONCE, on the way in, by `shared/unit.ts` — receiving, selling,

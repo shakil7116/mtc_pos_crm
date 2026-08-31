@@ -26,6 +26,7 @@ import {
   getTransferForReceipt, getStockLosses, recordDamage, adjustStockManual,
   getClosurePlan, closeLocation, reopenLocation,
   recordSwap, getSwaps,
+  getCashCountPlan, recordCashCount, getCashCounts,
   getSupplierOpenOrders, paySupplierOldestFirst,
   getCheques, createCheque, updateCheque,
   logEdit, getEditLog,
@@ -2354,6 +2355,58 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
       res.json(await getReorderSuggestions());
     } catch (err) {
       res.status(500).json({ message: String(err) });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════════
+  // THE TILL, COUNTED AT CLOSE
+  // ══════════════════════════════════════════════════════════════
+
+  // What the day says should be in the drawer, before anybody counts it.
+  app.get("/api/cash-count/plan", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      const storeId = locked ?? Number(req.query.storeId);
+      if (!storeId) return res.status(400).json({ message: "Which till?" });
+      res.json(await getCashCountPlan(storeId, String(req.query.date || "")));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Record the count. The difference goes through the cash ledger, so what the
+  // system believes it holds matches what is physically there.
+  app.post("/api/cash-count", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await recordCashCount({
+        storeId: locked ?? Number(req.body?.storeId),
+        date: req.body?.date,
+        breakdown: req.body?.breakdown ?? null,
+        countedTotal: req.body?.countedTotal ?? null,
+        closingFloat: req.body?.closingFloat ?? null,
+        reason: req.body?.reason ?? null,
+        actorId: req.user!.id,
+      }));
+    } catch (err) {
+      res.status(400).json({ message: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // The register of closes — one short day is nothing, a pattern is the point.
+  app.get("/api/cash-counts", async (req: Request, res: Response) => {
+    if (!requireAdminOrManager(req, res)) return;
+    try {
+      const locked = lockedStoreId(req);
+      res.json(await getCashCounts({
+        start: req.query.start as string | undefined,
+        end: req.query.end as string | undefined,
+        storeId: locked ?? (req.query.storeId ? Number(req.query.storeId) : null),
+      }));
+    } catch (err) {
+      res.status(500).json({ message: err instanceof Error ? err.message : String(err) });
     }
   });
 

@@ -5,6 +5,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { ArrowLeft, Wallet, Building2, Banknote, Clock, ArrowDownLeft, ArrowUpRight } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import CashCountDialog from "@/components/CashCountDialog";
 import {
   money, CHART, RangeToggle, rangeStart, type RangeKey,
   Delta, pctDelta, MetricCard, HeroBalance, Sparkline, anchoredCumulative,
@@ -20,6 +22,18 @@ export default function CashPosition({ embedded }: { embedded?: boolean }) {
   const [, nav] = useLocation();
   const [tab, setTab] = useState<"hand" | "bank">("hand");
   const [range, setRange] = useState<RangeKey>("3M");
+  // Counting the drawer at close — the only practical check on a cash sale that
+  // never got entered.
+  const [countOpen, setCountOpen] = useState(false);
+  const { data: stores = [] } = useQuery<any[]>({
+    queryKey: ["/api/stores"],
+    queryFn: () => fetch("/api/stores").then((r) => r.json()).catch(() => []),
+  });
+  const { data: counts } = useQuery<any>({
+    queryKey: ["/api/cash-counts"],
+    queryFn: () => fetch("/api/cash-counts", { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null)).catch(() => null),
+  });
 
   const { data: pos, isLoading } = useQuery<any>({
     queryKey: ["/api/cashflow/position"],
@@ -73,8 +87,63 @@ export default function CashPosition({ embedded }: { embedded?: boolean }) {
             <p className="text-[13px] text-muted-foreground">liquid cash = hand + bank · PDC is pending, not cash</p>
           </div>
         </div>
-        <RangeToggle value={range} onChange={setRange} />
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setCountOpen(true)}>
+            <Banknote className="w-4 h-4" /> Count the till
+          </Button>
+          <RangeToggle value={range} onChange={setRange} />
+        </div>
       </div>
+
+      {/* What the tills have actually done. One short day means nothing; the same
+          till short every day is the only evidence there will ever be. */}
+      {counts && counts.count > 0 && (
+        <div className="section-card">
+          <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+            <h2 className="section-heading">Till counts</h2>
+            <span className="text-[11px] text-muted-foreground">
+              {counts.count} close{counts.count === 1 ? "" : "s"} recorded
+            </span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div className="rounded-xl bg-muted/30 p-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Net difference</p>
+              <p className={cn("font-mono font-bold text-lg mt-0.5",
+                counts.netDifference < -0.005 ? "text-red-700" : counts.netDifference > 0.005 ? "text-amber-700" : "text-emerald-700")}>
+                {money(counts.netDifference)}
+              </p>
+            </div>
+            <div className="rounded-xl bg-red-500/5 p-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Short days</p>
+              <p className="font-mono font-bold text-lg mt-0.5 text-red-700">{counts.shortDays}</p>
+              <p className="text-[11px] text-muted-foreground">{money(Math.abs(counts.shortTotal))} in total</p>
+            </div>
+            <div className="rounded-xl bg-amber-500/5 p-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Over days</p>
+              <p className="font-mono font-bold text-lg mt-0.5 text-amber-700">{counts.overDays}</p>
+            </div>
+            <div className="rounded-xl bg-emerald-500/5 p-3">
+              <p className="text-[10px] uppercase tracking-widest text-muted-foreground/60 font-semibold">Exact</p>
+              <p className="font-mono font-bold text-lg mt-0.5 text-emerald-700">{counts.exactDays}</p>
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-border/30">
+            {counts.rows.slice(0, 5).map((r: any) => (
+              <div key={r.id} className="flex items-center justify-between gap-3 py-1.5 text-sm">
+                <div className="min-w-0">
+                  <span className="font-mono text-xs text-muted-foreground">{r.date}</span>
+                  <span className="ml-2">{r.storeName}</span>
+                  {r.reason && <p className="text-[11px] text-muted-foreground truncate">{r.reason}</p>}
+                </div>
+                <span className={cn("font-mono font-semibold shrink-0 tabular-nums",
+                  r.difference < -0.005 ? "text-red-600" : r.difference > 0.005 ? "text-amber-600" : "text-emerald-700")}>
+                  {r.difference === 0 ? "exact" : money(r.difference)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Headline — total liquid cash + trend */}
       <HeroBalance
@@ -142,6 +211,11 @@ export default function CashPosition({ embedded }: { embedded?: boolean }) {
           </div>
         )}
       </div>
+      <CashCountDialog
+        open={countOpen}
+        onClose={() => setCountOpen(false)}
+        stores={(stores as any[]).filter((x) => x.active !== false)}
+      />
     </div>
   );
 }

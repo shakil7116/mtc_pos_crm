@@ -20,10 +20,14 @@ import {
   toBaseQty, toBaseCost, unitFactor, hasPack, validatePack, formatQty,
 } from "@shared/unit";
 import {
+  breakdownTotal, cleanBreakdown, cashDifference, expectedCash,
+  needsExplanation, splitClose, describeCashCount, type CashBreakdown,
+} from "@shared/cashCount";
+import {
   settings, stores, users, customers, products, productAliases, inventory, suppliers,
   documents, documentItems, payments, cheques, returns as returnsTable,
   returnItems, approvalRequests, editLog, messagesLog, stockAdjustments, supplierOrders,
-  documentCounters, damageClaims, stockLosses, stockSwaps,
+  documentCounters, damageClaims, stockLosses, stockSwaps, cashCounts,
   supplierReturns, supplierPayments, notifications, cashflow, expenses, warehouseIssues, corrections,
   fieldDefinitions, moduleDefinitions, customRecords, managedLists, numberingAudit,
   ownerLoans, tasks, staffPayroll,
@@ -44,7 +48,7 @@ import {
   type ApprovalRequest, type InsertApprovalRequest,
   type EditLog,
   type MessagesLog,
-  type StockAdjustment, type StockLoss, type StockSwap,
+  type StockAdjustment, type StockLoss, type StockSwap, type CashCount,
   type SupplierOrder, type SupplierReturn, type SupplierPayment, type Notification,
   type Cashflow, type Expense, type InsertExpense,
   type WarehouseIssue, type InsertWarehouseIssue,
@@ -3910,6 +3914,213 @@ export async function getCashPosition(filterStoreId?: number | null): Promise<{
     bank: Number(bank.toFixed(2)),
     pdcPending: Number(pdcPending.toFixed(2)),
     pdcPayable: Number(pdcPayable.toFixed(2)),
+  };
+}
+
+/* ── The till, counted at close ───────────────────────────────────────────────
+   A cash sale that never gets entered is the oldest hole in retail, and no
+   system prevents it. What a system can do is make it visible: count the drawer,
+   compare it with what the day says was taken, and write the difference down
+   every day. One day short is nothing. The same till short every day is the only
+   evidence anybody will ever get — and it does not exist until it is recorded.
+
+   The expected figure comes from the SAME cashflow ledger the cash position
+   reads, filtered to genuine cash, so the two can never drift apart.
+──────────────────────────────────────────────────────────────────────────────*/
+
+/** Cash movements for one location on one day, exactly as the cash position
+ *  counts them — cheque, card, online and bank transfers are not in the drawer. */
+export async function getCashCountPlan(storeId: number, date: string): Promise<{
+  store: { id: number; nameEn: string } | null;
+  date: string;
+  openingFloat: number;
+  cashIn: number;
+  cashOut: number;
+  expected: number;
+  movements: Array<{ direction: string; category: string; amount: number; notes: string | null }>;
+  lastCount: { date: string; counted: number; closingFloat: number; difference: number } | null;
+  tolerance: number;
+}> {
+  const day = date || new Date().toISOString().slice(0, 10);
+  const [store] = storeId
+    ? await db.select().from(stores).where(eq(stores.id, Number(storeId)))
+    : [undefined as any];
+
+  const conds: any[] = [eq(cashflow.date, day)];
+  if (storeId) conds.push(eq(cashflow.storeId, Number(storeId)));
+  const rows = await db.select().from(cashflow).where(and(...conds));
+
+  // Only what actually passes through the drawer.
+  const cashRows = (rows as any[]).filter((r) => methodInstrument(r.notes || "") === "cash");
+  const cashIn = cashRows.filter((r) => r.direction === "in")
+    .reduce((a, r) => a + Number(r.amount || 0), 0);
+  const cashOut = cashRows.filter((r) => r.direction === "out")
+    .reduce((a, r) => a + Number(r.amount || 0), 0);
+
+  // Yesterday's float is today's starting point — whatever was left in the till.
+  const prevConds: any[] = [lt(cashCounts.date, day)];
+  if (storeId) prevConds.push(eq(cashCounts.storeId, Number(storeId)));
+  const [prev] = await db.select().from(cashCounts).where(and(...prevConds))
+    .orderBy(desc(cashCounts.date), desc(cashCounts.id)).limit(1);
+
+  const openingFloat = Number(prev?.closingFloat || 0);
+  const [cfg] = await db.select().from(settings).limit(1);
+
+  return {
+    store: store ? { id: store.id, nameEn: store.nameEn } : null,
+    date: day,
+    openingFloat,
+    cashIn: Number(cashIn.toFixed(2)),
+    cashOut: Number(cashOut.toFixed(2)),
+    expected: expectedCash(openingFloat, cashIn, cashOut),
+    movements: cashRows.map((r) => ({
+      direction: r.direction, category: r.category,
+      amount: Number(r.amount || 0), notes: r.notes ?? null,
+    })),
+    lastCount: prev ? {
+      date: String(prev.date), counted: Number(prev.counted),
+      closingFloat: Number(prev.closingFloat), difference: Number(prev.difference),
+    } : null,
+    tolerance: Number((cfg as any)?.cashCountTolerance ?? 5),
+  };
+}
+
+/** Record the count. The difference is posted to the cash ledger, so what the
+ *  system believes it holds matches what is physically in the drawer — otherwise
+ *  the recorded cash position is wrong from that moment on, for ever. */
+export async function recordCashCount(data: {
+  storeId: number;
+  date?: string;
+  breakdown?: CashBreakdown | null;
+  /** Used when nobody wants to count note by note. */
+  countedTotal?: number | string | null;
+  closingFloat?: number | string | null;
+  reason?: string | null;
+  actorId: number;
+}): Promise<{
+  count: CashCount;
+  difference: number;
+  direction: "over" | "short" | "exact";
+  banked: number;
+}> {
+  const storeId = Number(data.storeId);
+  if (!storeId) throw new Error("Which till? A count belongs to one location.");
+  if (!data.actorId) throw new Error("Sign in first — a count has to have a name against it.");
+
+  const day = data.date || new Date().toISOString().slice(0, 10);
+  const plan = await getCashCountPlan(storeId, day);
+
+  const breakdown = cleanBreakdown(data.breakdown);
+  const usedNotes = Object.keys(breakdown).length > 0;
+  const counted = usedNotes
+    ? breakdownTotal(breakdown)
+    : Number(data.countedTotal);
+  if (!Number.isFinite(counted) || counted < 0) {
+    throw new Error("How much was in the drawer? Count the notes, or type the total.");
+  }
+
+  const diff = cashDifference(counted, plan.expected);
+  const reason = String(data.reason ?? "").trim();
+  if (needsExplanation(diff, plan.tolerance) && reason.length < 3) {
+    throw new Error(
+      `${describeCashCount(diff, plan.store?.nameEn)}. Say what you think happened — ` +
+      `a difference nobody explained is the one that repeats.`);
+  }
+
+  const { keep, bank } = splitClose(counted, data.closingFloat ?? counted);
+
+  const [row] = await db.insert(cashCounts).values({
+    storeId, date: day,
+    openingFloat: String(plan.openingFloat),
+    cashIn: String(plan.cashIn), cashOut: String(plan.cashOut),
+    expected: String(plan.expected), counted: String(counted),
+    breakdown: breakdown as any,
+    difference: String(diff.difference),
+    closingFloat: String(keep), banked: String(bank),
+    reason: reason || null, countedBy: data.actorId,
+  } as any).returning();
+
+  // Put the difference through the ledger, or the recorded cash position stays
+  // wrong for ever. Cash, deliberately: a till difference is drawer money.
+  if (Math.abs(diff.difference) >= 0.005) {
+    await logCashflow({
+      direction: diff.difference > 0 ? "in" : "out",
+      category: diff.difference > 0 ? "Till surplus" : "Till shortage",
+      amount: Math.abs(diff.difference),
+      refType: "cash_count", refId: row.id, storeId,
+      notes: `${describeCashCount(diff, plan.store?.nameEn)}${reason ? ` — ${reason}` : ""}`,
+      createdBy: data.actorId, date: day,
+    });
+  }
+
+  // Money taken to the bank leaves the drawer and arrives in the account. Two
+  // rows, because the ledger tells them apart by what the note says.
+  if (bank >= 0.005) {
+    await logCashflow({
+      direction: "out", category: "Banked takings", amount: bank,
+      refType: "cash_count", refId: row.id, storeId,
+      notes: `Takings banked from ${plan.store?.nameEn ?? "the till"}`,
+      createdBy: data.actorId, date: day,
+    });
+    await logCashflow({
+      direction: "in", category: "Banked takings", amount: bank,
+      refType: "cash_count", refId: row.id, storeId,
+      notes: `Bank Transfer — takings from ${plan.store?.nameEn ?? "the till"}`,
+      createdBy: data.actorId, date: day,
+    });
+  }
+
+  if (needsExplanation(diff, plan.tolerance)) {
+    await createNotification({
+      targetRole: "admin", type: "cash_difference",
+      title: diff.direction === "short" ? "Till came up short" : "Till came up over",
+      message: `${describeCashCount(diff, plan.store?.nameEn)}. ${reason}`,
+      entityType: "store", entityId: storeId, createdBy: data.actorId,
+    }).catch(() => {});
+  }
+
+  return { count: row, difference: diff.difference, direction: diff.direction, banked: bank };
+}
+
+/** The register of closes, with what the tills have cost over the period. A
+ *  single short day means nothing; a pattern is the whole point. */
+export async function getCashCounts(opts: {
+  start?: string; end?: string; storeId?: number | null;
+} = {}): Promise<any> {
+  const conds: any[] = [];
+  if (opts.start) conds.push(gte(cashCounts.date, opts.start));
+  if (opts.end) conds.push(lte(cashCounts.date, opts.end));
+  if (opts.storeId != null) conds.push(eq(cashCounts.storeId, opts.storeId));
+
+  const rows = await db.select().from(cashCounts)
+    .where(conds.length ? and(...conds) : undefined)
+    .orderBy(desc(cashCounts.date), desc(cashCounts.id));
+
+  const usersById: Record<number, string> = {};
+  for (const u of await db.select().from(users)) usersById[u.id] = u.name;
+  const storesById: Record<number, string> = {};
+  for (const st of await db.select().from(stores)) storesById[st.id] = st.nameEn;
+
+  const r2 = (n: number) => Number(n.toFixed(2));
+  const net = (rows as any[]).reduce((a, r) => a + Number(r.difference || 0), 0);
+  const short = (rows as any[]).filter((r) => Number(r.difference) < -0.005);
+  const over = (rows as any[]).filter((r) => Number(r.difference) > 0.005);
+
+  return {
+    rows: (rows as any[]).map((r) => ({
+      ...r,
+      openingFloat: Number(r.openingFloat), cashIn: Number(r.cashIn), cashOut: Number(r.cashOut),
+      expected: Number(r.expected), counted: Number(r.counted),
+      difference: Number(r.difference), closingFloat: Number(r.closingFloat), banked: Number(r.banked),
+      storeName: r.storeId ? storesById[r.storeId] ?? null : null,
+      countedByName: r.countedBy ? usersById[r.countedBy] ?? null : null,
+    })),
+    count: rows.length,
+    netDifference: r2(net),
+    shortDays: short.length,
+    shortTotal: r2(short.reduce((a, r) => a + Number(r.difference || 0), 0)),
+    overDays: over.length,
+    exactDays: rows.length - short.length - over.length,
   };
 }
 
