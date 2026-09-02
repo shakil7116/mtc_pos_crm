@@ -1,36 +1,33 @@
 import { forwardRef } from "react";
 import { InvoicePaper } from "@/components/InvoicePaper";
-import { PremiumInvoice } from "./PremiumInvoice";
+import { SpineTemplate } from "./SpineTemplate";
+import { LedgerTemplate } from "./LedgerTemplate";
 import { TemplateInvoice, TemplateSettings, TemplateOptions, DocKind } from "./types";
 
 /**
- * The document template is the original InvoicePro "InvoicePaper", in its five
- * official colour variants (template1–5). The colour theme IS the template.
+ * Three templates, each a different document — not three colours of one.
+ *
+ *   Blue    the original InvoicePaper. The default, and unchanged.
+ *   Spine   a mirrored bilingual sheet in Qatar maroon: one axis down the page,
+ *           English left, Arabic right, every row level across it.
+ *   Ledger  ink and hairlines only, no filled areas — photocopies and faxes
+ *           intact, and costs almost nothing to print.
+ *
+ * The five extra colour variants of the blue paper were retired: a colour is not
+ * a template, and six near-identical choices only made the picker harder to use.
  */
-export type TemplateId =
-  | "paper-blue"
-  | "paper-yellow"
-  | "paper-cyan"
-  | "paper-red"
-  | "paper-dark"
-  | "premium-navy";
+export type TemplateId = "paper-blue" | "spine" | "ledger";
 
-// id → InvoicePaper internal variant
-const PAPER_VARIANT: Partial<Record<TemplateId, "template1" | "template2" | "template3" | "template4" | "template5">> = {
+// id → InvoicePaper internal variant (blue only; the paper's other variants are
+// no longer reachable from the picker).
+const PAPER_VARIANT: Partial<Record<TemplateId, "template1">> = {
   "paper-blue": "template1",
-  "paper-yellow": "template2",
-  "paper-cyan": "template3",
-  "paper-red": "template4",
-  "paper-dark": "template5",
 };
 
 export const INVOICE_TEMPLATES: { id: TemplateId; label: string; blurb: string }[] = [
-  { id: "paper-blue", label: "Blue", blurb: "Modern blue (classic)" },
-  { id: "paper-yellow", label: "Yellow", blurb: "Amber / black accents" },
-  { id: "paper-cyan", label: "Cyan", blurb: "Cyan header band" },
-  { id: "paper-red", label: "Red", blurb: "Red professional" },
-  { id: "paper-dark", label: "Dark", blurb: "Dark / minimal" },
-  { id: "premium-navy", label: "Premium", blurb: "Navy enterprise letterhead" },
+  { id: "paper-blue", label: "Blue", blurb: "The original — modern blue" },
+  { id: "spine", label: "Spine", blurb: "Mirrored bilingual, Qatar maroon" },
+  { id: "ledger", label: "Ledger", blurb: "Ink and hairline, no colour" },
 ];
 
 export const DEFAULT_TEMPLATE: TemplateId = "paper-blue";
@@ -38,7 +35,9 @@ const STORAGE_KEY = "mtc_invoice_template";
 
 export function getSavedTemplate(): TemplateId {
   const v = (typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY)) as TemplateId | null;
-  const valid = v && ((PAPER_VARIANT as any)[v] || v === "premium-navy");
+  // A retired id left in a browser (paper-red, premium-navy…) falls back to Blue
+  // rather than rendering nothing.
+  const valid = !!v && INVOICE_TEMPLATES.some((t) => t.id === v);
   return valid ? (v as TemplateId) : DEFAULT_TEMPLATE;
 }
 
@@ -144,13 +143,12 @@ export const InvoiceRenderer = forwardRef<HTMLDivElement, RendererProps>(
     // Merge in safe defaults so a missing settings field can't crash the paper
     const safeSettings = { ...FALLBACK_SETTINGS, ...(settings || {}) };
 
-    // Premium navy template renders the normalized shape directly (not the legacy paper)
-    if (templateId === "premium-navy") {
-      return (
-        <div ref={ref}>
-          <PremiumInvoice settings={safeSettings} invoice={invoice} options={options} className={className} />
-        </div>
-      );
+    // Spine and Ledger read the normalized shape directly — no legacy adapter.
+    if (templateId === "spine") {
+      return <SpineTemplate ref={ref} settings={safeSettings} invoice={invoice} options={options} className={className} />;
+    }
+    if (templateId === "ledger") {
+      return <LedgerTemplate ref={ref} settings={safeSettings} invoice={invoice} options={options} className={className} />;
     }
 
     return (

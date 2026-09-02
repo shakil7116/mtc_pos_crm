@@ -146,19 +146,15 @@ const UNITS = [
   "LENGTH", "LOT", "LOAD", "TRIP",
 ];
 
-// ─── Color themes (accent for active pills + document) ──
-type ThemeKey = "blue" | "yellow" | "cyan" | "red" | "dark" | "premium";
-const THEMES: { key: ThemeKey; label: string; accent: string }[] = [
-  { key: "blue", label: "Blue", accent: "#2563eb" },
-  { key: "yellow", label: "Yellow", accent: "#ca8a04" },
-  { key: "cyan", label: "Cyan", accent: "#0891b2" },
-  { key: "red", label: "Red", accent: "#dc2626" },
-  { key: "dark", label: "Dark", accent: "#1e2a3a" },
-  { key: "premium", label: "Premium", accent: "#1e3a8a" },
-];
-// Theme key ↔ template id (premium maps to a distinct template, the rest are paper-*)
-const themeToTemplate = (k: ThemeKey): TemplateId => (k === "premium" ? "premium-navy" : `paper-${k}`) as TemplateId;
-const templateToTheme = (id: TemplateId): ThemeKey => (id === "premium-navy" ? "premium" : id.replace("paper-", "")) as ThemeKey;
+// ─── Document template ──
+// The editor used to keep its own list of six colours and map them to template
+// ids. Two lists of the same thing drift: retiring a template here would have
+// left a dead option in the editor. Both screens now read INVOICE_TEMPLATES.
+const TEMPLATE_ACCENT: Record<string, string> = {
+  "paper-blue": "#2563eb",
+  "spine": "#8A1538",
+  "ledger": "#15130F",
+};
 
 const DOC_PILLS: { type: DocType; label: string }[] = [
   { type: "INV", label: "Invoice" },
@@ -240,13 +236,10 @@ export default function DocumentEditor({ type, params }: Props) {
   const [pendingIntercept, setPendingIntercept] = useState<InterceptorResult | null>(null);
   const pricingPinRef = useRef("");
   // Colour theme === document template (the old InvoicePaper's 5 variants)
-  const [theme, setTheme] = useState<ThemeKey>(() => {
-    const k = templateToTheme(getSavedTemplate());
-    return THEMES.some((t) => t.key === k) ? k : "blue";
-  });
-  const accent = THEMES.find((t) => t.key === theme)?.accent ?? "#2563eb";
-  const previewTemplate = themeToTemplate(theme);
-  const changeTheme = (k: ThemeKey) => { setTheme(k); saveTemplate(themeToTemplate(k)); };
+  const [theme, setTheme] = useState<TemplateId>(() => getSavedTemplate());
+  const accent = TEMPLATE_ACCENT[theme] ?? "#2563eb";
+  const previewTemplate = theme;
+  const changeTheme = (k: TemplateId) => { setTheme(k); saveTemplate(k); };
 
   const [focusRowId, setFocusRowId] = useState<string | null>(null);
   const addRowAfterAndFocus = useCallback((afterId: string) => {
@@ -903,14 +896,14 @@ export default function DocumentEditor({ type, params }: Props) {
               </div>
               {/* theme — compact color picker (decluttered from 6 chips) */}
               <div className="flex items-center gap-1.5 mt-1.5">
-                <span className="w-3.5 h-3.5 rounded-full ring-1 ring-slate-200 shrink-0" style={{ background: accent }} title="Document colour" />
+                <span className="w-3.5 h-3.5 rounded-full ring-1 ring-slate-200 shrink-0" style={{ background: accent }} title="Document template" />
                 <select
                   value={theme}
-                  onChange={(e) => changeTheme(e.target.value as ThemeKey)}
+                  onChange={(e) => changeTheme(e.target.value as TemplateId)}
                   className="text-[10px] font-bold uppercase tracking-wider text-slate-500 bg-slate-100 hover:bg-slate-200 rounded-md pl-2 pr-1 py-1 outline-none cursor-pointer transition"
-                  title="Document colour theme"
+                  title="Document template"
                 >
-                  {THEMES.map((t) => <option key={t.key} value={t.key}>{t.label}</option>)}
+                  {INVOICE_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
               </div>
             </div>

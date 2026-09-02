@@ -54,7 +54,7 @@ const UNITS = [
   // ── Length ──
   ["MTR",    "Metre — pipe, cable, profile sold loose"],
   ["CM",     "Centimetre — a cut length"],
-  ["RM",     "Running metre — skirting, profile, pipe"],
+  ["RMT",    "Running metre — skirting, profile, pipe"],
   ["LENGTH", "Length — a full bar or pipe as supplied"],
   ["FT",     "Foot"],
   ["RFT",    "Running foot"],
@@ -85,6 +85,7 @@ const REPLACE = {
   "length": "LENGTH",
   "LEN":    "LENGTH",
   "BDL":    "BUNDLE",
+  "RM":     "RMT",
   "sheet":  "SHEET",
   "nos":    "PCS",
   "PIECE":  "PCS",
