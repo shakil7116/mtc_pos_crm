@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
-  Pair, ColHead, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
+  Pair, ColHead, FitBox, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
 } from "./bilingual";
 
 /* ── SPINE ────────────────────────────────────────────────────────────────────
@@ -20,7 +20,7 @@ import {
 ──────────────────────────────────────────────────────────────────────────────*/
 
 const MAROON = "#8A1538";
-const SANS = "Montserrat, system-ui, sans-serif";
+const SANS = "'Barlow Condensed', Montserrat, system-ui, sans-serif";
 const MONO = "'IBM Plex Mono', ui-monospace, monospace";
 
 export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { className?: string }>(
@@ -42,7 +42,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
       <div
         ref={ref}
         className={clsx(
-          "invoice-paper bg-white text-black w-[210mm] max-w-full min-h-[297mm] print:min-h-0",
+          "invoice-paper tpl-cairo bg-white text-black w-[210mm] max-w-full min-h-[297mm] print:min-h-0",
           "shadow-xl print:shadow-none flex flex-col print:block",
           className,
         )}
@@ -51,12 +51,12 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
         {/* ── Letterhead: English | axis | Arabic ─────────────────────────── */}
         <div className="grid items-start gap-[6mm]" style={{ gridTemplateColumns: "1fr 1px 1fr" }}>
           <div>
-            <div
-              className="flex items-end uppercase font-bold leading-[1.02]"
-              style={{ width: "78mm", height: "11mm", fontSize: "20.5pt", color: MAROON }}
-            >
-              {settings.storeNameEn}
-            </div>
+            <FitBox
+              text={settings.storeNameEn || ""}
+              width="78mm" height="12mm" widthMm={78} heightMm={12}
+              className="uppercase font-bold"
+              style={{ color: MAROON }}
+            />
             <div className="mt-[2.5mm]" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
               {[
                 [L.poBox.en, settings.poBox],
@@ -76,13 +76,12 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
 
           {/* The Arabic column is a mirror: every line starts at the right edge. */}
           <div>
-            <div
-              className="flex items-end font-arabic font-bold leading-[1.02] ml-auto"
-              dir="rtl"
-              style={{ width: "78mm", height: "11mm", fontSize: "18pt", color: MAROON }}
-            >
-              {settings.storeNameAr}
-            </div>
+            <FitBox
+              text={settings.storeNameAr || ""}
+              width="78mm" height="12mm" widthMm={78} heightMm={12} rtl
+              className="font-arabic font-bold ml-auto"
+              style={{ color: MAROON }}
+            />
             <div className="mt-[2.5mm] text-right" dir="rtl" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
               {[
                 [L.poBox.ar, settings.poBox, true],
@@ -141,20 +140,20 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
               <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
                 <Pair en={L.number.en} ar={L.number.ar} />
               </div>
-              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO }}>{invoice.number}</div>
+              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
             </div>
             <div>
               <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
                 <Pair en={L.date.en} ar={L.date.ar} />
               </div>
-              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO }}>{dmy(invoice.date)}</div>
+              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
             </div>
             {invoice.poNumber && (
               <div>
                 <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
                   <Pair en={L.poNumber.en} ar={L.poNumber.ar} />
                 </div>
-                <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO }}>{invoice.poNumber}</div>
+                <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
               </div>
             )}
           </div>
@@ -281,9 +280,12 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
                 </div>
               )}
               <div className="flex justify-between items-baseline text-white font-bold"
-                   style={{ background: MAROON, padding: "2mm 2.5mm", marginTop: "1mm", fontSize: "12pt" }}>
+                   style={{ background: MAROON, padding: "2mm 2.5mm", marginTop: "1mm", fontSize: "12.5pt" }}>
                 <Pair en={L.total.en} ar={L.total.ar} />
-                <span style={{ fontFamily: MONO }}>QAR {money(invoice.total)}</span>
+                <span style={{ fontFamily: MONO, whiteSpace: "nowrap" }}>{money(invoice.total)}</span>
+              </div>
+              <div className="text-right" style={{ fontSize: "6pt", color: "#6a6a6a", marginTop: ".8mm" }}>
+                <Pair en={`(${L.currencyNote.en})`} ar={L.currencyNote.ar} />
               </div>
             </div>
           )}

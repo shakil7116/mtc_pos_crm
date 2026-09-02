@@ -146,6 +146,15 @@
     text-wrap: pretty;
   }
 
+  /* Spine and Ledger set .tpl-cairo on their root: their Arabic is Cairo, which
+     holds its weight beside a Latin face, while Blue keeps the Amiri it was
+     designed with. Shared parts (the terms footer) then follow whichever
+     template they are inside. */
+  .tpl-cairo .font-arabic,
+  .tpl-cairo [dir="rtl"] {
+    font-family: 'Cairo', var(--font-arabic), sans-serif;
+  }
+
   .font-arabic {
     font-family: var(--font-arabic);
   }

@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from "react";
 import type { TemplateInvoice, DocKind } from "./types";
 
 /* ── Shared bilingual furniture ───────────────────────────────────────────────
@@ -9,6 +10,89 @@ import type { TemplateInvoice, DocKind } from "./types";
    One place for the pairs, so a label can never say one thing on one template
    and something else on the other.
 ──────────────────────────────────────────────────────────────────────────────*/
+
+/** A name that FILLS a fixed block — the same block for both languages.
+ *
+ *  This is the thing that kept going wrong. Choosing a point size by hand works
+ *  for exactly one company name: the English is 37 characters and wraps to two
+ *  lines, the Arabic is 32 and sits on one, so at any single size one of them
+ *  looks like the main name and the other like a translation.
+ *
+ *  So neither size is chosen. Each name is given the SAME box and grown to the
+ *  largest size that still fits inside it. Both then occupy the same area by
+ *  construction — and they still will after the trading name is edited, or if
+ *  another company uses this system.
+ *
+ *  In the browser the box is measured for real. Server-side (a preview, a PDF
+ *  worker) there is nothing to measure, so it falls back to an estimate from the
+ *  character count — close enough to look right, and corrected the moment it
+ *  renders in a browser.
+ */
+const MM_PER_PT = 0.352778;
+
+function estimateFit(text: string, widthMm: number, heightMm: number, rtl: boolean): number {
+  const chars = Math.max(1, (text || "").trim().length);
+  // Rough average advance per character, as a fraction of the point size.
+  const advance = rtl ? 0.44 : 0.40;
+  const lineFactor = 1.06;
+  let best = 6;
+  for (let lines = 1; lines <= 3; lines++) {
+    const widthPt = (widthMm / MM_PER_PT) * lines;
+    const byWidth = widthPt / (chars * advance);
+    const byHeight = (heightMm / MM_PER_PT) / (lines * lineFactor);
+    best = Math.max(best, Math.min(byWidth, byHeight));
+  }
+  return Math.min(30, Math.max(6, Number(best.toFixed(1))));
+}
+
+export function FitBox({
+  text, width, height, widthMm, heightMm, max = 30, min = 6, rtl = false,
+  className = "", style = {},
+}: {
+  text: string; width: string; height: string;
+  /** Same numbers as `width`/`height`, for the server-side estimate. */
+  widthMm: number; heightMm: number;
+  max?: number; min?: number; rtl?: boolean;
+  className?: string; style?: React.CSSProperties;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(() => estimateFit(text, widthMm, heightMm, rtl));
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    // Largest size that still fits: start at the ceiling and come down. Half a
+    // point at a time is under 50 passes and imperceptible.
+    let pt = max;
+    const fits = () => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1;
+    el.style.fontSize = `${pt}pt`;
+    while (pt > min && !fits()) {
+      pt -= 0.5;
+      el.style.fontSize = `${pt}pt`;
+    }
+    setSize(pt);
+  }, [text, width, height, max, min]);
+
+  return (
+    <div
+      ref={ref}
+      dir={rtl ? "rtl" : undefined}
+      className={className}
+      // Marked so a static render (a preview, a PDF worker) can run the same
+      // fit with a few lines of plain script and show the true result.
+      data-fit={max}
+      data-fit-min={min}
+      style={{
+        width, height, fontSize: `${size}pt`, lineHeight: 1.06,
+        display: "flex", alignItems: "center",
+        justifyContent: rtl ? "flex-start" : "flex-start",
+        overflow: "hidden", ...style,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
 
 /** English, a hairline slash, then the Arabic — optically matched. */
 export function Pair({
@@ -93,8 +177,8 @@ export const L = {
   total:    { en: "Total", ar: "الإجمالي" },
   words:    { en: "Amount in words", ar: "المبلغ كتابةً" },
   receiver: { en: "Receiver's signature", ar: "توقيع المستلم" },
-  company:  { en: "For the company", ar: "عن الشركة" },
-  salesman: { en: "Salesman", ar: "البائع" },
+  company:  { en: "Salesman", ar: "البائع" },
+  currencyNote: { en: "All amounts in QAR", ar: "جميع المبالغ بالريال القطري" },
   authorised: { en: "Authorised signature", ar: "التوقيع المعتمد" },
   poBox:    { en: "P.O. Box", ar: "ص.ب" },
   phone:    { en: "Phone", ar: "هاتف" },

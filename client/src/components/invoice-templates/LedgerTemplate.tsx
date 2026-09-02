@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
-  Pair, ColHead, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
+  Pair, ColHead, FitBox, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
 } from "./bilingual";
 
 /* ── LEDGER ───────────────────────────────────────────────────────────────────
@@ -43,7 +43,7 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
       <div
         ref={ref}
         className={clsx(
-          "invoice-paper bg-white w-[210mm] max-w-full min-h-[297mm] print:min-h-0",
+          "invoice-paper tpl-cairo bg-white w-[210mm] max-w-full min-h-[297mm] print:min-h-0",
           "shadow-xl print:shadow-none flex flex-col print:block",
           className,
         )}
@@ -51,19 +51,18 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
       >
         {/* ── The two names, stacked on the centre of the page ────────────── */}
         <div className="text-center" style={{ paddingBottom: "2.5mm", borderBottom: `.5mm solid ${INK}` }}>
-          <div
-            className="mx-auto uppercase font-semibold leading-[1.1]"
-            style={{ width: "120mm", fontSize: "15pt", letterSpacing: ".32em" }}
-          >
-            {settings.storeNameEn}
-          </div>
-          <div
+          <FitBox
+            text={settings.storeNameEn || ""}
+            width="120mm" height="8mm" widthMm={120} heightMm={8}
+            className="mx-auto uppercase font-semibold"
+            style={{ letterSpacing: ".28em", alignItems: "center", justifyContent: "center" }}
+          />
+          <FitBox
+            text={settings.storeNameAr || ""}
+            width="120mm" height="8mm" widthMm={120} heightMm={8} rtl
             className="mx-auto font-arabic font-bold"
-            dir="rtl"
-            style={{ width: "120mm", fontSize: "15.5pt", lineHeight: 1.25, marginTop: "1.2mm" }}
-          >
-            {settings.storeNameAr}
-          </div>
+            style={{ marginTop: "1.2mm", alignItems: "center", justifyContent: "center" }}
+          />
         </div>
 
         {/* Every detail in English, then every detail in Arabic. */}
@@ -102,13 +101,13 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
           </div>
           <div className="text-right">
             <div className="uppercase" style={key}><Pair en={L.number.en} ar={L.number.ar} /></div>
-            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO }}>{invoice.number}</div>
+            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
             <div className="uppercase" style={{ ...key, marginTop: "2mm" }}><Pair en={L.date.en} ar={L.date.ar} /></div>
-            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO }}>{dmy(invoice.date)}</div>
+            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
             {invoice.poNumber && (
               <>
                 <div className="uppercase" style={{ ...key, marginTop: "2mm" }}><Pair en={L.poNumber.en} ar={L.poNumber.ar} /></div>
-                <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO }}>{invoice.poNumber}</div>
+                <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
               </>
             )}
           </div>
@@ -247,7 +246,10 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 style={{ borderTop: `.4mm solid ${INK}`, borderBottom: `.5mm double ${INK}`, fontSize: "12.5pt", padding: "1.6mm 0" }}
               >
                 <Pair en={L.total.en} ar={L.total.ar} />
-                <span style={{ fontFamily: MONO }}>QAR {money(invoice.total)}</span>
+                <span style={{ fontFamily: MONO, whiteSpace: "nowrap" }}>{money(invoice.total)}</span>
+              </div>
+              <div className="text-right" style={{ fontSize: "6pt", color: "#6b6455", marginTop: ".8mm" }}>
+                <Pair en={`(${L.currencyNote.en})`} ar={L.currencyNote.ar} />
               </div>
             </div>
           )}
