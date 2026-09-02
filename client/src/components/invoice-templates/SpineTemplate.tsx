@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
-  Pair, ColHead, FitBox, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
+  Pair, ColHead, FitBox, docTitles, billToLabel, signaturesFor, L, money, dmy, lineDiscount, fillerRows,
 } from "./bilingual";
 
 /* ── SPINE ────────────────────────────────────────────────────────────────────
@@ -94,7 +94,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
                   <span
                     dir={ltr ? "ltr" : "rtl"}
                     className={ltr ? "" : "font-arabic"}
-                    style={{ fontFamily: ltr ? MONO : undefined, fontSize: ltr ? "7pt" : "8pt", unicodeBidi: "embed" }}
+                    style={{ fontFamily: ltr ? MONO : undefined, fontSize: ltr ? "7pt" : "8pt", unicodeBidi: "isolate" }}
                   >
                     {v}
                   </span>
@@ -291,24 +291,24 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
           )}
         </div>
 
-        {/* ── Signatures, mirrored ────────────────────────────────────────── */}
-        {options?.showSignature !== false && (
-          <div className="grid gap-[6mm]" style={{ gridTemplateColumns: "1fr 1px 1fr", marginTop: "5mm" }}>
-            <div>
-              <div className="font-bold uppercase"
-                   style={{ borderTop: ".3mm solid #111", marginTop: "11mm", paddingTop: "1mm", fontSize: "6.6pt", letterSpacing: ".16em" }}>
-                <Pair en={isQT ? L.authorised.en : L.receiver.en} ar={isQT ? L.authorised.ar : L.receiver.ar} />
-              </div>
+        {/* ── Signatures. An invoice takes three; a delivery note two. ────── */}
+        {options?.showSignature !== false && (() => {
+          const sigs = signaturesFor(invoice.type);
+          return (
+            <div className="grid gap-[8mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, 1fr)`, marginTop: "6mm" }}>
+              {sigs.map((sg, i) => (
+                <div key={i}>
+                  <div className="font-bold uppercase"
+                       style={{ borderTop: ".3mm solid #111", marginTop: "11mm", paddingTop: "1mm",
+                                fontSize: "6.4pt", letterSpacing: ".14em" }}>
+                    <Pair en={sg.en} ar={sg.ar} />
+                  </div>
+                </div>
+              ))}
             </div>
-            <Axis />
-            <div className="text-right">
-              <div className="font-bold uppercase"
-                   style={{ borderTop: ".3mm solid #111", marginTop: "11mm", paddingTop: "1mm", fontSize: "6.6pt", letterSpacing: ".16em" }}>
-                <Pair en={L.company.en} ar={L.company.ar} />
-              </div>
-            </div>
-          </div>
-        )}
+          );
+        })()}
+
       </div>
     );
   },

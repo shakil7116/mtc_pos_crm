@@ -4,7 +4,7 @@ import { clsx } from "clsx";
 import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
-  Pair, ColHead, FitBox, docTitles, billToLabel, L, money, dmy, lineDiscount, fillerRows,
+  Pair, ColHead, FitBox, docTitles, billToLabel, signaturesFor, L, money, dmy, lineDiscount, fillerRows,
 } from "./bilingual";
 
 /* ── LEDGER ───────────────────────────────────────────────────────────────────
@@ -53,30 +53,30 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
         <div className="text-center" style={{ paddingBottom: "2.5mm", borderBottom: `.5mm solid ${INK}` }}>
           <FitBox
             text={settings.storeNameEn || ""}
-            width="120mm" height="8mm" widthMm={120} heightMm={8}
+            width="170mm" height="11mm" widthMm={170} heightMm={11}
             className="mx-auto uppercase font-semibold"
             style={{ letterSpacing: ".28em", alignItems: "center", justifyContent: "center" }}
           />
           <FitBox
             text={settings.storeNameAr || ""}
-            width="120mm" height="8mm" widthMm={120} heightMm={8} rtl
+            width="170mm" height="11mm" widthMm={170} heightMm={11} rtl
             className="mx-auto font-arabic font-bold"
             style={{ marginTop: "1.2mm", alignItems: "center", justifyContent: "center" }}
           />
         </div>
 
         {/* Every detail in English, then every detail in Arabic. */}
-        <div className="text-center" style={{ padding: "1.6mm 0", borderBottom: `.2mm solid ${INK}`, fontSize: "6.7pt" }}>
+        <div className="text-center" style={{ padding: "1.6mm 0", borderBottom: `.2mm solid ${INK}`, fontSize: "7.6pt" }}>
           <div>
             {L.poBox.en} <span style={{ fontFamily: MONO }}>{settings.poBox}</span>
             {"  ·  "}{L.phone.en} <span style={{ fontFamily: MONO }}>{settings.phone}</span>
             {"  ·  "}{L.cr.en} <span style={{ fontFamily: MONO }}>{settings.crNumber}</span>
             {"  ·  "}{settings.addressEn}
           </div>
-          <div className="font-arabic" dir="rtl" style={{ fontSize: "7.6pt", marginTop: ".8mm" }}>
-            {L.poBox.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "embed" }}>{settings.poBox}</span>
-            {"  ·  "}{L.phone.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "embed" }}>{settings.phone}</span>
-            {"  ·  "}{L.cr.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "embed" }}>{settings.crNumber}</span>
+          <div className="font-arabic" dir="rtl" style={{ fontSize: "8.4pt", marginTop: "1mm" }}>
+            {L.poBox.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.poBox}</span>
+            {"  ·  "}{L.phone.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.phone}</span>
+            {"  ·  "}{L.cr.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.crNumber}</span>
             {"  ·  "}{settings.addressAr}
           </div>
         </div>
@@ -204,22 +204,21 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
 
             {!isDN && !isQT && <div style={{ marginTop: "2mm" }}><TermsFooter terms={invoice.terms} /></div>}
 
-            {options?.showSignature !== false && (
-              <div className="grid grid-cols-2 gap-[10mm]" style={{ marginTop: "6mm" }}>
-                <div>
-                  <div style={{ borderBottom: `.25mm solid ${INK}`, height: "11mm" }} />
-                  <div className="uppercase" style={{ ...key, marginTop: "1mm" }}>
-                    <Pair en={isQT ? L.authorised.en : L.receiver.en} ar={isQT ? L.authorised.ar : L.receiver.ar} />
-                  </div>
+            {options?.showSignature !== false && (() => {
+              const sigs = signaturesFor(invoice.type);
+              return (
+                <div className="grid gap-[8mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, 1fr)`, marginTop: "6mm" }}>
+                  {sigs.map((sg, i) => (
+                    <div key={i}>
+                      <div style={{ borderBottom: `.25mm solid ${INK}`, height: "11mm" }} />
+                      <div className="uppercase" style={{ ...key, marginTop: "1mm" }}>
+                        <Pair en={sg.en} ar={sg.ar} />
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <div style={{ borderBottom: `.25mm solid ${INK}`, height: "11mm" }} />
-                  <div className="uppercase" style={{ ...key, marginTop: "1mm" }}>
-                    <Pair en={L.company.en} ar={L.company.ar} />
-                  </div>
-                </div>
-              </div>
-            )}
+              );
+            })()}
           </div>
 
           {!isDN && (
