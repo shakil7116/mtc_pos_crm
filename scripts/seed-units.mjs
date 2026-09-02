@@ -40,7 +40,7 @@ const UNITS = [
   ["BOX",    "Box"],
   ["CTN",    "Carton"],
   ["PKT",    "Packet"],
-  ["BDL",    "Bundle — steel bars, ply, timber"],
+  ["BUNDLE", "Bundle — steel bars, ply, timber"],
   ["ROLL",   "Roll — membrane, mesh, tape"],
   ["COIL",   "Coil — wire, cable"],
   ["DRUM",   "Drum"],
@@ -52,9 +52,10 @@ const UNITS = [
   ["PALLET", "Pallet"],
   ["SHEET",  "Sheet — ply, gypsum, MDF"],
   // ── Length ──
-  ["MTR",    "Metre"],
+  ["MTR",    "Metre — pipe, cable, profile sold loose"],
+  ["CM",     "Centimetre — a cut length"],
   ["RM",     "Running metre — skirting, profile, pipe"],
-  ["LEN",    "Length — a full bar or pipe as supplied"],
+  ["LENGTH", "Length — a full bar or pipe as supplied"],
   ["FT",     "Foot"],
   ["RFT",    "Running foot"],
   // ── Area ──
@@ -81,7 +82,9 @@ const UNITS = [
 // spelling of a unit already in the list.
 const REPLACE = {
   "GALLON": "GAL",
-  "length": "LEN",
+  "length": "LENGTH",
+  "LEN":    "LENGTH",
+  "BDL":    "BUNDLE",
   "sheet":  "SHEET",
   "nos":    "PCS",
   "PIECE":  "PCS",
