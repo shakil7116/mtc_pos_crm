@@ -30,7 +30,7 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
     const isQT = invoice.type === "QT";
     const title = docTitles(invoice);
     const to = billToLabel(invoice.type);
-    const cols = isDN ? 4 : 6;
+    const cols = isDN ? 4 : 7;
 
     const netSubtotal = invoice.items.reduce((s, it) => s + (Number(it.amount) || 0), 0);
     const gross = Number(invoice.subtotal ?? netSubtotal) || netSubtotal;
@@ -125,8 +125,9 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                   { l: L.qty, w: "15mm", a: "center" as const },
                   { l: L.unit, w: "17mm", a: "center" as const },
                   ...(isDN ? [] : [
-                    { l: L.price, w: "24mm", a: "right" as const },
-                    { l: L.amount, w: "32mm", a: "right" as const },
+                    { l: L.price, w: "23mm", a: "right" as const },
+                    { l: L.disc, w: "20mm", a: "right" as const },
+                    { l: L.amount, w: "30mm", a: "right" as const },
                   ]),
                 ].map((c, i) => (
                   <th
@@ -151,16 +152,12 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                     <td className="text-center" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{i + 1}</td>
                     <td className="uppercase" style={{ padding: "1mm 2mm", fontSize: "9.4pt", overflowWrap: "anywhere" }}>
                       {it.description}
-                      {d > 0 && (
-                        <span style={{ fontFamily: MONO, fontSize: "7pt", color: "#6b6455" }}>
-                          {"  "}(less {money(d)})
-                        </span>
-                      )}
                     </td>
                     <td className="text-center" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{it.qty}</td>
                     <td className="text-center uppercase" style={{ padding: "1mm 2mm", fontSize: "9.4pt" }}>{it.unit}</td>
                     {!isDN && <td className="text-right" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.price)}</td>}
-                    {!isDN && <td className="text-right" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.amount)}</td>}
+                    {!isDN && <td className="text-right" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap", color: d > 0 ? INK : "#B9B2A2" }}>{d > 0 ? money(d) : "—"}</td>}
+                    {!isDN && <td className="text-right font-semibold" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.amount)}</td>}
                   </tr>
                 );
               })}
