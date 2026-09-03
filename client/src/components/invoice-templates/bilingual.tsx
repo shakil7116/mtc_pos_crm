@@ -34,7 +34,7 @@ function estimateFit(text: string, widthMm: number, heightMm: number, rtl: boole
   const chars = Math.max(1, (text || "").trim().length);
   // Rough average advance per character, as a fraction of the point size.
   const advance = rtl ? 0.44 : 0.40;
-  const lineFactor = 1.06;
+  const lineFactor = 1.22;
   let best = 6;
   for (let lines = 1; lines <= 3; lines++) {
     const widthPt = (widthMm / MM_PER_PT) * lines;
@@ -59,18 +59,42 @@ export function FitBox({
   const [size, setSize] = useState(() => estimateFit(text, widthMm, heightMm, rtl));
 
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    // Largest size that still fits: start at the ceiling and come down. Half a
-    // point at a time is under 50 passes and imperceptible.
-    let pt = max;
-    const fits = () => el.scrollHeight <= el.clientHeight + 1 && el.scrollWidth <= el.clientWidth + 1;
-    el.style.fontSize = `${pt}pt`;
-    while (pt > min && !fits()) {
-      pt -= 0.5;
+    let cancelled = false;
+
+    const measure = () => {
+      const el = ref.current;
+      if (!el || cancelled) return;
+      // Largest size that still fits: start at the ceiling and come down. Half a
+      // point at a time is under 50 passes and imperceptible.
+      let pt = max;
+      // Measure the INK, not the line box. scrollHeight reports the line boxes,
+      // and glyphs — Arabic descenders above all — reach past them, so the loop
+      // kept declaring a fit while the letters were still being cut off.
+      const fits = () => {
+        const rg = document.createRange();
+        rg.selectNodeContents(el);
+        const ink = rg.getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return ink.width <= box.width + 0.5 && ink.height <= box.height + 0.5;
+      };
       el.style.fontSize = `${pt}pt`;
-    }
-    setSize(pt);
+      while (pt > min && !fits()) {
+        pt -= 0.5;
+        el.style.fontSize = `${pt}pt`;
+      }
+      setSize(pt);
+    };
+
+    measure();
+
+    // MEASURE AGAIN once the real fonts have arrived. Fitting against a fallback
+    // face picks a size for the wrong letterforms — then the real font loads,
+    // the name no longer fits, and it is clipped out of sight. That is exactly
+    // how the company name disappeared from the letterhead.
+    const fonts: any = typeof document !== "undefined" ? (document as any).fonts : null;
+    if (fonts?.ready?.then) fonts.ready.then(() => measure());
+
+    return () => { cancelled = true; };
   }, [text, width, height, max, min]);
 
   return (
@@ -83,10 +107,10 @@ export function FitBox({
       data-fit={max}
       data-fit-min={min}
       style={{
-        width, height, fontSize: `${size}pt`, lineHeight: 1.06,
+        width, height, fontSize: `${size}pt`, lineHeight: 1.22,
         display: "flex", alignItems: "center",
         justifyContent: rtl ? "flex-start" : "flex-start",
-        overflow: "hidden", ...style,
+        overflow: "visible", ...style,
       }}
     >
       {text}

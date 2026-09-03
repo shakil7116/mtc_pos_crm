@@ -68,7 +68,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
               <div>
                 <FitBox
                   text={settings.storeNameEn || ""}
-                  width="78mm" height="12mm" widthMm={78} heightMm={12}
+                  width="78mm" height="13.5mm" widthMm={78} heightMm={13.5}
                   className="uppercase font-bold"
                   style={{ color: MAROON }}
                 />
@@ -93,7 +93,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
               <div>
                 <FitBox
                   text={settings.storeNameAr || ""}
-                  width="78mm" height="12mm" widthMm={78} heightMm={12} rtl
+                  width="78mm" height="13.5mm" widthMm={78} heightMm={13.5} rtl
                   className="font-arabic font-bold ml-auto"
                   style={{ color: MAROON }}
                 />

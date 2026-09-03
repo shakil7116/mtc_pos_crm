@@ -184,18 +184,29 @@ ${css}
   // The same fit the component runs in the app: grow each name to the largest
   // size that still fits its box, so this page shows the real result rather
   // than the server-side estimate.
-  addEventListener("load", function () {
+  function fitAll() {
     document.querySelectorAll("[data-fit]").forEach(function (el) {
       var max = parseFloat(el.getAttribute("data-fit")) || 30;
       var min = parseFloat(el.getAttribute("data-fit-min")) || 6;
       var pt = max;
       el.style.fontSize = pt + "pt";
-      while (pt > min && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
+      var fits = function () {
+        var rg = document.createRange();
+        rg.selectNodeContents(el);
+        var ink = rg.getBoundingClientRect();
+        var box = el.getBoundingClientRect();
+        return ink.width <= box.width + 0.5 && ink.height <= box.height + 0.5;
+      };
+      while (pt > min && !fits()) {
         pt -= 0.5;
         el.style.fontSize = pt + "pt";
       }
     });
-  });
+  }
+  addEventListener("load", fitAll);
+  // Again once the webfonts have actually arrived — fitting against a fallback
+  // face sizes the name for the wrong letterforms.
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitAll);
 </script>
 <div class="wrap">
   <h1>Spine and Ledger</h1>
