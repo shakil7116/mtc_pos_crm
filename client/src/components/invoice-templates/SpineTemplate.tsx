@@ -48,121 +48,133 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
         )}
         style={{ boxSizing: "border-box", margin: "0 auto", padding: "10mm", fontFamily: SANS }}
       >
-        {/* ── Letterhead: English | axis | Arabic ─────────────────────────── */}
-        <div className="grid items-start gap-[6mm]" style={{ gridTemplateColumns: "1fr 1px 1fr" }}>
-          <div>
-            <FitBox
-              text={settings.storeNameEn || ""}
-              width="78mm" height="12mm" widthMm={78} heightMm={12}
-              className="uppercase font-bold"
-              style={{ color: MAROON }}
-            />
-            <div className="mt-[2.5mm]" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
-              {[
-                [L.poBox.en, settings.poBox],
-                [L.phone.en, settings.phone],
-                [L.cr.en, settings.crNumber],
-                [L.address.en, settings.addressEn],
-              ].map(([k, v]) => (
-                <div key={k} className="flex items-center gap-[1.5mm]" style={{ height: "4.4mm" }}>
-                  <b style={{ color: MAROON, fontSize: "6.4pt", letterSpacing: ".06em" }}>{k}</b>
-                  <span dir="ltr" style={{ fontFamily: k === L.address.en ? SANS : MONO }}>{v}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <Axis />
-
-          {/* The Arabic column is a mirror: every line starts at the right edge. */}
-          <div>
-            <FitBox
-              text={settings.storeNameAr || ""}
-              width="78mm" height="12mm" widthMm={78} heightMm={12} rtl
-              className="font-arabic font-bold ml-auto"
-              style={{ color: MAROON }}
-            />
-            <div className="mt-[2.5mm] text-right" dir="rtl" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
-              {[
-                [L.poBox.ar, settings.poBox, true],
-                [L.phone.ar, settings.phone, true],
-                [L.cr.ar, settings.crNumber, true],
-                [L.address.ar, settings.addressAr, false],
-              ].map(([k, v, ltr]) => (
-                <div key={String(k)} className="flex items-center gap-[1.5mm]" style={{ height: "4.4mm" }}>
-                  <b className="font-arabic" style={{ color: MAROON, fontSize: "7.6pt" }}>{k}</b>
-                  <span
-                    dir={ltr ? "ltr" : "rtl"}
-                    className={ltr ? "" : "font-arabic"}
-                    style={{ fontFamily: ltr ? MONO : undefined, fontSize: ltr ? "7pt" : "8pt", unicodeBidi: "isolate" }}
-                  >
-                    {v}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* ── The title sits ON the axis ──────────────────────────────────── */}
-        <div
-          className="mx-auto text-center text-white"
-          style={{ background: MAROON, padding: "2mm 10mm", margin: "5mm auto 1.5mm", borderRadius: ".6mm" }}
-        >
-          <div className="font-bold uppercase leading-none" style={{ fontSize: "15pt", letterSpacing: ".28em" }}>
-            {title.en}
-          </div>
-          <div className="font-arabic font-bold" style={{ fontSize: "12pt", lineHeight: 1.3 }} dir="rtl">
-            {title.ar}
-          </div>
-        </div>
-
-        {/* ── Who and when ────────────────────────────────────────────────── */}
-        <div
-          className="grid items-center gap-[6mm]"
-          style={{
-            gridTemplateColumns: "1fr 1px 1fr",
-            borderTop: `.4mm solid ${MAROON}`, borderBottom: `.4mm solid ${MAROON}`,
-            padding: "2mm 0", marginTop: "3mm",
-          }}
-        >
-          <div>
-            <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
-              <Pair en={to.en} ar={to.ar} />
-            </div>
-            <div className="font-bold uppercase" style={{ fontSize: "11pt" }}>
-              {invoice.customerName || "CASH CUSTOMER"}
-            </div>
-          </div>
-          <Axis />
-          <div className="flex gap-[8mm] justify-end">
-            <div>
-              <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
-                <Pair en={L.number.en} ar={L.number.ar} />
-              </div>
-              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
-            </div>
-            <div>
-              <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
-                <Pair en={L.date.en} ar={L.date.ar} />
-              </div>
-              <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
-            </div>
-            {invoice.poNumber && (
-              <div>
-                <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
-                  <Pair en={L.poNumber.en} ar={L.poNumber.ar} />
-                </div>
-                <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* ── Items. Quantities centred, money right — decimals must stack. ── */}
         <div className="flex-1" style={{ marginTop: "3mm" }}>
-          <table className="w-full border-collapse">
-            <thead>
+          <table className="w-full border-collapse" style={{ pageBreakInside: "auto" }}>
+            <thead style={{ display: "table-header-group" }}>
+              {/* The letterhead lives INSIDE the table head, so the browser
+                  repeats it on every printed page. A second page of a long
+                  invoice is still on company paper, with the column headings
+                  above the rows — and the totals, which sit after the table,
+                  appear once, on the last page. */}
+              <tr>
+                <th colSpan={cols} style={{
+                  padding: 0, background: "transparent", color: "inherit",
+                  textAlign: "left", fontWeight: "inherit", letterSpacing: "normal",
+                  textTransform: "none", border: "none", whiteSpace: "normal",
+                }}>
+            {/* ── Letterhead: English | axis | Arabic ─────────────────────────── */}
+            <div className="grid items-start gap-[6mm]" style={{ gridTemplateColumns: "1fr 1px 1fr" }}>
+              <div>
+                <FitBox
+                  text={settings.storeNameEn || ""}
+                  width="78mm" height="12mm" widthMm={78} heightMm={12}
+                  className="uppercase font-bold"
+                  style={{ color: MAROON }}
+                />
+                <div className="mt-[2.5mm]" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
+                  {[
+                    [L.poBox.en, settings.poBox],
+                    [L.phone.en, settings.phone],
+                    [L.cr.en, settings.crNumber],
+                    [L.address.en, settings.addressEn],
+                  ].map(([k, v]) => (
+                    <div key={k} className="flex items-center gap-[1.5mm]" style={{ height: "4.4mm" }}>
+                      <b style={{ color: MAROON, fontSize: "6.4pt", letterSpacing: ".06em" }}>{k}</b>
+                      <span dir="ltr" style={{ fontFamily: k === L.address.en ? SANS : MONO }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <Axis />
+
+              {/* The Arabic column is a mirror: every line starts at the right edge. */}
+              <div>
+                <FitBox
+                  text={settings.storeNameAr || ""}
+                  width="78mm" height="12mm" widthMm={78} heightMm={12} rtl
+                  className="font-arabic font-bold ml-auto"
+                  style={{ color: MAROON }}
+                />
+                <div className="mt-[2.5mm] text-right" dir="rtl" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
+                  {[
+                    [L.poBox.ar, settings.poBox, true],
+                    [L.phone.ar, settings.phone, true],
+                    [L.cr.ar, settings.crNumber, true],
+                    [L.address.ar, settings.addressAr, false],
+                  ].map(([k, v, ltr]) => (
+                    <div key={String(k)} className="flex items-center gap-[1.5mm]" style={{ height: "4.4mm" }}>
+                      <b className="font-arabic" style={{ color: MAROON, fontSize: "7.6pt" }}>{k}</b>
+                      <span
+                        dir={ltr ? "ltr" : "rtl"}
+                        className={ltr ? "" : "font-arabic"}
+                        style={{ fontFamily: ltr ? MONO : undefined, fontSize: ltr ? "7pt" : "8pt", unicodeBidi: "isolate" }}
+                      >
+                        {v}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            {/* ── The title sits ON the axis ──────────────────────────────────── */}
+            <div
+              className="mx-auto text-center text-white"
+              style={{ background: MAROON, padding: "2mm 10mm", margin: "5mm auto 1.5mm", borderRadius: ".6mm" }}
+            >
+              <div className="font-bold uppercase leading-none" style={{ fontSize: "15pt", letterSpacing: ".28em" }}>
+                {title.en}
+              </div>
+              <div className="font-arabic font-bold" style={{ fontSize: "12pt", lineHeight: 1.3 }} dir="rtl">
+                {title.ar}
+              </div>
+            </div>
+
+            {/* ── Who and when ────────────────────────────────────────────────── */}
+            <div
+              className="grid items-center gap-[6mm]"
+              style={{
+                gridTemplateColumns: "1fr 1px 1fr",
+                borderTop: `.4mm solid ${MAROON}`, borderBottom: `.4mm solid ${MAROON}`,
+                padding: "2mm 0", marginTop: "3mm",
+              }}
+            >
+              <div>
+                <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
+                  <Pair en={to.en} ar={to.ar} />
+                </div>
+                <div className="font-bold uppercase" style={{ fontSize: "11pt" }}>
+                  {invoice.customerName || "CASH CUSTOMER"}
+                </div>
+              </div>
+              <Axis />
+              <div className="flex gap-[8mm] justify-end">
+                <div>
+                  <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
+                    <Pair en={L.number.en} ar={L.number.ar} />
+                  </div>
+                  <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
+                </div>
+                <div>
+                  <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
+                    <Pair en={L.date.en} ar={L.date.ar} />
+                  </div>
+                  <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
+                </div>
+                {invoice.poNumber && (
+                  <div>
+                    <div className="font-bold uppercase" style={{ fontSize: "6.2pt", letterSpacing: ".2em", color: MAROON }}>
+                      <Pair en={L.poNumber.en} ar={L.poNumber.ar} />
+                    </div>
+                    <div className="font-bold" style={{ fontSize: "11pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+                </th>
+              </tr>
               <tr style={{ background: MAROON, color: "#fff" }}>
                 <th className="text-center" style={{ width: "9mm", padding: "1.4mm 2mm", fontSize: "7pt", letterSpacing: ".12em" }}>
                   <ColHead en={L.no.en} ar={L.no.ar} />

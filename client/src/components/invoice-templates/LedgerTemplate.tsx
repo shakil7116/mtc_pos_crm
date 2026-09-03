@@ -49,78 +49,90 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
         )}
         style={{ boxSizing: "border-box", margin: "0 auto", padding: "10mm", fontFamily: SERIF, color: INK }}
       >
-        {/* ── The two names, stacked on the centre of the page ────────────── */}
-        <div className="text-center" style={{ paddingBottom: "2.5mm", borderBottom: `.5mm solid ${INK}` }}>
-          <FitBox
-            text={settings.storeNameEn || ""}
-            width="170mm" height="11mm" widthMm={170} heightMm={11}
-            className="mx-auto uppercase font-semibold"
-            style={{ letterSpacing: ".10em", alignItems: "center", justifyContent: "center" }}
-          />
-          <FitBox
-            text={settings.storeNameAr || ""}
-            width="170mm" height="11mm" widthMm={170} heightMm={11} rtl
-            className="mx-auto font-arabic font-bold"
-            style={{ marginTop: "1.2mm", alignItems: "center", justifyContent: "center" }}
-          />
-        </div>
-
-        {/* Every detail in English, then every detail in Arabic. */}
-        <div className="text-center" style={{ padding: "1.6mm 0", borderBottom: `.2mm solid ${INK}`, fontSize: "7.6pt" }}>
-          <div>
-            {L.poBox.en} <span style={{ fontFamily: MONO }}>{settings.poBox}</span>
-            {"  ·  "}{L.phone.en} <span style={{ fontFamily: MONO }}>{settings.phone}</span>
-            {"  ·  "}{L.cr.en} <span style={{ fontFamily: MONO }}>{settings.crNumber}</span>
-            {"  ·  "}{settings.addressEn}
-          </div>
-          <div className="font-arabic" dir="rtl" style={{ fontSize: "8.4pt", marginTop: "1mm" }}>
-            {L.poBox.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.poBox}</span>
-            {"  ·  "}{L.phone.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.phone}</span>
-            {"  ·  "}{L.cr.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.crNumber}</span>
-            {"  ·  "}{settings.addressAr}
-          </div>
-        </div>
-
-        {/* ── Title ───────────────────────────────────────────────────────── */}
-        <div className="text-center" style={{ margin: "3.5mm 0 1mm" }}>
-          <div className="uppercase font-bold" style={{ fontSize: "16pt", letterSpacing: ".5em" }}>{title.en}</div>
-          <div className="font-arabic font-bold" dir="rtl" style={{ fontSize: "12pt", marginTop: ".8mm" }}>{title.ar}</div>
-        </div>
-        <div style={{ height: ".2mm", background: INK }} />
-
-        {/* ── Who and when ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-[6mm]" style={{ margin: "2.5mm 0 1.5mm", fontSize: "8.4pt" }}>
-          <div>
-            <div className="uppercase" style={key}><Pair en={to.en} ar={to.ar} /></div>
-            <div className="font-semibold uppercase" style={{ fontSize: "10.5pt" }}>
-              {invoice.customerName || "CASH CUSTOMER"}
-            </div>
-            {invoice.customerPhone && (
-              <div dir="ltr" style={{ fontFamily: MONO, fontSize: "8pt" }}>{invoice.customerPhone}</div>
-            )}
-          </div>
-          <div className="flex gap-[7mm] justify-end items-start">
-            <div className="text-right">
-              <div className="uppercase" style={key}><Pair en={L.number.en} ar={L.number.ar} /></div>
-              <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
-            </div>
-            <div className="text-right">
-              <div className="uppercase" style={key}><Pair en={L.date.en} ar={L.date.ar} /></div>
-              <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
-            </div>
-            {invoice.poNumber && (
-              <div className="text-right">
-                <div className="uppercase" style={key}><Pair en={L.poNumber.en} ar={L.poNumber.ar} /></div>
-                <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
-              </div>
-            )}
-          </div>
-        </div>
-
         {/* ── Items: hairlines and dotted leaders, no fills ───────────────── */}
         <div className="flex-1">
-          <table className="w-full border-collapse">
-            <thead>
+          <table className="w-full border-collapse" style={{ pageBreakInside: "auto" }}>
+            <thead style={{ display: "table-header-group" }}>
+              {/* The letterhead lives INSIDE the table head, so the browser
+                  repeats it on every printed page. A second page of a long
+                  invoice is still on company paper, with the column headings
+                  above the rows — and the totals, which sit after the table,
+                  appear once, on the last page. */}
+              <tr>
+                <th colSpan={cols} style={{
+                  padding: 0, background: "transparent", color: "inherit",
+                  textAlign: "left", fontWeight: "inherit", letterSpacing: "normal",
+                  textTransform: "none", border: "none", whiteSpace: "normal",
+                }}>
+            {/* ── The two names, stacked on the centre of the page ────────────── */}
+            <div className="text-center" style={{ paddingBottom: "2.5mm", borderBottom: `.5mm solid ${INK}` }}>
+              <FitBox
+                text={settings.storeNameEn || ""}
+                width="170mm" height="11mm" widthMm={170} heightMm={11}
+                className="mx-auto uppercase font-semibold"
+                style={{ letterSpacing: ".10em", alignItems: "center", justifyContent: "center" }}
+              />
+              <FitBox
+                text={settings.storeNameAr || ""}
+                width="170mm" height="11mm" widthMm={170} heightMm={11} rtl
+                className="mx-auto font-arabic font-bold"
+                style={{ marginTop: "1.2mm", alignItems: "center", justifyContent: "center" }}
+              />
+            </div>
+
+            {/* Every detail in English, then every detail in Arabic. */}
+            <div className="text-center" style={{ padding: "1.6mm 0", borderBottom: `.2mm solid ${INK}`, fontSize: "7.6pt" }}>
+              <div>
+                {L.poBox.en} <span style={{ fontFamily: MONO }}>{settings.poBox}</span>
+                {"  ·  "}{L.phone.en} <span style={{ fontFamily: MONO }}>{settings.phone}</span>
+                {"  ·  "}{L.cr.en} <span style={{ fontFamily: MONO }}>{settings.crNumber}</span>
+                {"  ·  "}{settings.addressEn}
+              </div>
+              <div className="font-arabic" dir="rtl" style={{ fontSize: "8.4pt", marginTop: "1mm" }}>
+                {L.poBox.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.poBox}</span>
+                {"  ·  "}{L.phone.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.phone}</span>
+                {"  ·  "}{L.cr.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.crNumber}</span>
+                {"  ·  "}{settings.addressAr}
+              </div>
+            </div>
+
+            {/* ── Title ───────────────────────────────────────────────────────── */}
+            <div className="text-center" style={{ margin: "3.5mm 0 1mm" }}>
+              <div className="uppercase font-bold" style={{ fontSize: "16pt", letterSpacing: ".5em" }}>{title.en}</div>
+              <div className="font-arabic font-bold" dir="rtl" style={{ fontSize: "12pt", marginTop: ".8mm" }}>{title.ar}</div>
+            </div>
+            <div style={{ height: ".2mm", background: INK }} />
+
+            {/* ── Who and when ────────────────────────────────────────────────── */}
+            <div className="grid grid-cols-2 gap-[6mm]" style={{ margin: "2.5mm 0 1.5mm", fontSize: "8.4pt" }}>
+              <div>
+                <div className="uppercase" style={key}><Pair en={to.en} ar={to.ar} /></div>
+                <div className="font-semibold uppercase" style={{ fontSize: "10.5pt" }}>
+                  {invoice.customerName || "CASH CUSTOMER"}
+                </div>
+                {invoice.customerPhone && (
+                  <div dir="ltr" style={{ fontFamily: MONO, fontSize: "8pt" }}>{invoice.customerPhone}</div>
+                )}
+              </div>
+              <div className="flex gap-[7mm] justify-end items-start">
+                <div className="text-right">
+                  <div className="uppercase" style={key}><Pair en={L.number.en} ar={L.number.ar} /></div>
+                  <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
+                </div>
+                <div className="text-right">
+                  <div className="uppercase" style={key}><Pair en={L.date.en} ar={L.date.ar} /></div>
+                  <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
+                </div>
+                {invoice.poNumber && (
+                  <div className="text-right">
+                    <div className="uppercase" style={key}><Pair en={L.poNumber.en} ar={L.poNumber.ar} /></div>
+                    <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+                </th>
+              </tr>
               <tr>
                 {[
                   { l: L.no, w: "9mm", a: "center" as const },
