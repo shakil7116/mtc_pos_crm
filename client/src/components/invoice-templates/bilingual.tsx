@@ -112,7 +112,7 @@ export function Pair({
   en: string; ar: string; className?: string; arClass?: string; scale?: number;
 }) {
   return (
-    <span className={`inline-flex items-baseline gap-[3px] whitespace-nowrap ${className}`}>
+    <span className={`inline-flex items-baseline gap-[3px] ${className}`}>
       <span>{en}</span>
       <span className="opacity-40 font-normal">/</span>
       <span

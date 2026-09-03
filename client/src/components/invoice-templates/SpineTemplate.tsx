@@ -221,7 +221,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
         {/* ── Words | axis | totals ───────────────────────────────────────── */}
         <div
           className="grid gap-[5mm] mt-auto print:break-inside-avoid"
-          style={{ gridTemplateColumns: isDN ? "1fr" : "1fr 1px 66mm", paddingTop: "3mm" }}
+          style={{ gridTemplateColumns: isDN ? "1fr" : "minmax(0, 1fr) 1px 66mm", paddingTop: "3mm" }}
         >
           <div>
             {!isDN && options?.showAmountInWords !== false && (
@@ -295,7 +295,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
         {options?.showSignature !== false && (() => {
           const sigs = signaturesFor(invoice.type);
           return (
-            <div className="grid gap-[8mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, 1fr)`, marginTop: "6mm" }}>
+            <div className="grid gap-[6mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, minmax(0, 1fr))`, marginTop: "6mm" }}>
               {sigs.map((sg, i) => (
                 <div key={i}>
                   <div className="font-bold uppercase"

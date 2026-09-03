@@ -55,7 +55,7 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
             text={settings.storeNameEn || ""}
             width="170mm" height="11mm" widthMm={170} heightMm={11}
             className="mx-auto uppercase font-semibold"
-            style={{ letterSpacing: ".28em", alignItems: "center", justifyContent: "center" }}
+            style={{ letterSpacing: ".10em", alignItems: "center", justifyContent: "center" }}
           />
           <FitBox
             text={settings.storeNameAr || ""}
@@ -82,14 +82,14 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
         </div>
 
         {/* ── Title ───────────────────────────────────────────────────────── */}
-        <div className="text-center" style={{ margin: "6mm 0 1mm" }}>
+        <div className="text-center" style={{ margin: "3.5mm 0 1mm" }}>
           <div className="uppercase font-bold" style={{ fontSize: "16pt", letterSpacing: ".5em" }}>{title.en}</div>
           <div className="font-arabic font-bold" dir="rtl" style={{ fontSize: "12pt", marginTop: ".8mm" }}>{title.ar}</div>
         </div>
         <div style={{ height: ".2mm", background: INK }} />
 
         {/* ── Who and when ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-[6mm]" style={{ margin: "4mm 0 2mm", fontSize: "8.4pt" }}>
+        <div className="grid grid-cols-2 gap-[6mm]" style={{ margin: "2.5mm 0 1.5mm", fontSize: "8.4pt" }}>
           <div>
             <div className="uppercase" style={key}><Pair en={to.en} ar={to.ar} /></div>
             <div className="font-semibold uppercase" style={{ fontSize: "10.5pt" }}>
@@ -99,16 +99,20 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
               <div dir="ltr" style={{ fontFamily: MONO, fontSize: "8pt" }}>{invoice.customerPhone}</div>
             )}
           </div>
-          <div className="text-right">
-            <div className="uppercase" style={key}><Pair en={L.number.en} ar={L.number.ar} /></div>
-            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
-            <div className="uppercase" style={{ ...key, marginTop: "2mm" }}><Pair en={L.date.en} ar={L.date.ar} /></div>
-            <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
+          <div className="flex gap-[7mm] justify-end items-start">
+            <div className="text-right">
+              <div className="uppercase" style={key}><Pair en={L.number.en} ar={L.number.ar} /></div>
+              <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.number}</div>
+            </div>
+            <div className="text-right">
+              <div className="uppercase" style={key}><Pair en={L.date.en} ar={L.date.ar} /></div>
+              <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{dmy(invoice.date)}</div>
+            </div>
             {invoice.poNumber && (
-              <>
-                <div className="uppercase" style={{ ...key, marginTop: "2mm" }}><Pair en={L.poNumber.en} ar={L.poNumber.ar} /></div>
+              <div className="text-right">
+                <div className="uppercase" style={key}><Pair en={L.poNumber.en} ar={L.poNumber.ar} /></div>
                 <div className="font-semibold" style={{ fontSize: "10.5pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{invoice.poNumber}</div>
-              </>
+              </div>
             )}
           </div>
         </div>
@@ -148,20 +152,20 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 const d = lineDiscount(it);
                 return (
                   <tr key={i} className="print:break-inside-avoid" style={{ borderBottom: ".12mm dotted #B9B2A2" }}>
-                    <td className="text-center" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{i + 1}</td>
-                    <td className="uppercase" style={{ padding: "1mm 2mm", fontSize: "9.4pt", overflowWrap: "anywhere" }}>
+                    <td className="text-center" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{i + 1}</td>
+                    <td className="uppercase" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", overflowWrap: "anywhere" }}>
                       {it.description}
                     </td>
-                    <td className="text-center" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{it.qty}</td>
-                    <td className="text-center uppercase" style={{ padding: "1mm 2mm", fontSize: "9.4pt" }}>{it.unit}</td>
-                    {!isDN && <td className="text-right" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.price)}</td>}
-                    {!isDN && <td className="text-right" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap", color: d > 0 ? INK : "#B9B2A2" }}>{d > 0 ? money(d) : "—"}</td>}
-                    {!isDN && <td className="text-right font-semibold" style={{ padding: "1mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.amount)}</td>}
+                    <td className="text-center" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{it.qty}</td>
+                    <td className="text-center uppercase" style={{ padding: ".7mm 2mm", fontSize: "9.4pt" }}>{it.unit}</td>
+                    {!isDN && <td className="text-right" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.price)}</td>}
+                    {!isDN && <td className="text-right" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap", color: d > 0 ? INK : "#B9B2A2" }}>{d > 0 ? money(d) : "—"}</td>}
+                    {!isDN && <td className="text-right font-semibold" style={{ padding: ".7mm 2mm", fontSize: "9.4pt", fontFamily: MONO, whiteSpace: "nowrap" }}>{money(it.amount)}</td>}
                   </tr>
                 );
               })}
               {fillerRows(invoice.items.length).map((i) => (
-                <tr key={`f${i}`}><td colSpan={cols} style={{ height: "5.4mm" }} /></tr>
+                <tr key={`f${i}`}><td colSpan={cols} style={{ height: "5mm" }} /></tr>
               ))}
             </tbody>
           </table>
@@ -170,11 +174,11 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
         {/* ── Words and signatures | totals ───────────────────────────────── */}
         <div
           className="grid gap-[6mm] mt-auto print:break-inside-avoid"
-          style={{ gridTemplateColumns: isDN ? "1fr" : "1fr 66mm", paddingTop: "3mm" }}
+          style={{ gridTemplateColumns: isDN ? "1fr" : "minmax(0, 1fr) 66mm", paddingTop: "3mm" }}
         >
-          <div>
+          <div style={{ minWidth: 0 }}>
             {!isDN && options?.showAmountInWords !== false && (
-              <div style={{ borderTop: `.15mm solid ${OCHRE}`, borderBottom: `.15mm solid ${OCHRE}`, padding: "2mm 0" }}>
+              <div style={{ borderTop: `.15mm solid ${OCHRE}`, borderBottom: `.15mm solid ${OCHRE}`, padding: "1.4mm 0" }}>
                 <div className="uppercase" style={{ ...key, fontSize: "5.9pt" }}>
                   <Pair en={L.words.en} ar={L.words.ar} />
                 </div>
@@ -207,10 +211,10 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
             {options?.showSignature !== false && (() => {
               const sigs = signaturesFor(invoice.type);
               return (
-                <div className="grid gap-[8mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, 1fr)`, marginTop: "6mm" }}>
+                <div className="grid gap-[6mm]" style={{ gridTemplateColumns: `repeat(${sigs.length}, minmax(0, 1fr))`, marginTop: "4mm" }}>
                   {sigs.map((sg, i) => (
                     <div key={i}>
-                      <div style={{ borderBottom: `.25mm solid ${INK}`, height: "11mm" }} />
+                      <div style={{ borderBottom: `.25mm solid ${INK}`, height: "8mm" }} />
                       <div className="uppercase" style={{ ...key, marginTop: "1mm" }}>
                         <Pair en={sg.en} ar={sg.ar} />
                       </div>

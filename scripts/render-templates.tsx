@@ -107,6 +107,17 @@ const qt: TemplateInvoice = {
   totalWords: "SEVEN THOUSAND FOUR HUNDRED AND TWENTY QATARI RIYALS ONLY",
 };
 
+// 32 lines: the real two-page case. Built from the same items, repeated, so the
+// only thing being tested is how the sheet behaves when it runs past one page.
+const many: TemplateInvoice = {
+  ...base,
+  number: "INV-100363",
+  items: Array.from({ length: 32 }, (_, i) => ({
+    ...items[i % items.length],
+    description: `${items[i % items.length].description} #${i + 1}`,
+  })),
+};
+
 const SHEETS: { title: string; note: string; invoice: TemplateInvoice; which: "spine" | "ledger" }[] = [
   { which: "spine",  title: "Spine · Credit invoice",  note: "Two PDC cheques, a line discount and a whole-invoice discount. The worst-case row is real: 12,500 SQM at 1,234,567.89.", invoice: base },
   { which: "ledger", title: "Ledger · Credit invoice", note: "Same document, same data — the other sheet.", invoice: base },
@@ -114,6 +125,8 @@ const SHEETS: { title: string; note: string; invoice: TemplateInvoice; which: "s
   { which: "ledger", title: "Ledger · Cash invoice",   note: "Paid in full, no cheques.", invoice: cash },
   { which: "spine",  title: "Spine · Delivery note",   note: "No price, no discount, no amount, no totals — with the site address and a maps QR the driver can scan.", invoice: dn },
   { which: "ledger", title: "Ledger · Delivery note",  note: "Same rules on the other sheet.", invoice: dn },
+  { which: "spine",  title: "Spine · 32 lines (two pages)", note: "The long invoice. Everything below the table has to land after the last row, not on top of it.", invoice: many },
+  { which: "ledger", title: "Ledger · 32 lines (two pages)", note: "Same test on the other sheet.", invoice: many },
   { which: "spine",  title: "Spine · Quotation",       note: "Authorised signature, and no payment terms — nothing is owed yet.", invoice: qt },
   { which: "ledger", title: "Ledger · Quotation",      note: "Authorised signature, no terms.", invoice: qt },
 ];
