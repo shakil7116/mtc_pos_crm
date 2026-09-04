@@ -68,15 +68,15 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
             <div className="text-center" style={{ paddingBottom: "2.5mm", borderBottom: `.5mm solid ${INK}` }}>
               <FitBox
                 text={settings.storeNameEn || ""}
-                width="170mm" height="12mm" widthMm={170} heightMm={12}
-                className="mx-auto uppercase font-semibold"
-                style={{ letterSpacing: "normal", alignItems: "center", justifyContent: "center" }}
+                width="170mm" height="12mm" widthMm={170} heightMm={12} nowrap max={15}
+                className="mx-auto uppercase"
+                style={{ letterSpacing: "normal", fontWeight: 600, alignItems: "center", justifyContent: "center" }}
               />
               <FitBox
                 text={settings.storeNameAr || ""}
-                width="170mm" height="12mm" widthMm={170} heightMm={12} rtl
-                className="mx-auto font-arabic font-bold"
-                style={{ marginTop: "1.2mm", alignItems: "center", justifyContent: "center" }}
+                width="170mm" height="12mm" widthMm={170} heightMm={12} rtl nowrap max={15}
+                className="mx-auto font-arabic"
+                style={{ marginTop: "1.2mm", fontWeight: 800, alignItems: "center", justifyContent: "center" }}
               />
             </div>
 
