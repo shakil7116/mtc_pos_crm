@@ -6473,13 +6473,13 @@ export async function getDailySalesSummary(startDate: string, endDate: string, s
     const items = await db.select({
       documentId: documentItems.documentId, description: documentItems.description,
       qty: documentItems.qty, amount: documentItems.amount,
-      cost: products.costPrice, costAtSale: documentItems.costAtSale, category: products.category,
+      cost: products.costPrice, costAtSale: documentItems.costAtSale, baseQty: documentItems.baseQty, category: products.category,
     }).from(documentItems)
       .leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
 
     for (const it of items as any[]) {
-      const itemCost = resolveItemCost(it.costAtSale, it.cost) * parseFloat(it.qty || "0");
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * resolveBaseQty(it.baseQty, it.qty);
       const itemRev = parseFloat(it.amount || "0");
       const itemProfit = itemRev - itemCost;
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
@@ -6681,12 +6681,12 @@ export async function getProfitDetail(start: string, end: string, storeId?: numb
   if (ids.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty, price: documentItems.price,
-      amount: documentItems.amount, description: documentItems.description, cost: products.costPrice, costAtSale: documentItems.costAtSale,
+      amount: documentItems.amount, description: documentItems.description, cost: products.costPrice, costAtSale: documentItems.costAtSale, baseQty: documentItems.baseQty,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
     for (const it of items as any[]) {
       const unitCost = resolveItemCost(it.costAtSale, it.cost);
-      const c = unitCost * Number(it.qty || 0);
+      const c = unitCost * resolveBaseQty(it.baseQty, it.qty);
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + c;
       (itemsByDoc[it.documentId] ||= []).push({
         description: it.description, qty: Number(it.qty || 0), price: Number(it.price || 0),
@@ -6748,11 +6748,11 @@ export async function getProfitSummary() {
   if (ids.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale, baseQty: documentItems.baseQty,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, ids));
     for (const it of items as any[]) {
-      const itemCost = resolveItemCost(it.costAtSale, it.cost) * Number(it.qty || 0);
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * resolveBaseQty(it.baseQty, it.qty);
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
       profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + (Number(it.amount || 0) - itemCost);
     }
@@ -6783,11 +6783,11 @@ export async function getLocationOverview(start: string, end: string) {
   if (invIds.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale, baseQty: documentItems.baseQty,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, invIds));
     for (const it of items as any[]) {
-      const itemCost = resolveItemCost(it.costAtSale, it.cost) * Number(it.qty || 0);
+      const itemCost = resolveItemCost(it.costAtSale, it.cost) * resolveBaseQty(it.baseQty, it.qty);
       const itemProfit = Number(it.amount || 0) - itemCost;
       cogsByDoc[it.documentId] = (cogsByDoc[it.documentId] || 0) + itemCost;
       profitByDoc[it.documentId] = (profitByDoc[it.documentId] || 0) + itemProfit;
@@ -6964,13 +6964,13 @@ export async function getCustomerOverview() {
   if (paidWindowIds.length) {
     const items = await db.select({
       documentId: documentItems.documentId, qty: documentItems.qty,
-      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale,
+      amount: documentItems.amount, cost: products.costPrice, costAtSale: documentItems.costAtSale, baseQty: documentItems.baseQty,
     }).from(documentItems).leftJoin(products, eq(documentItems.productId, products.id))
       .where(inArray(documentItems.documentId, paidWindowIds));
     for (const it of items as any[]) {
       const qty = parseFloat(it.qty || "0");
       const rev = parseFloat(it.amount || "0");
-      const cogs = qty * resolveItemCost(it.costAtSale, it.cost);
+      const cogs = resolveBaseQty(it.baseQty, it.qty) * resolveItemCost(it.costAtSale, it.cost);
       marginByInv.set(it.documentId, (marginByInv.get(it.documentId) || 0) + (rev - cogs));
       qtyByInv.set(it.documentId, (qtyByInv.get(it.documentId) || 0) + qty);
     }
