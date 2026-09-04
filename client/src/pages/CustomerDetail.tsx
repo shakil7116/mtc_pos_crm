@@ -62,6 +62,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useSettings } from "@/hooks/use-settings";
 import { cn } from "@/lib/utils";
+import { shrinkImage, DOCUMENT, LOGO } from "@/lib/image";
 
 /* ─────────────────────────────────────────
    Types
@@ -1098,16 +1099,14 @@ function ChequeDepositModal({ chequeNumber, chequeDate, onConfirm, onClose }: {
   const today = new Date().toISOString().slice(0, 10);
   const tooEarly = chequeDate > today;
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
     if (file.size > 4_000_000) return;
     setReading(true);
-    const reader = new FileReader();
-    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
-    reader.onerror = () => setReading(false);
-    reader.readAsDataURL(file);
+    try { setProofUrl(await shrinkImage(file, DOCUMENT)); }
+    finally { setReading(false); }
   }
 
   return (
@@ -1173,16 +1172,14 @@ function ChequeClearModal({ chequeNumber, depositedToAccount, onConfirm, onClose
   const [proofUrl, setProofUrl] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
     if (file.size > 4_000_000) return;
     setReading(true);
-    const reader = new FileReader();
-    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
-    reader.onerror = () => setReading(false);
-    reader.readAsDataURL(file);
+    try { setProofUrl(await shrinkImage(file, DOCUMENT)); }
+    finally { setReading(false); }
   }
 
   return (
@@ -1745,16 +1742,14 @@ export default function CustomerDetail() {
     },
   });
 
-  function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleLogoUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      toast({ title: "Image must be under 2 MB", variant: "destructive" });
-      return;
+    try {
+      logoMut.mutate(await shrinkImage(file, LOGO));
+    } catch (err: any) {
+      toast({ title: "That picture could not be used", description: err?.message, variant: "destructive" });
     }
-    const reader = new FileReader();
-    reader.onload = () => logoMut.mutate(reader.result as string);
-    reader.readAsDataURL(file);
     e.target.value = "";
   }
 

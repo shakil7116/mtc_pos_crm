@@ -12,6 +12,7 @@ import {
   RotateCcw, Camera, ImageIcon, X, Pencil, Check, AlertTriangle,
 } from "lucide-react";
 import { money, CHART, MetricCard, HeroBalance, pctDelta, runningTotal } from "@/components/finance/kit";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -347,12 +348,11 @@ export default function CashLoans({ embedded }: { embedded?: boolean } = {}) {
           <div className="col-span-2 sm:col-span-3">
             <label className="text-xs font-medium">Proof of Payment</label>
             <input ref={proofRef} type="file" accept="image/*" className="hidden"
-              onChange={e => {
+              onChange={async e => {
                 const file = e.target.files?.[0];
                 if (!file) return;
-                const reader = new FileReader();
-                reader.onload = () => setF((p: any) => ({ ...p, proofUrl: reader.result as string }));
-                reader.readAsDataURL(file);
+                const proofUrl = await shrinkImage(file, DOCUMENT);
+                setF((p: any) => ({ ...p, proofUrl }));
               }} />
             <div className="flex items-center gap-2 mt-1">
               <Button variant="outline" size="sm" type="button" className="gap-1.5" onClick={() => proofRef.current?.click()}>

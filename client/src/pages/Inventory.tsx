@@ -69,6 +69,7 @@ import DamageDialog from "@/components/DamageDialog";
 import SwapDialog from "@/components/SwapDialog";
 import TransferVoucher from "@/components/TransferVoucher";
 import TransferReceiveDialog from "@/components/TransferReceiveDialog";
+import { shrinkImage, PHOTO } from "@/lib/image";
 
 /* ─────────────────────────────────────────
    Types
@@ -1158,12 +1159,13 @@ function ProductDialog({
                 : <div className="w-16 h-16 rounded-lg border border-dashed flex items-center justify-center text-[10px] text-muted-foreground">No photo</div>}
               <div className="flex flex-col gap-1.5">
                 <input type="file" accept="image/jpeg,image/png,image/webp"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const f = e.target.files?.[0]; if (!f) return;
-                    if (f.size > 2 * 1024 * 1024) { toast({ title: "Image too large", description: "Max 2 MB.", variant: "destructive" }); return; }
-                    const reader = new FileReader();
-                    reader.onload = () => set("imageUrl", String(reader.result));
-                    reader.readAsDataURL(f);
+                    try {
+                      set("imageUrl", await shrinkImage(f, PHOTO));
+                    } catch (err: any) {
+                      toast({ title: "That picture could not be used", description: err?.message, variant: "destructive" });
+                    }
                   }}
                   className="text-xs" />
                 {form.imageUrl && <button type="button" onClick={() => set("imageUrl", "")} className="text-[11px] text-red-600 text-left">Remove photo</button>}

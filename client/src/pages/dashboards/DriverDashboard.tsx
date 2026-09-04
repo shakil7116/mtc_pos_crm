@@ -10,30 +10,11 @@ import {
 } from "lucide-react";
 import { useDeliveries, todayStr, fetchArray } from "./shared";
 import TasksPanel from "@/components/TasksPanel";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error("read failed"));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error("image failed"));
-      img.onload = () => {
-        const max = 1000;
-        const scale = Math.min(1, max / Math.max(img.width, img.height));
-        const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-        const canvas = document.createElement("canvas");
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext("2d");
-        if (!ctx) return resolve(String(reader.result));
-        ctx.drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.7));
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-}
+// A signed delivery note is the proof a customer received the goods, so it is
+// shrunk as a DOCUMENT — the signature and the name must stay readable.
+const shrinkDeliveryProof = (file: File) => shrinkImage(file, DOCUMENT);
 
 const STAGE_META: Record<string, { label: string; color: string; icon: any; order: number }> = {
   pending_pick:  { label: "Waiting Pick",  color: "bg-slate-100 text-slate-700",     icon: Clock,        order: 0 },
@@ -543,7 +524,7 @@ export default function DriverDashboard() {
                     <Upload className="w-6 h-6" />
                     <span className="text-xs font-semibold">Tap to photograph / upload the signed DN</span>
                     <input type="file" accept="image/*" capture="environment" className="hidden"
-                      onChange={async (e) => { const f = e.target.files?.[0]; if (f) setSignImg(await fileToDataUrl(f)); }} />
+                      onChange={async (e) => { const f = e.target.files?.[0]; if (f) setSignImg(await shrinkDeliveryProof(f)); }} />
                   </label>
                 )}
               </div>
@@ -570,7 +551,7 @@ export default function DriverDashboard() {
                     <label className="flex items-center justify-center gap-1.5 py-2 rounded-lg border border-dashed border-amber-300 text-amber-700 text-xs font-semibold active:bg-amber-100 cursor-pointer">
                       <Upload className="w-4 h-4" /> Add damage photo
                       <input type="file" accept="image/*" capture="environment" className="hidden"
-                        onChange={async (e) => { const f = e.target.files?.[0]; if (f) setDmgPhoto(await fileToDataUrl(f)); }} />
+                        onChange={async (e) => { const f = e.target.files?.[0]; if (f) setDmgPhoto(await shrinkDeliveryProof(f)); }} />
                     </label>
                   )}
                   <p className="text-[11px] text-amber-700/80">Manager alerted immediately. Delivery still completes.</p>

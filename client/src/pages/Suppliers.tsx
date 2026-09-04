@@ -60,6 +60,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { validateName, validatePhone, validateEmail, formatPhone } from "@/lib/validation";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 
 /* ─────────────────────────────────────────
    Types
@@ -1486,12 +1487,10 @@ function ReceiveCell({ order, markReceived }: { order: any; markReceived: any })
     setReceiveItems((prev) => prev.filter((_, i) => i !== idx));
   }
 
-  const handleInvoiceUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInvoiceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setInvUrl(reader.result as string);
-    reader.readAsDataURL(file);
+    setInvUrl(await shrinkImage(file, DOCUMENT));
   };
 
   const handleAiScan = async () => {

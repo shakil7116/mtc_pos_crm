@@ -85,6 +85,7 @@ import { cn } from "@/lib/utils";
 import { format, differenceInDays } from "date-fns";
 import { CorrectButton, CorrectedBadge } from "@/components/CorrectionModal";
 import ReturnModal from "@/components/ReturnModal";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -569,24 +570,10 @@ export default function DocumentDetail() {
   const [dmgNotes, setDmgNotes] = useState("");
   const [dmgPhoto, setDmgPhoto] = useState("");
   const [proofBusy, setProofBusy] = useState(false);
-  const fileToDataUrl = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("read failed"));
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => {
-          const max = 1000, scale = Math.min(1, max / Math.max(img.width, img.height));
-          const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
-          const c = document.createElement("canvas"); c.width = w; c.height = h;
-          const ctx = c.getContext("2d"); if (!ctx) return resolve(String(reader.result));
-          ctx.drawImage(img, 0, 0, w, h); resolve(c.toDataURL("image/jpeg", 0.7));
-        };
-        img.onerror = () => reject(new Error("image failed"));
-        img.src = String(reader.result);
-      };
-      reader.readAsDataURL(file);
-    });
+  // The signed delivery note and any damage photo are proof — shrunk as a
+  // DOCUMENT so the signature and the damage stay readable.
+  const fileToDataUrl = (file: File) => shrinkImage(file, DOCUMENT);
+
   function resetProof() {
     setProofOpen(false); setRName(""); setRPhone(""); setSignImg("");
     setDmgOpen(false); setDmgNotes(""); setDmgPhoto(""); setProofBusy(false);

@@ -15,6 +15,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CorrectButton, CorrectedBadge } from "@/components/CorrectionModal";
 import { money, StatusBadge, ActionButton } from "@/components/finance/kit";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 
 const RECOVERY_LABEL: Record<string, string> = {
   replacement_requested: "Replacement requested",
@@ -637,16 +638,13 @@ function DepositModal({ chequeNumber, chequeDate, onConfirm, onClose }: {
   const today = new Date().toISOString().slice(0, 10);
   const tooEarly = chequeDate > today;
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
-    if (file.size > 4_000_000) return;
     setReading(true);
-    const reader = new FileReader();
-    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
-    reader.onerror = () => setReading(false);
-    reader.readAsDataURL(file);
+    try { setProofUrl(await shrinkImage(file, DOCUMENT)); }
+    finally { setReading(false); }
   }
 
   return (
@@ -711,16 +709,13 @@ function ClearModal({ chequeNumber, depositedToAccount, onConfirm, onClose }: {
   const [proofUrl, setProofUrl] = useState<string | null>(null);
   const [reading, setReading] = useState(false);
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return;
-    if (file.size > 4_000_000) return;
     setReading(true);
-    const reader = new FileReader();
-    reader.onload = () => { setProofUrl(String(reader.result)); setReading(false); };
-    reader.onerror = () => setReading(false);
-    reader.readAsDataURL(file);
+    try { setProofUrl(await shrinkImage(file, DOCUMENT)); }
+    finally { setReading(false); }
   }
 
   return (

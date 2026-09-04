@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -755,12 +756,12 @@ export default function SupplierLedger() {
             <div>
               <Label className="text-xs mb-1.5 block">Upload Payment Receipt</Label>
               <input ref={receiptRef} type="file" accept="image/*" className="hidden"
-                onChange={e => {
+                onChange={async e => {
                   const file = e.target.files?.[0];
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = () => setPayForm(f => ({ ...f, receiptUrl: reader.result as string }));
-                  reader.readAsDataURL(file);
+                  setPayForm(f => ({ ...f, receiptUrl: "" }));
+                  const url = await shrinkImage(file, DOCUMENT);
+                  setPayForm(f => ({ ...f, receiptUrl: url }));
                 }} />
               <Button variant="outline" className="w-full" type="button"
                 onClick={() => receiptRef.current?.click()}>

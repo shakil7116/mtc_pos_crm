@@ -21,6 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { CorrectButton, CorrectedBadge } from "@/components/CorrectionModal";
 import CustomFields, { useFieldDefs, validateCustomFields } from "@/components/CustomFields";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 import {
   MetricCard, RangeToggle, RangeKey, rangeStart, money, compact,
   CHART, Sparkline,
@@ -315,14 +316,19 @@ export default function Expenses() {
     setEditCustom(row.customData || {});
   };
 
-  function handleAttachment(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handleAttachment(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file || !selected) return;
-    if (file.size > 5_000_000) { toast({ title: "File too large (max 5 MB)", variant: "destructive" }); return; }
-    const reader = new FileReader();
-    reader.onload = () => attachMut.mutate({ id: selected.id, url: String(reader.result) });
-    reader.onerror = () => toast({ title: "Could not read file", variant: "destructive" });
-    reader.readAsDataURL(file);
+    // A PDF is not shrunk — it passes through untouched — so the size guard
+    // still has to stand for that case.
+    if (file.size > 5_000_000 && !file.type.startsWith("image/")) {
+      toast({ title: "File too large (max 5 MB)", variant: "destructive" }); return;
+    }
+    try {
+      attachMut.mutate({ id: selected.id, url: await shrinkImage(file, DOCUMENT) });
+    } catch {
+      toast({ title: "Could not read file", variant: "destructive" });
+    }
   }
 
   const openIssues = issues.filter((i) => i.status !== "resolved");

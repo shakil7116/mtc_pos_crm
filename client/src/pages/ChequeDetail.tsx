@@ -5,6 +5,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { shrinkImage, DOCUMENT } from "@/lib/image";
 import {
   ArrowLeft, ScrollText, Upload, ExternalLink, FileText,
   AlertOctagon, RefreshCw, Banknote, FileImage,
@@ -76,16 +77,18 @@ export default function ChequeDetail() {
     onError: (e: any) => toast({ title: "Upload failed", description: String(e?.message || ""), variant: "destructive" }),
   });
 
-  function onPick(e: React.ChangeEvent<HTMLInputElement>, mut: typeof photoMut) {
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>, mut: typeof photoMut) {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) { toast({ title: "Pick a PNG/JPG/WebP image", variant: "destructive" }); return; }
-    if (file.size > 4_000_000) { toast({ title: "Image too large (max ~4 MB)", variant: "destructive" }); return; }
     setUploading(true);
-    const reader = new FileReader();
-    reader.onload = () => { mut.mutate(String(reader.result)); setUploading(false); };
-    reader.onerror = () => { setUploading(false); toast({ title: "Could not read file", variant: "destructive" }); };
-    reader.readAsDataURL(file);
+    try {
+      mut.mutate(await shrinkImage(file, DOCUMENT));
+    } catch {
+      toast({ title: "Could not read file", variant: "destructive" });
+    } finally {
+      setUploading(false);
+    }
   }
 
   if (isLoading) return <div className="p-6 max-w-3xl mx-auto space-y-4"><Skeleton className="h-10 w-56" /><Skeleton className="h-40 w-full" /></div>;

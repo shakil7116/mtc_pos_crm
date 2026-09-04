@@ -11,6 +11,7 @@ import { format } from "date-fns";
 import { ArrowLeft, Package, TrendingUp, History, Factory, MapPin, Camera, Loader2, Pencil, X, Save } from "lucide-react";
 import { useRef, useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { shrinkImage, PHOTO } from "@/lib/image";
 
 const money = (n: any) => "QAR " + (Number(n) || 0).toFixed(2);
 const moveColor: Record<string, string> = {
@@ -31,31 +32,6 @@ export default function ProductDetail() {
   const [form, setForm] = useState<Record<string, any>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
 
-  const compressImage = (file: File): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = reject;
-      reader.onload = () => {
-        const img = new Image();
-        img.onerror = reject;
-        img.onload = () => {
-          const canvas = document.createElement("canvas");
-          const max = 800;
-          let w = img.width, h = img.height;
-          if (w > max || h > max) {
-            if (w > h) { h = Math.round(h * max / w); w = max; }
-            else { w = Math.round(w * max / h); h = max; }
-          }
-          canvas.width = w; canvas.height = h;
-          canvas.getContext("2d")!.drawImage(img, 0, 0, w, h);
-          resolve(canvas.toDataURL("image/jpeg", 0.8));
-        };
-        img.src = reader.result as string;
-      };
-      reader.readAsDataURL(file);
-    });
-  };
-
   const handleImagePick = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -69,7 +45,7 @@ export default function ProductDetail() {
     }
     setUploading(true);
     try {
-      const compressed = await compressImage(file);
+      const compressed = await shrinkImage(file, PHOTO);
       setPreviewImage(compressed);
       setForm((f) => ({ ...f, imageUrl: compressed }));
     } catch {

@@ -27,6 +27,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
+import { shrinkImage, LOGO } from "@/lib/image";
 import {
   Dialog,
   DialogContent,
@@ -316,16 +317,14 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
       toast({ title: "Save failed", variant: "destructive" }),
   });
 
-  const handleLogoFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const url = ev.target?.result as string;
-      setLogoPreview(url);
-      setForm((f) => ({ ...f, logoUrl: url }));
-    };
-    reader.readAsDataURL(file);
+    // LOGO, not PHOTO: a letterhead logo stays crisper, and a transparent
+    // background survives instead of being flattened onto black.
+    const url = await shrinkImage(file, LOGO);
+    setLogoPreview(url);
+    setForm((f) => ({ ...f, logoUrl: url }));
   };
 
   const set = (k: keyof Settings) => (e: React.ChangeEvent<HTMLInputElement>) =>
