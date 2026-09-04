@@ -2,6 +2,8 @@ import { forwardRef } from "react";
 import { InvoicePaper } from "@/components/InvoicePaper";
 import { SpineTemplate } from "./SpineTemplate";
 import { LedgerTemplate } from "./LedgerTemplate";
+import { PalmTemplate } from "./PalmTemplate";
+import logoImg from "@assets/generated_images/minimalist_professional_mtc_text_logo.png";
 import { TemplateInvoice, TemplateSettings, TemplateOptions, DocKind } from "./types";
 
 /**
@@ -16,7 +18,7 @@ import { TemplateInvoice, TemplateSettings, TemplateOptions, DocKind } from "./t
  * The five extra colour variants of the blue paper were retired: a colour is not
  * a template, and six near-identical choices only made the picker harder to use.
  */
-export type TemplateId = "paper-blue" | "spine" | "ledger";
+export type TemplateId = "paper-blue" | "spine" | "ledger" | "palm";
 
 // id → InvoicePaper internal variant (blue only; the paper's other variants are
 // no longer reachable from the picker).
@@ -28,6 +30,7 @@ export const INVOICE_TEMPLATES: { id: TemplateId; label: string; blurb: string }
   { id: "paper-blue", label: "Blue", blurb: "The original — modern blue" },
   { id: "spine", label: "Spine", blurb: "Mirrored bilingual, Qatar maroon" },
   { id: "ledger", label: "Ledger", blurb: "Ink and hairline, no colour" },
+  { id: "palm", label: "Palm", blurb: "Green and gold, with the logo" },
 ];
 
 export const DEFAULT_TEMPLATE: TemplateId = "paper-blue";
@@ -141,7 +144,11 @@ export const InvoiceRenderer = forwardRef<HTMLDivElement, RendererProps>(
       : "invoice";
 
     // Merge in safe defaults so a missing settings field can't crash the paper
-    const safeSettings = { ...FALLBACK_SETTINGS, ...(settings || {}) };
+    const safeSettings: TemplateSettings = {
+      ...FALLBACK_SETTINGS,
+      ...(settings || {}),
+      logoUrl: (settings as any)?.logoUrl || logoImg,
+    } as TemplateSettings;
 
     // Spine and Ledger read the normalized shape directly — no legacy adapter.
     if (templateId === "spine") {
@@ -149,6 +156,9 @@ export const InvoiceRenderer = forwardRef<HTMLDivElement, RendererProps>(
     }
     if (templateId === "ledger") {
       return <LedgerTemplate ref={ref} settings={safeSettings} invoice={invoice} options={options} className={className} />;
+    }
+    if (templateId === "palm") {
+      return <PalmTemplate ref={ref} settings={safeSettings} invoice={invoice} options={options} className={className} />;
     }
 
     return (

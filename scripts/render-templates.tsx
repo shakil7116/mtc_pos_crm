@@ -22,10 +22,18 @@ import type { TemplateInvoice, TemplateSettings } from "../client/src/components
 (globalThis as any).React = React;
 const { SpineTemplate } = await import("../client/src/components/invoice-templates/SpineTemplate");
 const { LedgerTemplate } = await import("../client/src/components/invoice-templates/LedgerTemplate");
+const { PalmTemplate } = await import("../client/src/components/invoice-templates/PalmTemplate");
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(HERE, "..");
 const OUT = process.argv[2] || path.join(ROOT, "template-preview.html");
+
+// The real mark, inlined, so the preview shows what would actually print rather
+// than the fallback badge.
+const logoPath = path.join(ROOT, "attached_assets", "generated_images", "minimalist_professional_mtc_text_logo.png");
+const logoUrl = fs.existsSync(logoPath)
+  ? "data:image/png;base64," + fs.readFileSync(logoPath).toString("base64")
+  : undefined;
 
 const settings: TemplateSettings = {
   storeNameEn: "MAMUN M TRADING AND CONTRACTING W.L.L",
@@ -35,6 +43,7 @@ const settings: TemplateSettings = {
   phone: "+974 30703722",
   crNumber: "72986/1",
   poBox: "17336",
+  logoUrl,
 };
 
 const items = [
@@ -118,9 +127,11 @@ const many: TemplateInvoice = {
   })),
 };
 
-const SHEETS: { title: string; note: string; invoice: TemplateInvoice; which: "spine" | "ledger" }[] = [
+const SHEETS: { title: string; note: string; invoice: TemplateInvoice; which: "spine" | "ledger" | "palm" }[] = [
   { which: "spine",  title: "Spine · Credit invoice",  note: "Two PDC cheques, a line discount and a whole-invoice discount. The worst-case row is real: 12,500 SQM at 1,234,567.89.", invoice: base },
   { which: "ledger", title: "Ledger · Credit invoice", note: "Same document, same data — the other sheet.", invoice: base },
+  { which: "palm",   title: "Palm · Credit invoice", note: "Green and gold, with the mark in the letterhead. Same data again.", invoice: base },
+  { which: "palm",   title: "Palm · Delivery note", note: "No money on it, and the site address with a scannable map.", invoice: dn },
   { which: "spine",  title: "Spine · Cash invoice",    note: "Paid in full, no cheques: no due dates, only the return policy.", invoice: cash },
   { which: "ledger", title: "Ledger · Cash invoice",   note: "Paid in full, no cheques.", invoice: cash },
   { which: "spine",  title: "Spine · Delivery note",   note: "No price, no discount, no amount, no totals — with the site address and a maps QR the driver can scan.", invoice: dn },
@@ -139,9 +150,8 @@ const css = (() => {
 })();
 
 const body = SHEETS.map(({ which, title, note, invoice }) => {
-  const el = which === "spine"
-    ? React.createElement(SpineTemplate as any, { invoice, settings, options: {} })
-    : React.createElement(LedgerTemplate as any, { invoice, settings, options: {} });
+  const Comp: any = which === "spine" ? SpineTemplate : which === "ledger" ? LedgerTemplate : PalmTemplate;
+  const el = React.createElement(Comp, { invoice, settings, options: {} });
   return `
   <section class="stage">
     <h2>${title}</h2>

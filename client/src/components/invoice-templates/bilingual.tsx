@@ -256,6 +256,14 @@ export const L = {
   delivery: { en: "Delivery details", ar: "تفاصيل التسليم" },
 } as const;
 
+/** Arabic-Indic numerals, for the Arabic side of a letterhead: ١٧٣٣٦.
+ *
+ *  Used ONLY there. An invoice number, a date and every amount stay in Latin
+ *  digits on both sides — those are the figures a customer, a bank and an
+ *  auditor all have to read off the same document. */
+export const arabicDigits = (v: any): string =>
+  String(v ?? "").replace(/[0-9]/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+
 export const money = (n: any): string =>
   (Number(n) || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 

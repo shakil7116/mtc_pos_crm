@@ -53,6 +53,9 @@ export interface TemplateSettings {
   email?: string;
   brands?: string[];
   returnPolicyText?: string;
+  /** The company mark. Injected by InvoiceRenderer, so no template imports a
+   *  binary asset and every one of them still renders outside the bundler. */
+  logoUrl?: string | null;
 }
 
 export interface TemplateOptions {

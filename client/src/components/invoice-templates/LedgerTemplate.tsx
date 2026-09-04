@@ -5,6 +5,7 @@ import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
   Pair, ColHead, FitBox, docTitles, billToLabel, signaturesFor, L, money, dmy, lineDiscount, fillerRows,
+  arabicDigits,
 } from "./bilingual";
 
 /* ── LEDGER ───────────────────────────────────────────────────────────────────
@@ -70,13 +71,13 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 text={settings.storeNameEn || ""}
                 width="170mm" height="12mm" widthMm={170} heightMm={12} nowrap max={15}
                 className="mx-auto uppercase"
-                style={{ letterSpacing: "normal", fontWeight: 600, alignItems: "center", justifyContent: "center" }}
+                style={{ letterSpacing: "normal", fontWeight: 700, alignItems: "center", justifyContent: "center" }}
               />
               <FitBox
                 text={settings.storeNameAr || ""}
                 width="170mm" height="12mm" widthMm={170} heightMm={12} rtl nowrap max={15}
                 className="mx-auto font-arabic"
-                style={{ marginTop: "1.2mm", fontWeight: 800, alignItems: "center", justifyContent: "center" }}
+                style={{ marginTop: "1.2mm", fontWeight: 600, alignItems: "center", justifyContent: "center" }}
               />
             </div>
 
@@ -89,9 +90,9 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 {"  ·  "}{settings.addressEn}
               </div>
               <div className="font-arabic" dir="rtl" style={{ fontSize: "8.4pt", marginTop: "1mm" }}>
-                {L.poBox.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.poBox}</span>
-                {"  ·  "}{L.phone.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.phone}</span>
-                {"  ·  "}{L.cr.ar} <span dir="ltr" style={{ fontFamily: MONO, unicodeBidi: "isolate" }}>{settings.crNumber}</span>
+                {L.poBox.ar} {arabicDigits(settings.poBox)}
+                {"  ·  "}{L.phone.ar} {arabicDigits(settings.phone)}
+                {"  ·  "}{L.cr.ar} {arabicDigits(settings.crNumber)}
                 {"  ·  "}{settings.addressAr}
               </div>
             </div>

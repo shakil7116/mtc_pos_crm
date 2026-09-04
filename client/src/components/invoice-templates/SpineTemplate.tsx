@@ -5,6 +5,7 @@ import type { TemplateProps } from "./types";
 import { TermsFooter } from "./TermsFooter";
 import {
   Pair, ColHead, FitBox, docTitles, billToLabel, signaturesFor, L, money, dmy, lineDiscount, fillerRows,
+  arabicDigits,
 } from "./bilingual";
 
 /* ── SPINE ────────────────────────────────────────────────────────────────────
@@ -70,7 +71,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
                   text={settings.storeNameEn || ""}
                   width="78mm" height="13.5mm" widthMm={78} heightMm={13.5} nowrap max={14}
                   className="uppercase"
-                  style={{ color: MAROON, fontWeight: 600 }}
+                  style={{ color: MAROON, fontWeight: 700 }}
                 />
                 <div className="mt-[2.5mm]" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
                   {[
@@ -95,21 +96,21 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
                   text={settings.storeNameAr || ""}
                   width="78mm" height="13.5mm" widthMm={78} heightMm={13.5} rtl nowrap max={14}
                   className="font-arabic ml-auto"
-                  style={{ color: MAROON, fontWeight: 800 }}
+                  style={{ color: MAROON, fontWeight: 600 }}
                 />
                 <div className="mt-[2.5mm] text-right" dir="rtl" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
                   {[
-                    [L.poBox.ar, settings.poBox, true],
-                    [L.phone.ar, settings.phone, true],
-                    [L.cr.ar, settings.crNumber, true],
+                    [L.poBox.ar, arabicDigits(settings.poBox), true],
+                    [L.phone.ar, arabicDigits(settings.phone), true],
+                    [L.cr.ar, arabicDigits(settings.crNumber), true],
                     [L.address.ar, settings.addressAr, false],
                   ].map(([k, v, ltr]) => (
                     <div key={String(k)} className="flex items-center gap-[1.5mm]" style={{ height: "4.4mm" }}>
                       <b className="font-arabic" style={{ color: MAROON, fontSize: "7.6pt" }}>{k}</b>
                       <span
-                        dir={ltr ? "ltr" : "rtl"}
-                        className={ltr ? "" : "font-arabic"}
-                        style={{ fontFamily: ltr ? MONO : undefined, fontSize: ltr ? "7pt" : "8pt", unicodeBidi: "isolate" }}
+                        dir="rtl"
+                        className="font-arabic"
+                        style={{ fontSize: "8pt" }}
                       >
                         {v}
                       </span>

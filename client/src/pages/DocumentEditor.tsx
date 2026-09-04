@@ -154,6 +154,7 @@ const TEMPLATE_ACCENT: Record<string, string> = {
   "paper-blue": "#2563eb",
   "spine": "#8A1538",
   "ledger": "#15130F",
+  "palm": "#1B5E3F",
 };
 
 const DOC_PILLS: { type: DocType; label: string }[] = [
