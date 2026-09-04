@@ -29,6 +29,7 @@ import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { shrinkImage, LOGO } from "@/lib/image";
 import { useSettings } from "@/hooks/use-settings";
+import { INVOICE_TEMPLATES, DEFAULT_TEMPLATE, companyTemplate } from "@/components/invoice-templates";
 import {
   Dialog,
   DialogContent,
@@ -78,13 +79,13 @@ import {
   TrendingDown,
   CalendarCheck,
   Camera,
-  Search,
-} from "lucide-react";
+  Search, Check} from "lucide-react";
 
 /* ─────────────────────────────────────────────────────────────────────
    Types
 ───────────────────────────────────────────────────────────────────── */
 type Settings = {
+  invoiceTemplate?: string;   // which paper the company prints on
   storeNameEn?: string;
   storeNameAr?: string;
   addressEn?: string;
@@ -435,10 +436,49 @@ function Section1({ toast, qc }: { toast: any; qc: any }) {
               </div>
             </div>
 
+            {/* ── The paper every invoice prints on ────────────────────────
+                One choice for the whole company. It used to live in each
+                person's browser, so two people printing the same invoice got
+                two different papers and a new phone reset to Blue. */}
+            <div className="space-y-2 pt-2 border-t border-border/40">
+              <Label className="text-sm font-medium">Invoice template</Label>
+              <p className="text-xs text-muted-foreground">
+                The paper your invoices, quotations and delivery notes print on.
+                Everyone in the company follows this.
+              </p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {INVOICE_TEMPLATES.map((t) => {
+                  const chosen = companyTemplate(form.invoiceTemplate) === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setForm((f) => ({ ...f, invoiceTemplate: t.id }))}
+                      className={cn(
+                        "text-left rounded-xl border px-4 py-3 transition-all min-w-[9.5rem]",
+                        chosen
+                          ? "border-primary bg-primary/5 ring-1 ring-primary"
+                          : "border-border hover:border-primary/40",
+                      )}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold">{t.label}</span>
+                        {chosen && <Check className="w-3.5 h-3.5 text-primary" />}
+                        {t.id === DEFAULT_TEMPLATE && !chosen && (
+                          <span className="text-[10px] text-muted-foreground">default</span>
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{t.blurb}</div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             <div className="flex justify-end">
               <SectionSaveBtn loading={mut.isPending} onClick={() => {
-                const { storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl } = form;
-                mut.mutate({ storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl });
+                const { storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl, invoiceTemplate } = form;
+                mut.mutate({ storeNameEn, storeNameAr, addressEn, addressAr, phone, whatsapp, email, crNumber, poBox, logoUrl, googleMapsUrl, invoiceTemplate });
               }} />
             </div>
           </div>

@@ -20,6 +20,10 @@ export const settings = pgTable("settings", {
   crNumber: text("cr_number").notNull().default(""),
   poBox: text("po_box").notNull().default(""),
   logoUrl: text("logo_url"),
+  // Which paper this company's invoices print on. One choice for the whole
+  // business — it was living in each browser's localStorage, so every person
+  // and every new phone picked their own and a company had no house style.
+  invoiceTemplate: text("invoice_template").notNull().default("paper-blue"),
   taxRate: numeric("tax_rate").default("0"),
   returnPolicyText: text("return_policy_text").default(
     "Returns accepted within 7 days with original invoice — materials must be undamaged and in original condition. Management decision is final.",

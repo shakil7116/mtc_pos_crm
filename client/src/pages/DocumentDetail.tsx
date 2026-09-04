@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { useRoute, useLocation, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -8,8 +8,8 @@ import { useSettings } from "@/hooks/use-settings";
 import {
   InvoiceRenderer,
   normalizeInvoice,
-  getSavedTemplate,
-  saveTemplate,
+  companyTemplate,
+  DEFAULT_TEMPLATE,
   INVOICE_TEMPLATES,
   type TemplateId,
 } from "@/components/invoice-templates";
@@ -424,7 +424,7 @@ export default function DocumentDetail() {
   const [editHistoryOpen, setEditHistoryOpen] = useState(false);
   const [returnWarningOpen, setReturnWarningOpen] = useState(false);
   const [returnModalOpen, setReturnModalOpen] = useState(false);
-  const [templateId, setTemplateId] = useState<TemplateId>(getSavedTemplate());
+  const [templateId, setTemplateId] = useState<TemplateId>(DEFAULT_TEMPLATE);
   const invoiceCfg = useInvoiceConfig();
 
   // ── Fetch document ─────────────────────────────────────────
@@ -475,6 +475,10 @@ export default function DocumentDetail() {
 
   // ── Fetch settings (for print) ─────────────────────────────
   const { data: settings } = useSettings();
+  // The company's paper, not this browser's. An admin sets it once in Settings,
+  // and every person and device follows it.
+  const houseTemplate = companyTemplate((settings as any)?.invoiceTemplate);
+  useEffect(() => { setTemplateId(houseTemplate); }, [houseTemplate]);
 
   // ── Stores (resolve the real location name, never "Store #5") ──
   const { data: stores = [] } = useQuery<any[]>({
@@ -1120,12 +1124,16 @@ export default function DocumentDetail() {
       <div className="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-1">
         <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           Presentation template
+          <span className="ml-2 normal-case font-normal tracking-normal text-[11px] text-muted-foreground/70">
+            preview only — the company prints on{" "}
+            {INVOICE_TEMPLATES.find((t) => t.id === houseTemplate)?.label ?? "Blue"}
+          </span>
         </span>
         <div className="flex flex-wrap gap-1.5">
           {INVOICE_TEMPLATES.map((t) => (
             <button
               key={t.id}
-              onClick={() => { setTemplateId(t.id); saveTemplate(t.id); }}
+              onClick={() => setTemplateId(t.id)}
               title={t.blurb}
               className={cn(
                 "px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",

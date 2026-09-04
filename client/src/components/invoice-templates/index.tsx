@@ -36,10 +36,24 @@ export const INVOICE_TEMPLATES: { id: TemplateId; label: string; blurb: string }
 export const DEFAULT_TEMPLATE: TemplateId = "paper-blue";
 const STORAGE_KEY = "mtc_invoice_template";
 
+/** Is this a template we still ship? */
+export function isTemplateId(v: unknown): v is TemplateId {
+  return INVOICE_TEMPLATES.some((t) => t.id === v);
+}
+
+/**
+ * The paper to print on.
+ *
+ * The company's own choice comes first — set once, by an admin, in Settings,
+ * and every person and every device follows it. A retired id (paper-red,
+ * premium-navy…) falls back to Blue rather than rendering nothing.
+ */
+export function companyTemplate(fromSettings: unknown): TemplateId {
+  return isTemplateId(fromSettings) ? fromSettings : DEFAULT_TEMPLATE;
+}
+
 export function getSavedTemplate(): TemplateId {
   const v = (typeof localStorage !== "undefined" && localStorage.getItem(STORAGE_KEY)) as TemplateId | null;
-  // A retired id left in a browser (paper-red, premium-navy…) falls back to Blue
-  // rather than rendering nothing.
   const valid = !!v && INVOICE_TEMPLATES.some((t) => t.id === v);
   return valid ? (v as TemplateId) : DEFAULT_TEMPLATE;
 }
