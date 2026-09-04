@@ -30,13 +30,13 @@ import type { TemplateInvoice, DocKind } from "./types";
  */
 const MM_PER_PT = 0.352778;
 
-function estimateFit(text: string, widthMm: number, heightMm: number, rtl: boolean): number {
+function estimateFit(text: string, widthMm: number, heightMm: number, rtl: boolean, nowrap = false): number {
   const chars = Math.max(1, (text || "").trim().length);
   // Rough average advance per character, as a fraction of the point size.
   const advance = rtl ? 0.44 : 0.40;
   const lineFactor = 1.22;
   let best = 6;
-  for (let lines = 1; lines <= 3; lines++) {
+  for (let lines = 1; lines <= (nowrap ? 1 : 3); lines++) {
     const widthPt = (widthMm / MM_PER_PT) * lines;
     const byWidth = widthPt / (chars * advance);
     const byHeight = (heightMm / MM_PER_PT) / (lines * lineFactor);
@@ -47,16 +47,18 @@ function estimateFit(text: string, widthMm: number, heightMm: number, rtl: boole
 
 export function FitBox({
   text, width, height, widthMm, heightMm, max = 30, min = 6, rtl = false,
-  className = "", style = {},
+  nowrap = false, className = "", style = {},
 }: {
   text: string; width: string; height: string;
   /** Same numbers as `width`/`height`, for the server-side estimate. */
   widthMm: number; heightMm: number;
   max?: number; min?: number; rtl?: boolean;
+  /** Keep it on ONE line: the fit then shrinks to the width instead of wrapping. */
+  nowrap?: boolean;
   className?: string; style?: React.CSSProperties;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [size, setSize] = useState(() => estimateFit(text, widthMm, heightMm, rtl));
+  const [size, setSize] = useState(() => estimateFit(text, widthMm, heightMm, rtl, nowrap));
 
   useLayoutEffect(() => {
     let cancelled = false;
@@ -108,6 +110,7 @@ export function FitBox({
       data-fit-min={min}
       style={{
         width, height, fontSize: `${size}pt`, lineHeight: 1.22,
+        whiteSpace: nowrap ? "nowrap" : undefined,
         display: "flex", alignItems: "center",
         justifyContent: rtl ? "flex-start" : "flex-start",
         overflow: "visible", ...style,

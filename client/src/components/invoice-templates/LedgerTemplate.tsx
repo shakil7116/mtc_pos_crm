@@ -70,7 +70,7 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 text={settings.storeNameEn || ""}
                 width="170mm" height="12mm" widthMm={170} heightMm={12}
                 className="mx-auto uppercase font-semibold"
-                style={{ letterSpacing: ".10em", alignItems: "center", justifyContent: "center" }}
+                style={{ letterSpacing: "normal", alignItems: "center", justifyContent: "center" }}
               />
               <FitBox
                 text={settings.storeNameAr || ""}
