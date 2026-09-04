@@ -67,6 +67,9 @@ where `item.cost` is `resolveItemCost(costAtSale, products.costPrice)` — the c
 at the moment of sale, falling back to current cost only for rows written before
 `document_items.cost_at_sale` existed. Never read `products.costPrice` directly in a
 profit calculation or supplier price changes will rewrite history again.
+Cost is multiplied by `resolveBaseQty(item.baseQty, item.qty)` — the quantity in the
+BASE unit, pinned the same way. Sell 2 BOX of 12 and the shelf loses 24 pieces; charging
+the cost of 2 overstated the margin on every pack-unit sale (fixed Sep 2026).
 Never `total − COGS`. `aggregateInvoiceProfit()` in `server/storage.ts` is the only
 source — Finance, Reports and Dashboard all read it so they cannot disagree.
 Real profit = PAID invoices only. Expected profit = all non-void.
