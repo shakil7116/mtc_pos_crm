@@ -830,3 +830,48 @@ Verified 21/21 against the live database, plus 20 unit assertions.
 are built: short receipts, valued count variances, damage, the locked adjustment
 door, the closing procedure, swaps, pack units, and the till count. Materials and
 money now meet at every point where things go wrong.
+
+---
+
+## 2026-09-04 — Three new document templates, and what the exercise taught
+
+Blue stays the default. Beside it now: **Spine** (mirrored bilingual, Qatar
+maroon), **Ledger** (ink and hairline, no fills) and **Palm** (green and gold
+with the logo). Yellow, Cyan, Red, Dark and Premium are retired — a colour is not
+a template, and six near-identical choices only made the picker harder to use.
+
+**The owner's requirement, and why it kept failing.** Both company names must
+occupy the same space and read as one company. I tried three times by choosing
+point sizes by hand; each worked for exactly one name and broke on the next
+review. It only held once the code MEASURED:
+
+- Fit against the rendered ink (a Range rect), not `scrollHeight`. Glyphs overrun
+  their line box — Arabic descenders furthest — so the fit kept declaring success
+  while the letters were clipped off the page.
+- Re-measure on `document.fonts.ready`. Fitting against a fallback face sizes the
+  name for letterforms that are about to be replaced.
+- Match by SIZE, both bold. Cairo carries more ink than Barlow Condensed at the
+  same weight; thinning the Arabic to compensate was the wrong answer.
+
+**A preview that renders the real components.** `scripts/render-templates.tsx`
+runs the actual template components through `renderToStaticMarkup` with the app's
+own stylesheet, and every layout bug in this work was found by measuring that page
+in a browser rather than by looking at it: a totals column 14mm off the paper (a
+grid `1fr` cannot shrink below its content), a Ledger header eating 108mm and
+leaving room for 14 lines, names clipped by 2-3px. None were visible to the eye at
+preview scale. For that to work, no template may import a binary asset — the logo
+is injected into `settings.logoUrl` by `InvoiceRenderer`.
+
+**Multi-page.** The letterhead is inside the table `<thead>` so it reprints on
+every page; the totals, terms and signatures sit after the table so they appear
+once, at the end. A `<tfoot>` would have repeated them on every page.
+
+**Corrections the owner made that I had wrong:**
+- A PDC invoice is a CREDIT invoice. The cheque is the instrument, not the type.
+- The second signature is the salesman. An invoice takes three signatures
+  (salesman, receiver, customer); a delivery note two; a quotation or PO one.
+- The total row carries the figure alone — QAR goes quietly underneath.
+- Units are short codes, never sentences: SQM, not SQUARE METRE.
+- And I told him the system never prints an aggregate discount, quoting a comment
+  in InvoicePaper. The code 200 lines below prints exactly that. The comment was
+  stale; I should have read the code.

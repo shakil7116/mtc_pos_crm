@@ -84,6 +84,28 @@ invoices are exempt. Do not remove this guard.
 (`type: "CN"`). The dashboard deducts RV/CN document totals. The legacy `returns`
 table still serves the read-only audit list — dual model, do not delete it.
 
+**Four document templates, Blue is the default.** `paper-blue` (the original
+InvoicePaper), `spine` (mirrored bilingual, Qatar maroon), `ledger` (ink and
+hairline) and `palm` (green/gold with the logo). The five old colour variants of
+the blue paper were retired — a colour is not a template. Rules that keep them
+working:
+
+- The letterhead lives INSIDE each table's `<thead>` (`display: table-header-group`)
+  so it reprints on every page; totals and signatures sit AFTER the table so they
+  appear once, on the last page. A `<tfoot>` would repeat them — never use one.
+- `FitBox` sizes the company names. It measures the rendered INK with a Range, not
+  `scrollHeight` — glyphs overrun their line box and the name was being clipped.
+  It re-measures on `document.fonts.ready`; fitting against a fallback face sizes
+  the name for the wrong letterforms.
+- Both names are BOLD and the same size. Cairo carries more ink than Barlow
+  Condensed at the same weight, so match by size, never by thinning one.
+- `.tpl-cairo` on a template root switches its Arabic to Cairo; Blue keeps Amiri.
+- Arabic numerals (`arabicDigits`) are for the Arabic side of the LETTERHEAD only.
+  Invoice numbers, dates and amounts stay Latin on both sides.
+- No template imports a binary asset — `InvoiceRenderer` injects the logo into
+  `settings.logoUrl`, which is what lets `scripts/render-templates.tsx` render them
+  outside the bundler. That preview is how every layout bug here was found.
+
 **Print CSS is duplicated on purpose.** The `@media print` `<style>` block exists
 verbatim in BOTH `client/src/pages/DocumentDetail.tsx` (saved docs — this is the real
 print path) and `client/src/pages/DocumentEditor.tsx` (editor preview). Change one,
