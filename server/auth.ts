@@ -251,8 +251,11 @@ export async function recoverPassword(usernameRaw: string, pin: string, newPassw
 
 /** Register the first admin account during onboarding. Only works when no admin exists yet. */
 export async function registerOwner(data: { name: string; email: string; password: string }, res: Response) {
-  const existing = await db.select().from(users).where(eq(users.role, "admin"));
-  if (existing.length > 0) return { ok: false as const, status: 409, message: "An admin account already exists." };
+  // ANY user, not just an admin. Gating on admins alone meant a database with
+  // staff but no admin — one deleted, or demoted — would give the first
+  // stranger to find this endpoint a full admin account.
+  const existing = await db.select({ id: users.id }).from(users).limit(1);
+  if (existing.length > 0) return { ok: false as const, status: 409, message: "This system is already set up." };
   if (!data.email?.includes("@")) return { ok: false as const, status: 400, message: "Valid email required." };
   if (String(data.password || "").length < 8) return { ok: false as const, status: 400, message: "Password must be at least 8 characters." };
 

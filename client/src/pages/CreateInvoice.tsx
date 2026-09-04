@@ -11,6 +11,7 @@ import { Link } from "wouter";
 import { InvoicePaper } from "@/components/InvoicePaper";
 import { clsx } from "clsx";
 import { apiRequest } from "@/lib/queryClient";
+import { useSettings } from "@/hooks/use-settings";
 const invoiceFormSchema = z.object({
   invoiceNumber: z.string().min(1, "Required"),
   date: z.string(),
@@ -30,6 +31,7 @@ const invoiceFormSchema = z.object({
 type InvoiceFormValues = z.infer<typeof invoiceFormSchema>;
 
 export default function CreateInvoice() {
+  const { data: previewSettings } = useSettings();
   const [, setLocation] = useLocation();
   const createMutation = useCreateInvoice();
   const [isListening, setIsListening] = useState(false);
@@ -502,14 +504,14 @@ export default function CreateInvoice() {
                 <div className="scale-[0.5] md:scale-[0.6] lg:scale-[0.7] origin-top transform-gpu">
                   <InvoicePaper 
                     settings={{
-                      storeNameEn: "MAMUN M TRADING AND CONTRACTING W.L.L",
-                      storeNameAr: "مأمون م للتجارة والمقاولات ذ.م.م",
-                      addressEn: "DOHA, QATAR",
-                      addressAr: "الدوحة، قطر",
-                      phone: "55554444",
-                      crNumber: "123456",
-                      poBox: "98765",
-                      logoUrl: null
+                      storeNameEn: previewSettings?.storeNameEn || "",
+                      storeNameAr: previewSettings?.storeNameAr || "",
+                      addressEn: previewSettings?.addressEn || "",
+                      addressAr: previewSettings?.addressAr || "",
+                      phone: previewSettings?.phone || "",
+                      crNumber: previewSettings?.crNumber || "",
+                      poBox: previewSettings?.poBox || "",
+                      logoUrl: previewSettings?.logoUrl || null
                     } as any}
                     invoice={{
                       invoiceNumber: form.watch("invoiceNumber"),

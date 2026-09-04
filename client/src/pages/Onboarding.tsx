@@ -27,11 +27,20 @@ export default function Onboarding() {
   const [address, setAddress] = useState("");
   const [phone, setPhone] = useState("");
   const [crNumber, setCrNumber] = useState("");
+  // The Arabic address and PO Box are printed on every invoice letterhead, so
+  // they belong in setup — not discovered as blank on the first print run.
+  const [addressAr, setAddressAr] = useState("");
+  const [poBox, setPoBox] = useState("");
 
   const [storeName, setStoreName] = useState("");
   const [storeAddress, setStoreAddress] = useState("");
 
   const [staffList, setStaffList] = useState([{ name: "", role: "salesman", username: "" }]);
+  // Starting passwords come back from the server and are shown ONCE, on the last
+  // screen. Everyone must change theirs at first login.
+  const [createdStaff, setCreatedStaff] = useState<
+    { name: string; username: string; role: string; password: string }[]
+  >([]);
 
   const idx = STEPS.indexOf(step);
   const progress = ((idx) / (STEPS.length - 1)) * 100;
@@ -66,7 +75,9 @@ export default function Onboarding() {
       await fetch("/api/setup/business", {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ companyName, companyNameAr, address, phone, email, crNumber }),
+        body: JSON.stringify({
+          companyName, companyNameAr, address, addressAr, phone, email, crNumber, poBox,
+        }),
       });
       next();
     } catch { setError("Network error."); }
@@ -88,20 +99,25 @@ export default function Onboarding() {
   };
 
   const finishSetup = async () => {
-    setBusy(true);
+    setBusy(true); setError("");
     try {
-      for (const s of staffList) {
-        if (!s.name.trim() || !s.username.trim()) continue;
-        await fetch("/api/users", {
+      const wanted = staffList.filter((s) => s.name.trim() && s.username.trim());
+      if (wanted.length) {
+        const r = await fetch("/api/setup/staff", {
           method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: s.name, username: s.username, role: s.role,
-            pin: String(Math.floor(1000 + Math.random() * 9000)),
-          }),
+          body: JSON.stringify({ staff: wanted }),
         });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) { setError(d.message || "Could not add your team."); setBusy(false); return; }
+        setCreatedStaff(d.created || []);
+        // Say plainly who could not be added, instead of losing them silently.
+        if (d.failed?.length) {
+          setError(d.failed.map((f: any) => `${f.name}: ${f.reason}`).join("  ·  "));
+        }
       }
-      await fetch("/api/setup/complete", { method: "POST", credentials: "include" });
+      const done = await fetch("/api/setup/complete", { method: "POST", credentials: "include" });
+      if (!done.ok) { setError("Could not finish setup."); setBusy(false); return; }
       next();
     } catch { setError("Network error."); }
     setBusy(false);
@@ -148,7 +164,7 @@ export default function Onboarding() {
                 <Sparkles className="w-10 h-10 text-white" />
               </div>
               <h1 className="text-4xl font-bold mb-3 bg-gradient-to-r from-white to-blue-200 bg-clip-text text-transparent">
-                Welcome to MTC POS
+                Welcome
               </h1>
               <p className="text-lg text-blue-200/70 mb-2">
                 The complete point-of-sale &amp; CRM platform for your business
@@ -280,6 +296,20 @@ export default function Onboarding() {
                   <Label className="text-xs text-white/50">Address</Label>
                   <Input className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, City, Country" />
                 </div>
+                <div>
+                  <Label className="text-xs text-white/50">Address in Arabic</Label>
+                  <Input dir="rtl" className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={addressAr} onChange={(e) => setAddressAr(e.target.value)} placeholder="الشارع، المدينة، الدولة" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs text-white/50">P.O. Box</Label>
+                    <Input className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={poBox} onChange={(e) => setPoBox(e.target.value)} placeholder="17336" />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-white/50">CR Number</Label>
+                    <Input className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={crNumber} onChange={(e) => setCrNumber(e.target.value)} placeholder="12345" />
+                  </div>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <Label className="text-xs text-white/50">Phone</Label>
@@ -289,8 +319,8 @@ export default function Onboarding() {
                     </div>
                   </div>
                   <div>
-                    <Label className="text-xs text-white/50">CR Number</Label>
-                    <Input className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={crNumber} onChange={(e) => setCrNumber(e.target.value)} placeholder="12345" />
+                    <Label className="text-xs text-white/50">Email</Label>
+                    <Input className="bg-white/5 border-white/10 text-white placeholder:text-white/20 h-11 rounded-xl" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="info@company.com" />
                   </div>
                 </div>
                 {error && <p className="text-xs text-red-400 bg-red-500/10 px-3 py-2 rounded-lg">{error}</p>}
@@ -418,7 +448,41 @@ export default function Onboarding() {
                   </div>
                   <span className="text-sm text-white/70">First store configured</span>
                 </div>
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center shrink-0">
+                    <Check className="w-4 h-4 text-emerald-400" />
+                  </div>
+                  <span className="text-sm text-white/70">Units of measure ready</span>
+                </div>
               </div>
+
+              {/* The ONLY time these passwords are ever shown. Write them down or
+                  hand them over now — nobody can read them back afterwards. */}
+              {createdStaff.length > 0 && (
+                <div className="bg-amber-500/10 border border-amber-400/30 rounded-2xl p-5 mb-8 text-left">
+                  <p className="text-sm font-semibold text-amber-200 mb-1">
+                    Write these down now
+                  </p>
+                  <p className="text-xs text-amber-100/60 mb-4">
+                    This is the only time these passwords are shown. Each person must
+                    change theirs the first time they log in.
+                  </p>
+                  <div className="space-y-2">
+                    {createdStaff.map((p) => (
+                      <div key={p.username} className="flex items-center justify-between gap-3 bg-black/20 rounded-lg px-3 py-2">
+                        <div className="min-w-0">
+                          <div className="text-sm text-white/90 truncate">{p.name}</div>
+                          <div className="text-[11px] text-white/40">{p.username} · {p.role}</div>
+                        </div>
+                        <code className="text-sm font-mono text-amber-200 shrink-0">{p.password}</code>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {error && (
+                <p className="text-xs text-amber-300 bg-amber-500/10 px-3 py-2 rounded-lg mb-6 text-left">{error}</p>
+              )}
 
               <Button
                 onClick={goToDashboard}

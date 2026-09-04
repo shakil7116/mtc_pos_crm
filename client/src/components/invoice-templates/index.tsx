@@ -94,13 +94,13 @@ interface RendererProps {
 }
 
 const FALLBACK_SETTINGS: TemplateSettings = {
-  storeNameEn: "MAMUN M TRADING AND CONTRACTING WLL",
-  storeNameAr: "شركة مأمون إم للتجارة والمقاولات ذ.م.م",
-  addressEn: "NAJMA STREET, NAJMA, DOHA, QATAR",
-  addressAr: "شارع النجمة، النجمة، الدوحة، قطر",
-  phone: "+974 30703722",
-  crNumber: "72986/1",
-  poBox: "17336",
+  storeNameEn: "",
+  storeNameAr: "",
+  addressEn: "",
+  addressAr: "",
+  phone: "",
+  crNumber: "",
+  poBox: "",
 };
 
 /** Renders the original InvoicePaper in the chosen colour variant. */

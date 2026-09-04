@@ -76,6 +76,7 @@ import {
   login, clearTokenCookie, changePassword, adminResetPassword, invalidateUserSessions, verifyUserPassword, registerOwner, recoverPassword,
   loginRateLimit,
 } from "./auth";
+import { saveBusinessDetails, seedUnits, startingPassword, isFreshInstall } from "./setup";
 
 // Role from the verified JWT (req.user). No token → no role → every gate fails
 // closed with 403. (authMiddleware honors ALLOW_DEV_HEADERS=1 for the dev/test
@@ -777,24 +778,66 @@ export async function registerRoutes(httpServer: Server, app: express.Express): 
   app.post("/api/setup/business", async (req: Request, res: Response) => {
     if (!req.user || req.user.role !== "admin") return res.status(403).json({ message: "Admin only" });
     try {
-      const { companyName, companyNameAr, address, phone, email, crNumber } = req.body;
-      await db.update(settings).set({
-        storeNameEn: companyName || undefined,
-        storeNameAr: companyNameAr || undefined,
-        addressEn: address || undefined,
-        phone: phone || undefined,
-        email: email || undefined,
-        crNumber: crNumber || undefined,
-      }).where(eq(settings.id, 1));
-      res.json({ ok: true });
-    } catch (err) { res.status(500).json({ message: String(err) }); }
+      // Was UPDATE ... WHERE id = 1. A brand-new database has no row 1, so the
+      // company name the owner had just typed was silently discarded and they
+      // kept OUR name from the column defaults. saveBusinessDetails creates the
+      // row when it is missing.
+      const b = req.body || {};
+      const row = await saveBusinessDetails({
+        storeNameEn: b.companyName ?? b.storeNameEn,
+        storeNameAr: b.companyNameAr ?? b.storeNameAr,
+        addressEn:   b.address ?? b.addressEn,
+        addressAr:   b.addressAr,
+        phone: b.phone, whatsapp: b.whatsapp, email: b.email,
+        crNumber: b.crNumber, poBox: b.poBox, logoUrl: b.logoUrl,
+        taxRate: b.taxRate,
+      });
+      res.json({ ok: true, settings: row });
+    } catch (err: any) { res.status(500).json({ message: err?.message || String(err) }); }
+  });
+
+  // Add the people who work here, during setup. Each gets a starting password
+  // that is shown to the owner once and must be changed at first login —
+  // createUser refuses an account with no password, which is why the wizard's
+  // team step used to add nobody at all.
+  app.post("/api/setup/staff", async (req: Request, res: Response) => {
+    if (!req.user || req.user.role !== "admin") return res.status(403).json({ message: "Admin only" });
+    try {
+      const list: any[] = Array.isArray(req.body?.staff) ? req.body.staff : [];
+      const created: { name: string; username: string; role: string; password: string }[] = [];
+      const failed: { name: string; reason: string }[] = [];
+      const takenPins = new Set<string>();
+      for (const person of list) {
+        const name = String(person?.name || "").trim();
+        const username = String(person?.username || "").trim().toLowerCase();
+        if (!name || !username) continue;
+        const password = startingPassword();
+        // Every person needs their own PIN — it is what signs an approval.
+        let pin = "";
+        do { pin = String(Math.floor(1000 + Math.random() * 9000)); } while (takenPins.has(pin));
+        takenPins.add(pin);
+        try {
+          await createUser({
+            name, username, role: person?.role || "salesman",
+            password, pin, mustChangePassword: true, mustChangePin: true,
+          } as any);
+          created.push({ name, username, role: person?.role || "salesman", password });
+        } catch (e: any) {
+          failed.push({ name, reason: e?.message || String(e) });
+        }
+      }
+      res.json({ created, failed });
+    } catch (err: any) { res.status(500).json({ message: err?.message || String(err) }); }
   });
 
   app.post("/api/setup/complete", async (req: Request, res: Response) => {
     if (!req.user || req.user.role !== "admin") return res.status(403).json({ message: "Admin only" });
     try {
-      await db.update(settings).set({ setupComplete: true }).where(eq(settings.id, 1));
-      res.json({ ok: true });
+      const seeded = await seedUnits();
+      await saveBusinessDetails({});                  // make sure the row exists
+      const [row] = await db.select({ id: settings.id }).from(settings).limit(1);
+      if (row) await db.update(settings).set({ setupComplete: true }).where(eq(settings.id, row.id));
+      res.json({ ok: true, units: seeded });
     } catch (err) { res.status(500).json({ message: String(err) }); }
   });
 

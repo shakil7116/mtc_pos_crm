@@ -70,16 +70,10 @@ export async function getSettings(): Promise<Settings | undefined> {
 export async function upsertSettings(data: Partial<InsertSettings>): Promise<Settings> {
   const existing = await getSettings();
   if (!existing) {
-    const [row] = await db.insert(settings).values({
-      storeNameEn: "MAMUN M TRADING AND CONTRACTING W.L.L",
-      storeNameAr: "مأمون م للتجارة والمقاولات ذ.م.م",
-      addressEn: "NAJMA STREET, NAJMA, DOHA, QATAR",
-      addressAr: "شارع النجمة، النجمة، الدوحة، قطر",
-      phone: "+974 30703722",
-      crNumber: "72986/1",
-      poBox: "17336",
-      ...data,
-    }).returning();
+    // No company details here. Whoever installs this system types their own in
+    // the setup wizard; seeding OUR name meant another business printed our
+    // CR number on their invoices until somebody noticed.
+    const [row] = await db.insert(settings).values({ ...data }).returning();
     return row;
   }
   const [row] = await db.update(settings).set(data).where(eq(settings.id, existing.id)).returning();

@@ -34,6 +34,7 @@ import { cn } from "@/lib/utils";
 import { canAccess, type NavKey } from "@shared/permissions";
 import { useOffline } from "@/lib/offline";
 import { useToast } from "@/hooks/use-toast";
+import { useSettings } from "@/hooks/use-settings";
 
 function OfflineIndicator() {
   const { online, pending, sync } = useOffline();
@@ -324,6 +325,12 @@ function NotificationBell() {
 }
 
 export default function Layout({ children }: { children: React.ReactNode }) {
+  const { data: settings } = useSettings();
+  // Initials of whoever owns this installation — "MAMUN M TRADING AND
+  // CONTRACTING W.L.L" becomes MMT. Never our name for someone else's business.
+  const mark = (settings?.storeNameEn || "")
+    .split(/\s+/).filter((w) => /^[A-Za-z]/.test(w)).slice(0, 3)
+    .map((w) => w[0].toUpperCase()).join("") || "POS";
   const { user, logout } = useAuth();
   const [location] = useLocation();
   const { theme, toggle: toggleTheme } = useTheme();
@@ -405,8 +412,8 @@ export default function Layout({ children }: { children: React.ReactNode }) {
               <span className="text-white font-extrabold text-base tracking-tight">M</span>
             </div>
             <div>
-              <div className="font-extrabold text-[16px] tracking-tight text-white leading-none">MTC</div>
-              <div className="text-[11px] text-slate-400 leading-tight mt-0.5 tracking-wide">Mamun M Trading</div>
+              <div className="font-extrabold text-[16px] tracking-tight text-white leading-none">{mark}</div>
+              <div className="text-[11px] text-slate-400 leading-tight mt-0.5 tracking-wide">{settings?.storeNameEn || "POS & CRM"}</div>
             </div>
           </div>
         </div>

@@ -61,6 +61,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { validateName, validatePhone, validateEmail, formatPhone } from "@/lib/validation";
 import { shrinkImage, DOCUMENT } from "@/lib/image";
+import { useSettings } from "@/hooks/use-settings";
 
 /* ─────────────────────────────────────────
    Types
@@ -166,9 +167,7 @@ const BLANK_SUPPLIER: SupplierForm = {
   paymentMode: "credit",
 };
 
-const COMPANY_NAME = "Mamun M Trading +974 30703722";
-const DELIVER_ADDRESS = "Najma Street, Najma, Doha";
-const COMPANY_CONTACT = "+974 30703722";
+
 
 /* ─────────────────────────────────────────
    Helpers
@@ -580,12 +579,16 @@ function OrderBuilderDialog({
 
   // Build WhatsApp message preview
   const poRef = `PO-${Date.now().toString().slice(-6)}`;
+  const { data: companySettings } = useSettings();
+  const COMPANY_NAME = [companySettings?.storeNameEn, companySettings?.phone].filter(Boolean).join(" ");
+  const DELIVER_ADDRESS = companySettings?.addressEn || "";
+  const COMPANY_CONTACT = companySettings?.phone || "";
   const messagePreview = useMemo(() => {
     const lines = orderItems.map(
       (item, i) => `${i + 1}. ${item.name} — ${item.qty} ${item.unit}`
     );
     return (
-      `Order from MTC — ${today}\n` +
+      `Order from ${COMPANY_NAME || "us"} — ${today}\n` +
       `${COMPANY_NAME}\n\n` +
       `Please supply:\n` +
       lines.join("\n") +

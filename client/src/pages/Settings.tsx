@@ -28,6 +28,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { shrinkImage, LOGO } from "@/lib/image";
+import { useSettings } from "@/hooks/use-settings";
 import {
   Dialog,
   DialogContent,
@@ -2978,6 +2979,7 @@ function Section8({ toast }: { toast: any }) {
    SECTION 9 — About
 ════════════════════════════════════════════════════════════════════ */
 function Section9({ toast }: { toast: any }) {
+  const { data: about } = useSettings();
   const [connStatus, setConnStatus] = useState<"idle" | "loading" | "ok" | "fail">("idle");
 
   const testConnection = async () => {
@@ -3019,7 +3021,7 @@ function Section9({ toast }: { toast: any }) {
                 <Row label="Name" value="MTC POS+CRM" />
                 <Row label="Version" value="v1.0.0" />
                 <Row label="Build Date" value={buildDate} />
-                <Row label="Company" value="Mamun M Trading and Contracting W.L.L" />
+                <Row label="Company" value={about?.storeNameEn || "—"} />
               </div>
             </div>
 

@@ -43,14 +43,14 @@ export interface DocumentTemplateProps {
 }
 
 const DEFAULT_SETTINGS = {
-  storeNameEn: "MAMUN M TRADING AND CONTRACTING W.L.L",
-  storeNameAr: "مأمون م للتجارة والمقاولات ذ.م.م",
-  addressEn: "NAJMA STREET, NAJMA, DOHA, QATAR",
-  addressAr: "شارع النجمة، النجمة، الدوحة، قطر",
-  phone: "+974 30703722",
-  crNumber: "72986/1",
-  poBox: "17336",
-  email: "info@mtc.com",
+  storeNameEn: "",
+  storeNameAr: "",
+  addressEn: "",
+  addressAr: "",
+  phone: "",
+  crNumber: "",
+  poBox: "",
+  email: "",
   brands: [
     "DEWALT","STANLEY","TOTAL TOOLS","MILANO","NATIONAL",
     "BQ","BR","MÜLLER","KISTENMACHER","ORYX PAINTS","BERGER PAINTS",
@@ -120,10 +120,7 @@ export const DocumentTemplate = React.forwardRef<HTMLDivElement, DocumentTemplat
               {/* Left — English */}
               <td style={{ width: "38%", verticalAlign: "top", padding: "0" }}>
                 <div style={{ fontWeight: "bold", fontSize: "12pt", lineHeight: "1.3" }}>
-                  MAMUN M TRADING AND
-                </div>
-                <div style={{ fontWeight: "bold", fontSize: "12pt", lineHeight: "1.3" }}>
-                  CONTRACTING W.L.L
+                  {cfg.storeNameEn}
                 </div>
                 <div style={{ fontSize: "8.5pt", lineHeight: "1.6" }}>
                   P.O. BOX: {cfg.poBox}

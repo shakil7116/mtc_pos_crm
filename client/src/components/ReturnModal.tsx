@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { AlertTriangle, XCircle, CheckCircle, RefreshCw, AlertOctagon, Edit3, Clock } from "lucide-react";
+import { useSettings } from "@/hooks/use-settings";
 
 interface DocItem {
   id: number;
@@ -63,6 +64,7 @@ export default function ReturnModal({
   invoiceId, invoiceDate, invoiceNumber, items,
   customerId, storeId,
 }: ReturnModalProps) {
+  const { data: companySettings } = useSettings();
   const { user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -578,7 +580,7 @@ export default function ReturnModal({
                     onClick={() => {
                       const sup = suppliers.find(s => String(s.id) === supplierId);
                       if (!sup?.whatsapp) { toast({ title: "No supplier WhatsApp", variant: "destructive" }); return; }
-                      const msg = encodeURIComponent(`We have a damage claim on your supplied product.\nInvoice: ${invoiceNumber}\nProduct: ${returnItems.map(r => r.description).join(", ")}\nDescription: ${damageDesc}\nPlease advise on replacement or credit.\nMamun M Trading +974 30703722`);
+                      const msg = encodeURIComponent(`We have a damage claim on your supplied product.\nInvoice: ${invoiceNumber}\nProduct: ${returnItems.map(r => r.description).join(", ")}\nDescription: ${damageDesc}\nPlease advise on replacement or credit.\n${companySettings?.storeNameEn || ""} ${companySettings?.phone || ""}`);
                       window.open(`https://wa.me/${sup.whatsapp.replace(/\D/g, "")}?text=${msg}`, "_blank");
                     }}>
                     🏭 Forward to Supplier

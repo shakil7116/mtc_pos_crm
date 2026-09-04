@@ -475,6 +475,7 @@ function SendMessageSheet({
   open: boolean;
   onClose: () => void;
 }) {
+  const { data: msgSettings } = useSettings();
   const latestInvoice = invoices
     .filter((d) => d.type === "INV")
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
@@ -486,7 +487,7 @@ function SendMessageSheet({
   const templates = [
     {
       label: "Invoice Request",
-      text: `Dear ${customer.name},\n\nThis is a reminder regarding your outstanding balance of ${fmt(unpaidTotal)} with MTC.\n\nPlease arrange payment at your earliest convenience.\n\nThank you,\nMamun M Trading`,
+      text: `Dear ${customer.name},\n\nThis is a reminder regarding your outstanding balance of ${fmt(unpaidTotal)} with ${msgSettings?.storeNameEn || "us"}.\n\nPlease arrange payment at your earliest convenience.\n\nThank you,\nMamun M Trading`,
     },
     {
       label: "Quote Follow-up",
@@ -1625,7 +1626,7 @@ function StatementModal({
   open: boolean; onClose: () => void; customer: Customer; invoices: Document[]; outstanding: number;
 }) {
   const { data: settings } = useSettings();
-  const company = (settings as any)?.companyName || "Mamun M Trading and Contracting W.L.L";
+  const company = (settings as any)?.storeNameEn || "";
   const netDays = (() => { const m = (customer.paymentTerms || "").match(/(\d+)/); return m ? Number(m[1]) : 30; })();
   const unpaid = invoices
     .filter((d) => d.type === "INV" && ["unpaid", "partial"].includes(d.status))

@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
+import { useSettings } from "@/hooks/use-settings";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -218,6 +219,7 @@ const TAB_TYPES: { value: DocType; label: string }[] = [
 ];
 
 export default function Documents() {
+  const { data: companySettings } = useSettings();
   const [, nav] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -306,7 +308,7 @@ export default function Documents() {
     const name = doc.customerName || "Customer";
     const kind = doc.type === "INV" ? "Invoice" : doc.type === "QT" ? "Quotation"
       : doc.type === "DN" ? "Delivery Note" : doc.type === "CN" ? "Credit Note" : doc.type;
-    const msg = `Dear ${name},\nYour ${kind} ${doc.number} totalling QAR ${Number(doc.total).toFixed(2)} has been issued by Mamun M Trading and Contracting W.L.L.\nThank you for your business.`;
+    const msg = `Dear ${name},\nYour ${kind} ${doc.number} totalling QAR ${Number(doc.total).toFixed(2)} has been issued by ${companySettings?.storeNameEn || "us"}.\nThank you for your business.`;
     if (!phone) {
       // No number on file → send them to the customer page to add one / pick a contact.
       toast({ title: "No phone number on file", description: "Add a phone to this customer to message directly.", variant: "destructive" });

@@ -29,12 +29,12 @@ export default function TransferVoucher({ transfer, onClose }: { transfer: any |
           {/* Header */}
           <div className="flex items-start justify-between border-b border-slate-300 pb-3 mb-3">
             <div>
-              <p className="font-bold text-[15px]">{s?.storeNameEn || "MAMUN M TRADING AND CONTRACTING W.L.L"}</p>
-              <p className="text-[11px] text-slate-500">{s?.addressEn || "NAJMA STREET, NAJMA, DOHA, QATAR"}</p>
-              <p className="text-[11px] text-slate-500">PHONE: {s?.phone || "+974 30703722"} · C.R. {s?.crNumber || "72986/1"}</p>
+              <p className="font-bold text-[15px]">{s?.storeNameEn || ""}</p>
+              <p className="text-[11px] text-slate-500">{s?.addressEn || ""}</p>
+              <p className="text-[11px] text-slate-500">PHONE: {s?.phone || ""} · C.R. {s?.crNumber || ""}</p>
             </div>
             <div className="text-right">
-              <p className="text-[11px] font-arabic" dir="rtl">{s?.storeNameAr || "مأمون م للتجارة والمقاولات ذ.م.م"}</p>
+              <p className="text-[11px] font-arabic" dir="rtl">{s?.storeNameAr || ""}</p>
             </div>
           </div>
 

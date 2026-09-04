@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { useSettings } from "@/hooks/use-settings";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -38,6 +39,7 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 const blank = (): POItem => ({ id: uid(), sku: "", description: "", qty: 1, unit: "PCS", cost: 0, amount: 0 });
 
 export default function PurchaseOrderEditor() {
+  const { data: companySettings } = useSettings();
   const [, nav] = useLocation();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -136,7 +138,7 @@ export default function PurchaseOrderEditor() {
   function sendWhatsApp() {
     if (!supplier?.whatsapp && !supplier?.phone) { toast({ title: "Supplier has no phone/WhatsApp", variant: "destructive" }); return; }
     const lines = items.filter((i) => i.description.trim()).map((i, n) => `${n + 1}. ${i.description} — ${i.qty} ${i.unit}`).join("\n");
-    const msg = `*Purchase Order — Mamun M Trading*\nSupplier: ${supplier.name}\nExpected: ${expectedDate || "ASAP"}\n\n${lines}\n\nPlease confirm availability & pricing.\n+974 30703722`;
+    const msg = `*Purchase Order — ${companySettings?.storeNameEn || ""}*\nSupplier: ${supplier.name}\nExpected: ${expectedDate || "ASAP"}\n\n${lines}\n\nPlease confirm availability & pricing.\n+974 30703722`;
     const num = (supplier.whatsapp || supplier.phone || "").replace(/\D/g, "");
     window.open(`https://wa.me/${num}?text=${encodeURIComponent(msg)}`, "_blank");
   }

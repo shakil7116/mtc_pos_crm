@@ -648,7 +648,7 @@ export default function DocumentDetail() {
     const msg =
       `Dear ${doc?.customerName ?? "Customer"},\n\n` +
       `Your ${typeLabel} *${doc?.number}* dated ${doc ? format(new Date(doc.date), "dd/MM/yyyy") : ""} ` +
-      `for *QAR ${Number(doc?.total ?? 0).toFixed(2)}* has been issued by Mamun M Trading and Contracting.\n\n` +
+      `for *QAR ${Number(doc?.total ?? 0).toFixed(2)}* has been issued by ${settings?.storeNameEn || "us"}.\n\n` +
       (doc?.type === "INV" && remaining > 0
         ? `Remaining balance: *QAR ${remaining.toFixed(2)}*\n\n`
         : "") +

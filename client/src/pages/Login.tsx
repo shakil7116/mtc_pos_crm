@@ -30,7 +30,7 @@ export default function Login() {
   const [recovering, setRecovering] = useState(false);
   const [pin, setPin] = useState("");
 
-  const companyName = settings?.storeNameEn || "Mamun M Trading and Contracting W.L.L";
+  const companyName = settings?.storeNameEn || "POS & CRM";
 
   const doLogin = async () => {
     if (!username.trim() || !password) { setError("Enter your username and password."); return; }

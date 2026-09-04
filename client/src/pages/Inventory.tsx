@@ -70,6 +70,7 @@ import SwapDialog from "@/components/SwapDialog";
 import TransferVoucher from "@/components/TransferVoucher";
 import TransferReceiveDialog from "@/components/TransferReceiveDialog";
 import { shrinkImage, PHOTO } from "@/lib/image";
+import { useSettings } from "@/hooks/use-settings";
 
 /* ─────────────────────────────────────────
    Types
@@ -1506,6 +1507,7 @@ function LowStockTab({
   suppliers: Supplier[];
   initialFilter?: "out-of-stock";
 }) {
+  const { data: companySettings } = useSettings();
   const [showOnly, setShowOnly] = useState<"all" | "out-of-stock" | "low-stock">(initialFilter ?? "all");
   const [adjOpen, setAdjOpen] = useState(false);
   const [adjPrefill, setAdjPrefill] = useState<{
@@ -1608,13 +1610,13 @@ function LowStockTab({
     });
     const poRef = `PO-${Date.now().toString().slice(-6)}`;
     const msg = [
-      `Order from MTC — ${today}`,
+      `Order from ${companySettings?.storeNameEn || "us"} — ${today}`,
       ``,
       `${row.name} — ${row.suggestedQty} ${row.unit}`,
       ``,
-      `Deliver to: Najma Street, Doha`,
+      `Deliver to: ${companySettings?.addressEn || ""}`,
       `Ref: ${poRef}`,
-      `+974 30703722`,
+      `${companySettings?.phone || ""}`,
     ].join("\n");
     return msg;
   }
