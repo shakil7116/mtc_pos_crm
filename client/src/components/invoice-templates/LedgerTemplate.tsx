@@ -77,7 +77,7 @@ export const LedgerTemplate = forwardRef<HTMLDivElement, TemplateProps & { class
                 text={settings.storeNameAr || ""}
                 width="170mm" height="12mm" widthMm={170} heightMm={12} rtl nowrap max={15}
                 className="mx-auto font-arabic"
-                style={{ marginTop: "1.2mm", fontWeight: 600, alignItems: "center", justifyContent: "center" }}
+                style={{ marginTop: "1.2mm", fontWeight: 700, letterSpacing: ".06em", alignItems: "center", justifyContent: "center" }}
               />
             </div>
 

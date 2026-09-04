@@ -96,7 +96,7 @@ export const SpineTemplate = forwardRef<HTMLDivElement, TemplateProps & { classN
                   text={settings.storeNameAr || ""}
                   width="78mm" height="13.5mm" widthMm={78} heightMm={13.5} rtl nowrap max={14}
                   className="font-arabic ml-auto"
-                  style={{ color: MAROON, fontWeight: 600 }}
+                  style={{ color: MAROON, fontWeight: 700 }}
                 />
                 <div className="mt-[2.5mm] text-right" dir="rtl" style={{ fontSize: "7.2pt", color: "#3a3a3a" }}>
                   {[

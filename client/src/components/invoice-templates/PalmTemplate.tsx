@@ -87,15 +87,15 @@ export const PalmTemplate = forwardRef<HTMLDivElement, TemplateProps & { classNa
                     <div className="flex-1" style={{ minWidth: 0 }}>
                       <FitBox
                         text={settings.storeNameEn || ""}
-                        width="100%" height="8mm" widthMm={150} heightMm={8} nowrap max={15}
+                        width="100%" height="12mm" widthMm={158} heightMm={12} nowrap max={19}
                         className="uppercase"
-                        style={{ color: GREEN, fontWeight: 700 }}
+                        style={{ color: GREEN, fontWeight: 700, justifyContent: "center" }}
                       />
                       <FitBox
                         text={settings.storeNameAr || ""}
-                        width="100%" height="8mm" widthMm={150} heightMm={8} rtl nowrap max={15}
+                        width="100%" height="12mm" widthMm={158} heightMm={12} rtl nowrap max={19}
                         className="font-arabic"
-                        style={{ color: GREEN, fontWeight: 600, justifyContent: "flex-start" }}
+                        style={{ color: GREEN, fontWeight: 700, justifyContent: "center" }}
                       />
                     </div>
                   </div>
